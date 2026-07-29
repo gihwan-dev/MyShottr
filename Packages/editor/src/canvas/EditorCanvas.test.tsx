@@ -1,28 +1,49 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import Konva from "konva";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createHistoryStore } from "../model/history";
 import { fixtureDocument } from "../test/fixtures";
-import { EditorCanvas } from "./EditorCanvas";
+import { cancelAnnotationInteraction, EditorCanvas } from "./EditorCanvas";
+
+const konvaControl = vi.hoisted(() => ({
+  stopDrag: vi.fn(),
+  stopTransform: vi.fn(),
+  forceUpdate: vi.fn(),
+  draw: vi.fn(),
+  annotationValues: {
+    x: 0,
+    y: 0,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+  },
+}));
 
 vi.mock("react-konva", async () => {
   const React = await import("react");
   const primitive = ({ children }: { children?: React.ReactNode }) => React.createElement("div", null, children);
   const Group = React.forwardRef((props: Record<string, unknown> & { children?: React.ReactNode }, ref) => {
-    const values = React.useRef({
+    const initialValues = {
       x: Number(props.x ?? 0),
       y: Number(props.y ?? 0),
       scaleX: Number(props.scaleX ?? 1),
       scaleY: Number(props.scaleY ?? 1),
       rotation: Number(props.rotation ?? 0),
-    });
+    };
+    const isAnnotationNode = typeof props.onDragStart === "function";
+    if (isAnnotationNode) Object.assign(konvaControl.annotationValues, initialValues);
+    const values = React.useRef(
+      isAnnotationNode ? konvaControl.annotationValues : initialValues
+    );
     const node = React.useMemo(() => ({
       x: (value?: number) => value === undefined ? values.current.x : (values.current.x = value),
       y: (value?: number) => value === undefined ? values.current.y : (values.current.y = value),
       scaleX: (value?: number) => value === undefined ? values.current.scaleX : (values.current.scaleX = value),
       scaleY: (value?: number) => value === undefined ? values.current.scaleY : (values.current.scaleY = value),
       rotation: (value?: number) => value === undefined ? values.current.rotation : (values.current.rotation = value),
-      stopDrag: () => {},
+      stopDrag: konvaControl.stopDrag,
+      getLayer: () => ({ draw: konvaControl.draw }),
     }), []);
     React.useImperativeHandle(ref, () => node);
     const onDragStart = props.onDragStart as ((event: { currentTarget: typeof node }) => void) | undefined;
@@ -41,7 +62,14 @@ vi.mock("react-konva", async () => {
         onDragMove?.({ currentTarget: node });
       },
       onDragEnd,
-      onDoubleClick: () => onTransformStart?.({ currentTarget: node }),
+      onDoubleClick: () => {
+        onTransformStart?.({ currentTarget: node });
+        values.current.x = 40;
+        values.current.y = 50;
+        values.current.scaleX = 0.5;
+        values.current.scaleY = 1.25;
+        values.current.rotation = 15;
+      },
       onContextMenu: (event: React.MouseEvent) => {
         event.preventDefault();
         onTransformEnd?.({ currentTarget: node });
@@ -52,6 +80,8 @@ vi.mock("react-konva", async () => {
     React.useImperativeHandle(ref, () => ({
       nodes: () => {},
       getLayer: () => ({ draw: () => {} }),
+      stopTransform: konvaControl.stopTransform,
+      forceUpdate: konvaControl.forceUpdate,
     }));
     return React.createElement("div");
   });
@@ -96,7 +126,51 @@ vi.mock("react-konva", async () => {
   };
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+describe("cancelAnnotationInteraction", () => {
+  it.each(["move", "transform"] as const)(
+    "stops a live %s and restores the real Konva node to its authoritative element",
+    (kind) => {
+      const element = fixtureDocument().elements[0];
+      const node = new Konva.Group({
+        x: 40,
+        y: 50,
+        scaleX: 0.5,
+        scaleY: 1.25,
+        rotation: 15,
+      });
+      const draw = vi.fn();
+      vi.spyOn(node, "getLayer").mockReturnValue({
+        batchDraw: vi.fn(),
+        draw,
+      } as never);
+      const stopDrag = vi.spyOn(node, "stopDrag");
+      const transformer = {
+        stopTransform: vi.fn(),
+        forceUpdate: vi.fn(),
+      };
+
+      cancelAnnotationInteraction({ kind, node, element }, transformer);
+
+      if (kind === "move") {
+        expect(stopDrag).toHaveBeenCalledOnce();
+        expect(transformer.stopTransform).not.toHaveBeenCalled();
+      } else {
+        expect(stopDrag).not.toHaveBeenCalled();
+        expect(transformer.stopTransform).toHaveBeenCalledOnce();
+      }
+      expect(node.position()).toEqual({ x: element.x, y: element.y });
+      expect(node.scale()).toEqual({ x: 1, y: 1 });
+      expect(node.rotation()).toBe(element.rotation);
+      expect(transformer.forceUpdate).toHaveBeenCalledOnce();
+      expect(draw).toHaveBeenCalledOnce();
+    },
+  );
+});
 
 describe("EditorCanvas gesture terminals", () => {
   it.each(["mouseup", "pointercancel"] as const)(
@@ -148,6 +222,17 @@ describe("EditorCanvas gesture terminals", () => {
     fireEvent.drag(annotation, { clientX: 40, clientY: 50 });
     expect(history.document.elements[0]).toMatchObject({ x: 40, y: 50 });
     window.dispatchEvent(new Event("pointercancel", { bubbles: true, cancelable: true }));
+    window.dispatchEvent(new Event("pointercancel", { bubbles: true, cancelable: true }));
+    expect(konvaControl.stopDrag).toHaveBeenCalledOnce();
+    expect(konvaControl.annotationValues).toMatchObject({
+      x: initial.elements[0].x,
+      y: initial.elements[0].y,
+      scaleX: 1,
+      scaleY: 1,
+      rotation: initial.elements[0].rotation,
+    });
+    expect(konvaControl.forceUpdate).toHaveBeenCalledOnce();
+    expect(konvaControl.draw).toHaveBeenCalledOnce();
     history.dispatch({
       type: "create",
       element: { ...initial.elements[0], id: "rect-2", seed: 102, zIndex: 1 },
@@ -167,6 +252,17 @@ describe("EditorCanvas gesture terminals", () => {
     fireEvent.mouseDown(stage);
     fireEvent.doubleClick(annotation);
     window.dispatchEvent(new Event("pointercancel", { bubbles: true, cancelable: true }));
+    window.dispatchEvent(new Event("pointercancel", { bubbles: true, cancelable: true }));
+    expect(konvaControl.stopTransform).toHaveBeenCalledOnce();
+    expect(konvaControl.annotationValues).toMatchObject({
+      x: initial.elements[0].x,
+      y: initial.elements[0].y,
+      scaleX: 1,
+      scaleY: 1,
+      rotation: initial.elements[0].rotation,
+    });
+    expect(konvaControl.forceUpdate).toHaveBeenCalledOnce();
+    expect(konvaControl.draw).toHaveBeenCalledOnce();
     history.dispatch({
       type: "create",
       element: { ...initial.elements[0], id: "rect-2", seed: 102, zIndex: 1 },

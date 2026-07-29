@@ -25,18 +25,21 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private var retiredRequestIDs: Set<UUID> = []
     private let requestTimeout: Duration
     private let annotationSnapshotRequestObserver: ((UUID) throws -> Void)?
+    private let javaScriptEvaluationObserver: ((UUID, @escaping (Error?) -> Void) -> Void)?
     private let outgoingMessageObserver: ((NativeToEditorEnvelope) -> Void)?
     private(set) var lastError: EditorBridgeError?
 
     init(
         session: DocumentSession,
         requestTimeout: Duration = .seconds(10),
+        javaScriptEvaluationObserver: ((UUID, @escaping (Error?) -> Void) -> Void)? = nil,
         annotationSnapshotRequestObserver: ((UUID) throws -> Void)? = nil,
         outgoingMessageObserver: ((NativeToEditorEnvelope) -> Void)? = nil
     ) {
         self.session = session
         self.requestTimeout = requestTimeout
         self.annotationSnapshotRequestObserver = annotationSnapshotRequestObserver
+        self.javaScriptEvaluationObserver = javaScriptEvaluationObserver
         self.outgoingMessageObserver = outgoingMessageObserver
     }
 
@@ -47,6 +50,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         self.init(
             session: session,
             requestTimeout: .seconds(10),
+            javaScriptEvaluationObserver: nil,
             annotationSnapshotRequestObserver: nil,
             outgoingMessageObserver: outgoingMessageObserver
         )
@@ -70,7 +74,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     }
 
     func requestAnnotationSnapshot() async throws -> Data {
-        guard editorIsReady, webView != nil || annotationSnapshotRequestObserver != nil else { throw EditorBridgeError.editorNotReady }
+        guard editorIsReady,
+              webView != nil || annotationSnapshotRequestObserver != nil || javaScriptEvaluationObserver != nil
+        else { throw EditorBridgeError.editorNotReady }
         let requestID = UUID()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -167,30 +173,21 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         do {
             message = try EditorToNativeEnvelope.decode(from: data)
         } catch {
-            if let requestID = correlatedRequestID(from: data, type: .annotationSnapshot) {
-                if retiredRequestIDs.contains(requestID) { return }
-                if requestID == pendingLoadRequestID {
-                    failLoadRequest(requestID, error: .invalidMessage)
-                } else if snapshotContinuations[requestID] != nil {
-                    failSnapshotRequest(requestID, error: EditorBridgeError.invalidMessage)
-                } else {
-                    lastError = .invalidMessage
-                }
-                return
-            }
-            if let requestID = correlatedCompositeRequestID(from: data) {
-                if retiredRequestIDs.contains(requestID) { return }
-                if compositeContinuations[requestID] != nil {
-                    failCompositeRequest(requestID, error: EditorBridgeError.invalidMessage)
-                } else {
-                    lastError = .invalidMessage
-                }
+            if let requestID = validatedRequestID(from: data) {
+                failPendingRequest(requestID, error: EditorBridgeError.invalidMessage)
                 return
             }
             lastError = .invalidMessage
             return
         }
         if retiredRequestIDs.contains(message.requestId) { return }
+        if isCorrelatedReply(message.type) {
+            guard let kind = pendingRequestKind(for: message.requestId) else { return }
+            guard kind.accepts(message.type) else {
+                failPendingRequest(message.requestId, error: EditorBridgeError.invalidMessage)
+                return
+            }
+        }
 
         switch message.type {
         case .editorReady:
@@ -281,6 +278,13 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private func dispatchAnnotationSnapshotRequest(requestID: UUID) throws {
         if let annotationSnapshotRequestObserver {
             try annotationSnapshotRequestObserver(requestID)
+            return
+        }
+        if let javaScriptEvaluationObserver {
+            javaScriptEvaluationObserver(requestID) { [weak self] error in
+                guard let self, let error else { return }
+                self.failPendingRequest(requestID, error: error)
+            }
             return
         }
         guard let webView else { throw EditorBridgeError.editorNotReady }
@@ -381,7 +385,16 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         else {
             throw EditorBridgeError.invalidMessage
         }
-        if webView == nil, outgoingMessageObserver == nil { throw EditorBridgeError.editorNotReady }
+        if webView == nil, outgoingMessageObserver == nil, javaScriptEvaluationObserver == nil {
+            throw EditorBridgeError.editorNotReady
+        }
+        if let javaScriptEvaluationObserver {
+            javaScriptEvaluationObserver(requestID) { [weak self] error in
+                guard let self, let error else { return }
+                self.failPendingRequest(requestID, error: error)
+            }
+            return requestID
+        }
         webView?.evaluateJavaScript(
             "window.dispatchEvent(new CustomEvent('myshottr:native-message', { detail: \(json) }));"
         ) { [weak self] _, error in
@@ -392,14 +405,20 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     }
 
     private func failPendingRequest(_ requestID: UUID, error: Error) {
+        if retiredRequestIDs.contains(requestID) { return }
         if requestID == pendingLoadRequestID {
-            failLoadRequest(requestID, error: .invalidDocument)
+            failLoadRequest(
+                requestID,
+                error: (error as? EditorBridgeError) ?? .invalidDocument
+            )
         } else if snapshotContinuations[requestID] != nil {
             failSnapshotRequest(requestID, error: error)
         } else if compositeContinuations[requestID] != nil {
-            failCompositeRequest(requestID, error: error, recordInvalidMessage: false)
-        } else {
-            lastError = .invalidMessage
+            failCompositeRequest(
+                requestID,
+                error: error,
+                recordInvalidMessage: (error as? EditorBridgeError) == .invalidMessage
+            )
         }
     }
 
@@ -449,6 +468,31 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         case load
         case snapshot
         case composite
+
+        func accepts(_ type: EditorToNativeMessageType) -> Bool {
+            switch self {
+            case .load, .snapshot:
+                type == .annotationSnapshot || type == .bridgeError
+            case .composite:
+                type == .compositeChunk || type == .compositeCompleted || type == .bridgeError
+            }
+        }
+    }
+
+    private func pendingRequestKind(for requestID: UUID) -> PendingRequestKind? {
+        if requestID == pendingLoadRequestID { return .load }
+        if snapshotContinuations[requestID] != nil { return .snapshot }
+        if compositeContinuations[requestID] != nil { return .composite }
+        return nil
+    }
+
+    private func isCorrelatedReply(_ type: EditorToNativeMessageType) -> Bool {
+        switch type {
+        case .annotationSnapshot, .compositeChunk, .compositeCompleted, .bridgeError:
+            true
+        case .editorReady, .documentChanged:
+            false
+        }
     }
 
     private func scheduleDeadline(for requestID: UUID, kind: PendingRequestKind) {
@@ -479,25 +523,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         requestDeadlineTasks.removeValue(forKey: requestID)?.cancel()
     }
 
-    private func correlatedRequestID(from data: Data, type expectedType: EditorToNativeMessageType) -> UUID? {
+    private func validatedRequestID(from data: Data) -> UUID? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Set(object.keys) == ["protocolVersion", "requestId", "type", "payload"],
               object["protocolVersion"] as? Int == EditorBridgeEnvelope<EditorToNativeMessageType, BridgeJSONValue>.protocolVersion,
               let requestIDString = object["requestId"] as? String,
-              let requestID = UUID(uuidString: requestIDString),
-              object["type"] as? String == expectedType.rawValue
-        else {
-            return nil
-        }
-        return requestID
-    }
-
-    private func correlatedCompositeRequestID(from data: Data) -> UUID? {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["protocolVersion"] as? Int == EditorBridgeEnvelope<EditorToNativeMessageType, BridgeJSONValue>.protocolVersion,
-              let requestIDString = object["requestId"] as? String,
-              let requestID = UUID(uuidString: requestIDString),
-              let type = object["type"] as? String,
-              type == EditorToNativeMessageType.compositeChunk.rawValue || type == EditorToNativeMessageType.compositeCompleted.rawValue
+              let requestID = UUID(uuidString: requestIDString)
         else {
             return nil
         }

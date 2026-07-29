@@ -32,7 +32,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   const pointerController = useRef(new CanvasPointerController());
   const suppressedAnnotationDrag = useRef(false);
   const suppressedTransform = useRef(false);
-  const activeAnnotationTransaction = useRef<"move" | "transform" | undefined>(undefined);
+  const activeAnnotationInteraction = useRef<ActiveAnnotationInteraction | undefined>(undefined);
   const [isTransforming, setIsTransforming] = useState(false);
 
   useEffect(() => {
@@ -61,12 +61,17 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
     onCommand({ type: "create", element: createCanvasElement(document, tool as Exclude<EditorTool, "selection">, creationGesture, rectangleFillColor) });
   };
   const cancelAnnotationTransaction = () => {
-    if (!activeAnnotationTransaction.current) return;
-    activeAnnotationTransaction.current = undefined;
+    const activeInteraction = activeAnnotationInteraction.current;
+    if (!activeInteraction) return;
+    activeAnnotationInteraction.current = undefined;
     try {
-      onCancelTransaction();
+      cancelAnnotationInteraction(activeInteraction, transformer.current);
     } finally {
-      setIsTransforming(false);
+      try {
+        onCancelTransaction();
+      } finally {
+        setIsTransforming(false);
+      }
     }
   };
   useEffect(() => {
@@ -159,8 +164,18 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                   node.stopDrag();
                   return;
                 }
+                const elementToMove = document.elements.find(
+                  (candidate) => candidate.id === element.id
+                );
+                if (!elementToMove) {
+                  throw new Error(`Cannot move missing element: ${element.id}`);
+                }
                 onBeginTransaction("move");
-                activeAnnotationTransaction.current = "move";
+                activeAnnotationInteraction.current = {
+                  kind: "move",
+                  node,
+                  element: elementToMove,
+                };
               },
               onDragMove: (id, x, y) => {
                 if (!pointerController.current.shouldDispatchAnnotationDrag()) return;
@@ -179,10 +194,10 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                   suppressedAnnotationDrag.current = false;
                   return;
                 }
-                if (activeAnnotationTransaction.current !== "move") return;
+                if (activeAnnotationInteraction.current?.kind !== "move") return;
                 try {
                   onCommitTransaction();
-                  activeAnnotationTransaction.current = undefined;
+                  activeAnnotationInteraction.current = undefined;
                 } catch (error) {
                   cancelAnnotationTransaction();
                   throw error;
@@ -198,7 +213,11 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                   return;
                 }
                 onBeginTransaction("transform");
-                activeAnnotationTransaction.current = "transform";
+                activeAnnotationInteraction.current = {
+                  kind: "transform",
+                  node,
+                  element: elementToTransform,
+                };
                 setIsTransforming(true);
               },
               onTransformEnd: (id, node) => {
@@ -206,7 +225,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                   suppressedTransform.current = false;
                   return;
                 }
-                if (activeAnnotationTransaction.current !== "transform") return;
+                if (activeAnnotationInteraction.current?.kind !== "transform") return;
                 try {
                   const elementToTransform = document.elements.find((candidate) => candidate.id === id);
                   if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
@@ -222,7 +241,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                     ),
                   });
                   onCommitTransaction();
-                  activeAnnotationTransaction.current = undefined;
+                  activeAnnotationInteraction.current = undefined;
                 } catch (error) {
                   cancelAnnotationTransaction();
                   throw error;
@@ -265,6 +284,31 @@ type TransformableNode = {
   scaleY(value: number): unknown;
   rotation(value: number): unknown;
 };
+
+type ActiveAnnotationInteraction = {
+  kind: "move" | "transform";
+  node: Konva.Group;
+  element: EditorElement;
+};
+
+export function cancelAnnotationInteraction(
+  interaction: ActiveAnnotationInteraction,
+  transformer: TransformerControl | null,
+): void {
+  if (interaction.kind === "move") {
+    interaction.node.stopDrag();
+  } else {
+    if (!transformer) throw new Error("Transformer is unavailable for cancellation");
+    transformer.stopTransform();
+  }
+  interaction.node.x(interaction.element.x);
+  interaction.node.y(interaction.element.y);
+  interaction.node.scaleX(1);
+  interaction.node.scaleY(1);
+  interaction.node.rotation(interaction.element.rotation);
+  transformer?.forceUpdate();
+  interaction.node.getLayer()?.draw();
+}
 
 export function beginTransformerInteraction(
   pointerController: CanvasPointerController,
