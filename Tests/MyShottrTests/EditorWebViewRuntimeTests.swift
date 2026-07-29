@@ -20,6 +20,7 @@ final class EditorWebViewRuntimeTests: XCTestCase {
         try editor.load(project: validProject())
         try await waitForEditorMount(in: editor.webView)
         try await waitForSourceImage(in: editor.webView)
+        try await assertExternalResourcesAreBlocked(in: editor.webView)
 
         XCTAssertNil(editor.navigationError)
         XCTAssertTrue(session.isOpen)
@@ -196,6 +197,112 @@ final class EditorWebViewRuntimeTests: XCTestCase {
         )
     }
 
+    private func assertExternalResourcesAreBlocked(in webView: WKWebView) async throws {
+        let resultJSONString = try await evaluateAsyncString(
+            """
+            (async () => {
+              const policy = document.querySelector(
+                'meta[http-equiv="Content-Security-Policy"]'
+              )?.content;
+              if (!policy) return JSON.stringify({ hasPolicy: false });
+              const urls = {
+                remoteFetch: 'https://example.com/myshottr-csp-fetch',
+                localFetch: 'http://localhost:65535/myshottr-csp-fetch',
+              };
+              const observeFetch = (url) => new Promise((resolve) => {
+                const controller = new AbortController();
+                let rejected;
+                let violation;
+                let settled = false;
+                const finishIfComplete = () => {
+                  if (!settled && rejected === true && violation) {
+                    settled = true;
+                    clearTimeout(timeout);
+                    document.removeEventListener('securitypolicyviolation', onViolation);
+                    resolve({ url, rejected, violation, timedOut: false });
+                  }
+                };
+                const onViolation = (event) => {
+                  if (event.blockedURI !== url) return;
+                  violation = {
+                    blockedURI: event.blockedURI,
+                    effectiveDirective: event.effectiveDirective,
+                  };
+                  finishIfComplete();
+                };
+                document.addEventListener('securitypolicyviolation', onViolation);
+                fetch(url, { mode: 'no-cors', signal: controller.signal }).then(
+                  () => {
+                    rejected = false;
+                  },
+                  () => {
+                    rejected = true;
+                    finishIfComplete();
+                  }
+                );
+                const timeout = setTimeout(() => {
+                  if (settled) return;
+                  settled = true;
+                  document.removeEventListener('securitypolicyviolation', onViolation);
+                  controller.abort();
+                  resolve({
+                    url,
+                    rejected: rejected === true,
+                    violation,
+                    timedOut: true,
+                  });
+                }, 250);
+              });
+              const fetchResults = await Promise.all(
+                [urls.remoteFetch, urls.localFetch].map(observeFetch)
+              );
+              return JSON.stringify({ hasPolicy: true, policy, urls, fetchResults });
+            })()
+            """,
+            in: webView
+        )
+        let result = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(resultJSONString.utf8))
+                as? [String: Any]
+        )
+        guard result["hasPolicy"] as? Bool == true else {
+            return XCTFail("Bundled editor must install its CSP in the attached WKWebView")
+        }
+        let policy = try XCTUnwrap(result["policy"] as? String)
+        let directives = Set(policy.split(separator: ";").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        })
+        XCTAssertEqual(directives, Set([
+            "default-src 'none'",
+            "connect-src 'none'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "frame-src 'none'",
+            "script-src 'self'",
+            "style-src 'self'",
+            "img-src 'self'",
+        ]))
+        XCTAssertFalse(policy.contains("http:"))
+        XCTAssertFalse(policy.contains("https:"))
+        XCTAssertFalse(policy.contains("localhost"))
+        XCTAssertFalse(policy.contains("'unsafe-eval'"))
+        let urls = try XCTUnwrap(result["urls"] as? [String: String])
+        let fetchResults = try XCTUnwrap(result["fetchResults"] as? [[String: Any]])
+
+        XCTAssertEqual(fetchResults.count, 2)
+        for result in fetchResults {
+            XCTAssertEqual(result["rejected"] as? Bool, true)
+            XCTAssertEqual(result["timedOut"] as? Bool, false)
+            let violation = try XCTUnwrap(result["violation"] as? [String: String])
+            XCTAssertEqual(violation["blockedURI"], result["url"] as? String)
+            XCTAssertEqual(violation["effectiveDirective"], "connect-src")
+        }
+        XCTAssertEqual(
+            Set(fetchResults.compactMap { $0["url"] as? String }),
+            Set([urls["remoteFetch"]!, urls["localFetch"]!])
+        )
+    }
+
     private func evaluateString(_ script: String, in webView: WKWebView) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             webView.evaluateJavaScript(script) { result, error in
@@ -214,6 +321,23 @@ final class EditorWebViewRuntimeTests: XCTestCase {
                 }
             }
         }
+    }
+
+    private func evaluateAsyncString(_ script: String, in webView: WKWebView) async throws -> String {
+        let result = try await webView.callAsyncJavaScript(
+            "return await (\(script));",
+            arguments: [:],
+            in: nil,
+            contentWorld: .page
+        )
+        guard let result = result as? String else {
+            throw NSError(
+                domain: "MyShottr.EditorWebViewRuntimeTests",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Async JavaScript did not return a string"]
+            )
+        }
+        return result
     }
 
     private func validProject() throws -> MyShottrProject {

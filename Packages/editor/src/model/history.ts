@@ -7,8 +7,8 @@ export type HistoryStore = {
   beginTransaction(label: string): void;
   dispatch(command: EditorCommand): void;
   commitTransaction(): void;
-  undo(): void;
-  redo(): void;
+  undo(): boolean;
+  redo(): boolean;
 };
 
 type Transaction = {
@@ -59,16 +59,18 @@ export function createHistoryStore(initialDocument: EditorDocument): HistoryStor
     undo() {
       assertNoActiveTransaction(transaction, "undo");
       const previous = past.pop();
-      if (!previous) return;
+      if (!previous) return false;
       future.push(document);
       document = previous;
+      return true;
     },
     redo() {
       assertNoActiveTransaction(transaction, "redo");
       const next = future.pop();
-      if (!next) return;
+      if (!next) return false;
       past.push(document);
       document = next;
+      return true;
     },
   };
 }

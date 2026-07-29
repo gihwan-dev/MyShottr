@@ -79,14 +79,16 @@ export function resizeElementWithinBounds(
   rotation: number,
   bounds: SourceBounds,
 ): EditorElement {
-  if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX < 0 || scaleY < 0) {
-    throw new Error("Transform scale must be a non-negative finite number");
+  if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) {
+    throw new Error("Transform scale must be finite");
   }
   if (!Number.isFinite(rotation)) {
     throw new Error("Transform rotation must be finite");
   }
   assertFinite(targetPosition.x, "target x");
   assertFinite(targetPosition.y, "target y");
+  scaleX = Math.max(0, scaleX);
+  scaleY = Math.max(0, scaleY);
   const translated = translateElement(element, targetPosition);
   const dimensions = { width: translated.width * scaleX, height: translated.height * scaleY, rotation };
   const resized = (() => {

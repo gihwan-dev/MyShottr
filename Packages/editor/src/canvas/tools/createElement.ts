@@ -13,6 +13,10 @@ export type CreationContext = {
   seed: number;
 };
 
+export function createElementId(): string {
+  return crypto.randomUUID();
+}
+
 export function createElement(
   tool: Exclude<EditorTool, "selection">,
   gesture: CreationGesture,
@@ -91,7 +95,7 @@ function createBase(
 ) {
   const bounds = boundsFor(tool, gesture);
   return {
-    id: `${tool}-${context.seed}`,
+    id: createElementId(),
     ...bounds,
     rotation: 0,
     opacity: context.defaults.opacity,

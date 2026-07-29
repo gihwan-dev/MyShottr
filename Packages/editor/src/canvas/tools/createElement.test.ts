@@ -45,4 +45,17 @@ describe("createElement", () => {
     expect(rectangle).toMatchObject({ type: "rectangle", fillColor: "#FADB14", zIndex: 10 });
     expect(marker).toMatchObject({ type: "numberMarker", number: 10, zIndex: 10 });
   });
+
+  it("creates a collision-safe id without changing rough seed progression", () => {
+    const document = fixtureDocument({
+      elements: [
+        { ...fixtureDocument().elements[0], id: "rectangle-2", seed: 1, zIndex: 0 },
+      ],
+    });
+
+    const rectangle = createCanvasElement(document, "rectangle", creationGesture("rectangle"), null);
+
+    expect(rectangle.id).not.toBe("rectangle-2");
+    expect(rectangle.seed).toBe(2);
+  });
 });

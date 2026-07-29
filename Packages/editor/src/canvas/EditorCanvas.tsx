@@ -49,6 +49,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   const finishGesture = (stage: Konva.Stage) => {
     const activeGesture = gesture.current;
     if (!activeGesture) return;
+    gesture.current = undefined;
     const end = sourcePoint(stage);
     const creationGesture = tool === "freehand" || tool === "highlighter"
       ? { kind: "path" as const, points: [...activeGesture.points, end] }
@@ -56,9 +57,20 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
         ? { kind: "point" as const, point: activeGesture.start }
         : { kind: "box" as const, start: activeGesture.start, end };
     onCommand({ type: "create", element: createCanvasElement(document, tool as Exclude<EditorTool, "selection">, creationGesture, rectangleFillColor) });
-    gesture.current = undefined;
-    onCommitTransaction();
   };
+  useEffect(() => {
+    const cancelPointerInteraction = () => {
+      gesture.current = undefined;
+      panGesture.current = undefined;
+      pointerController.current.end();
+    };
+    window.addEventListener("mouseup", cancelPointerInteraction);
+    window.addEventListener("pointercancel", cancelPointerInteraction);
+    return () => {
+      window.removeEventListener("mouseup", cancelPointerInteraction);
+      window.removeEventListener("pointercancel", cancelPointerInteraction);
+    };
+  }, []);
   const orderedElements = [
     ...document.elements.filter((element) => element.type === "highlighter").sort(byZIndex),
     ...document.elements.filter((element) => element.type !== "highlighter").sort(byZIndex),
@@ -84,7 +96,6 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
           }
           const start = sourcePoint(stage);
           gesture.current = { start, points: [start] };
-          onBeginTransaction("create");
         }}
         onMouseMove={(event) => {
           const stage = event.target.getStage();
@@ -163,22 +174,25 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                   return;
                 }
                 if (!pointerController.current.shouldDispatchAnnotationDrag()) return;
-                const elementToTransform = document.elements.find((candidate) => candidate.id === id);
-                if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
-                onCommand({
-                  type: "update",
-                  element: resizeElementWithinBounds(
-                    elementToTransform,
-                    { x: node.x(), y: node.y() },
-                    node.scaleX(),
-                    node.scaleY(),
-                    node.rotation(),
-                    { sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight },
-                  ),
-                });
-                setIsTransforming(false);
-                onCommitTransaction();
-                pointerController.current.end();
+                try {
+                  const elementToTransform = document.elements.find((candidate) => candidate.id === id);
+                  if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
+                  onCommand({
+                    type: "update",
+                    element: resizeElementWithinBounds(
+                      elementToTransform,
+                      { x: node.x(), y: node.y() },
+                      node.scaleX(),
+                      node.scaleY(),
+                      node.rotation(),
+                      { sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight },
+                    ),
+                  });
+                } finally {
+                  setIsTransforming(false);
+                  pointerController.current.end();
+                  onCommitTransaction();
+                }
               },
               registerNode: (id, node) => {
                 if (node) nodes.current.set(id, node);
@@ -190,7 +204,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
               if (!selected) throw new Error(`Cannot outline missing selected element: ${selectedId}`);
               return <Rect x={selected.x} y={selected.y} width={selected.width} height={selected.height} stroke="#1677FF" dash={[4, 4]} listening={false} />;
             })()}
-            <Transformer ref={transformer} rotateEnabled={true} />
+            <Transformer ref={transformer} rotateEnabled={true} flipEnabled={false} />
           </Group>
         </Layer>
       </Stage>

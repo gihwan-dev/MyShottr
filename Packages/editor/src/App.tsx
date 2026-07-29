@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorCanvas } from "./canvas/EditorCanvas";
 import { duplicateElementWithinBounds, SelectionController } from "./canvas/SelectionController";
+import { createElementId } from "./canvas/tools/createElement";
 import { keyboardCommandFor, isTextEntryTarget } from "./canvas/tools/ToolController";
 import { ContextStylePalette } from "./components/ContextStylePalette";
 import { FloatingToolPalette } from "./components/FloatingToolPalette";
@@ -65,7 +66,7 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
       { x: source.x + 12, y: source.y + 12 },
       { sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight },
     );
-    dispatch({ type: "create", element: { ...offset, id: `${source.type}-${nextSeed}`, seed: nextSeed, zIndex: nextZIndex } });
+    dispatch({ type: "create", element: { ...offset, id: createElementId(), seed: nextSeed, zIndex: nextZIndex } });
   }, [dispatch, document.elements, selectedId]);
 
   useEffect(() => {
@@ -86,9 +87,10 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
         return;
       }
       if (command === "undo" || command === "redo") {
-        history.current![command]();
-        publishDocument();
-        select(undefined);
+        if (history.current![command]()) {
+          publishDocument();
+          select(undefined);
+        }
         return;
       }
       selectTool(command);

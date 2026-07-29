@@ -7,35 +7,39 @@ import type { EditorCommand, EditorDocument, PaletteColor } from "./model/elemen
 import { fixtureDocument } from "./test/fixtures";
 
 vi.mock("./canvas/EditorCanvas", () => ({
-  EditorCanvas: ({ document, onCommand, rectangleFillColor }: {
+  EditorCanvas: ({ document, onCommand, onSelect, rectangleFillColor }: {
     document: EditorDocument;
     onCommand: (command: EditorCommand) => void;
+    onSelect: (id: string | undefined) => void;
     rectangleFillColor: PaletteColor | null;
   }) => (
-    <button
-      type="button"
-      onClick={() => onCommand({
-        type: "create",
-        element: {
-          id: "rect-2",
-          type: "rectangle",
-          x: 10,
-          y: 10,
-          width: 20,
-          height: 20,
-          rotation: 0,
-          opacity: document.defaults.opacity,
-          zIndex: 1,
-          seed: 2,
-          strokeColor: document.defaults.color,
-          strokeWidth: document.defaults.strokeWidth,
-          fillColor: rectangleFillColor,
-          roughness: document.defaults.roughness,
-        },
-      })}
-    >
-      Create rectangle from canvas
-    </button>
+    <>
+      <button type="button" onClick={() => onSelect("rect-1")}>Select rect-1</button>
+      <button
+        type="button"
+        onClick={() => onCommand({
+          type: "create",
+          element: {
+            id: "rect-2",
+            type: "rectangle",
+            x: 10,
+            y: 10,
+            width: 20,
+            height: 20,
+            rotation: 0,
+            opacity: document.defaults.opacity,
+            zIndex: 1,
+            seed: 2,
+            strokeColor: document.defaults.color,
+            strokeWidth: document.defaults.strokeWidth,
+            fillColor: rectangleFillColor,
+            roughness: document.defaults.roughness,
+          },
+        })}
+      >
+        Create rectangle from canvas
+      </button>
+    </>
   ),
 }));
 
@@ -78,6 +82,35 @@ describe("EditorApp", () => {
 
     fireEvent.keyDown(window, { key: "z", metaKey: true });
     expect(changes.at(-1)).toMatchObject({ defaults: { color: "#FF4D4F" }, elements: [{ id: "rect-1" }] });
+  });
+
+  it("does not publish a document change for no-op undo or redo", () => {
+    const onChange = vi.fn();
+    render(<EditorApp initialDocument={fixtureDocument()} sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={onChange} />);
+
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    fireEvent.keyDown(window, { key: "y", metaKey: true });
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("duplicates with an id that cannot collide with arbitrary loaded ids", () => {
+    const changes: EditorDocument[] = [];
+    const document = fixtureDocument({
+      elements: [
+        fixtureDocument().elements[0],
+        { ...fixtureDocument().elements[0], id: "rectangle-102", x: 100, seed: 2, zIndex: 1 },
+      ],
+    });
+    render(<EditorApp initialDocument={document} sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(next) => changes.push(next)} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.keyDown(window, { key: "d", metaKey: true });
+
+    const duplicated = changes.at(-1)?.elements.at(-1);
+    expect(duplicated?.id).not.toBe("rectangle-102");
+    expect(new Set(changes.at(-1)?.elements.map((element) => element.id)).size).toBe(3);
+    expect(duplicated?.seed).toBe(102);
   });
 
   it("acknowledges an accepted native document with the correlated snapshot", async () => {

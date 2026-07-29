@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { allElementFixtures, fixtureRect } from "../test/fixtures";
 import { beginTransformerInteraction } from "./EditorCanvas";
 import { CanvasPointerController, duplicateElementWithinBounds, resizeElementWithinBounds } from "./SelectionController";
+import { createHistoryStore } from "../model/history";
+import { findElement } from "../model/reducer";
 
 describe("canvas element bounds", () => {
   it("offsets every path point when duplicating an arrow", () => {
@@ -24,6 +26,38 @@ describe("canvas element bounds", () => {
     const transformed = resizeElementWithinBounds(rectangle, { x: -50, y: 20 }, 0.1, 1, 0, { sourceWidth: 100, sourceHeight: 100 });
 
     expect(transformed).toMatchObject({ x: -9, y: 20, width: 10, height: 20 });
+  });
+
+  it("keeps history usable after an opposite-edge transformer attempt", () => {
+    const history = createHistoryStore({
+      schemaVersion: 1,
+      sourcePixelWidth: 100,
+      sourcePixelHeight: 100,
+      elements: [{ ...fixtureRect(), width: 20, height: 20 }],
+      defaults: {
+        color: "#1677FF",
+        strokeWidth: 4,
+        textSize: 24,
+        roughness: 1,
+        opacity: 1,
+      },
+    });
+
+    history.dispatch({
+      type: "update",
+      element: resizeElementWithinBounds(
+        findElement(history.document, "rect-1"),
+        { x: 20, y: 20 },
+        -0.5,
+        1,
+        0,
+        { sourceWidth: 100, sourceHeight: 100 },
+      ),
+    });
+    history.undo();
+    history.redo();
+
+    expect(findElement(history.document, "rect-1").width).toBeGreaterThanOrEqual(0);
   });
 });
 

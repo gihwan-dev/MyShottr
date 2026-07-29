@@ -6,6 +6,7 @@ enum EditorBridgeError: Error, Equatable {
     case invalidMessage
     case invalidDocument
     case cancelled
+    case timedOut
 }
 
 @MainActor
@@ -20,12 +21,34 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private var compositeTransfers: [UUID: CompositeTransfer] = [:]
     private var compositeDirectories: [UUID: URL] = [:]
     private var compositeDimensions: [UUID: (width: Int, height: Int)] = [:]
+    private var requestDeadlineTasks: [UUID: Task<Void, Never>] = [:]
+    private let requestTimeout: Duration
+    private let annotationSnapshotRequestObserver: ((UUID) throws -> Void)?
     private let outgoingMessageObserver: ((NativeToEditorEnvelope) -> Void)?
     private(set) var lastError: EditorBridgeError?
 
-    init(session: DocumentSession, outgoingMessageObserver: ((NativeToEditorEnvelope) -> Void)? = nil) {
+    init(
+        session: DocumentSession,
+        requestTimeout: Duration = .seconds(10),
+        annotationSnapshotRequestObserver: ((UUID) throws -> Void)? = nil,
+        outgoingMessageObserver: ((NativeToEditorEnvelope) -> Void)? = nil
+    ) {
         self.session = session
+        self.requestTimeout = requestTimeout
+        self.annotationSnapshotRequestObserver = annotationSnapshotRequestObserver
         self.outgoingMessageObserver = outgoingMessageObserver
+    }
+
+    convenience init(
+        session: DocumentSession,
+        outgoingMessageObserver: @escaping (NativeToEditorEnvelope) -> Void
+    ) {
+        self.init(
+            session: session,
+            requestTimeout: .seconds(10),
+            annotationSnapshotRequestObserver: nil,
+            outgoingMessageObserver: outgoingMessageObserver
+        )
     }
 
     func attach(to webView: WKWebView) {
@@ -45,14 +68,25 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     }
 
     func requestAnnotationSnapshot() async throws -> Data {
-        guard editorIsReady, webView != nil || outgoingMessageObserver != nil else { throw EditorBridgeError.editorNotReady }
+        guard editorIsReady, webView != nil || annotationSnapshotRequestObserver != nil else { throw EditorBridgeError.editorNotReady }
         let requestID = UUID()
-        return try await withCheckedThrowingContinuation { continuation in
-            snapshotContinuations[requestID] = continuation
-            do {
-                try dispatchAnnotationSnapshotRequest(requestID: requestID)
-            } catch {
-                snapshotContinuations.removeValue(forKey: requestID)?.resume(throwing: error)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: EditorBridgeError.cancelled)
+                    return
+                }
+                snapshotContinuations[requestID] = continuation
+                scheduleDeadline(for: requestID, kind: .snapshot)
+                do {
+                    try dispatchAnnotationSnapshotRequest(requestID: requestID)
+                } catch {
+                    failSnapshotRequest(requestID, error: error)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.failSnapshotRequest(requestID, error: EditorBridgeError.cancelled)
             }
         }
     }
@@ -63,18 +97,32 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         let requestID = UUID()
         if let destinationDirectory { compositeDirectories[requestID] = destinationDirectory }
         compositeDimensions[requestID] = (project.manifest.sourcePixelWidth, project.manifest.sourcePixelHeight)
-        return try await withCheckedThrowingContinuation { continuation in
-            compositeContinuations[requestID] = continuation
-            do {
-                _ = try send(
-                    requestID: requestID,
-                    type: .requestComposite,
-                    payload: .object(["requestId": .string(requestID.uuidString)])
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    discardCompositeRequest(requestID)
+                    continuation.resume(throwing: EditorBridgeError.cancelled)
+                    return
+                }
+                compositeContinuations[requestID] = continuation
+                scheduleDeadline(for: requestID, kind: .composite)
+                do {
+                    _ = try send(
+                        requestID: requestID,
+                        type: .requestComposite,
+                        payload: .object(["requestId": .string(requestID.uuidString)])
+                    )
+                } catch {
+                    failCompositeRequest(requestID, error: error, recordInvalidMessage: false)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.failCompositeRequest(
+                    requestID,
+                    error: EditorBridgeError.cancelled,
+                    recordInvalidMessage: false
                 )
-            } catch {
-                compositeDirectories.removeValue(forKey: requestID)
-                compositeDimensions.removeValue(forKey: requestID)
-                compositeContinuations.removeValue(forKey: requestID)?.resume(throwing: error)
             }
         }
     }
@@ -84,6 +132,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         pendingProject = nil
         pendingLoadRequestID = nil
         editorIsReady = false
+        for task in requestDeadlineTasks.values { task.cancel() }
+        requestDeadlineTasks.removeAll()
         for continuation in snapshotContinuations.values {
             continuation.resume(throwing: EditorBridgeError.cancelled)
         }
@@ -115,6 +165,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         do {
             message = try EditorToNativeEnvelope.decode(from: data)
         } catch {
+            if let requestID = correlatedRequestID(from: data, type: .annotationSnapshot) {
+                failSnapshotRequest(requestID, error: EditorBridgeError.invalidMessage)
+                return
+            }
             if let requestID = correlatedCompositeRequestID(from: data) {
                 failCompositeRequest(requestID, error: EditorBridgeError.invalidMessage)
                 return
@@ -148,13 +202,14 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 pendingProject = nil
                 pendingLoadRequestID = nil
                 lastError = .invalidDocument
-            } else if let continuation = snapshotContinuations.removeValue(forKey: message.requestId) {
-                continuation.resume(throwing: EditorBridgeError.invalidDocument)
-            } else if let continuation = compositeContinuations.removeValue(forKey: message.requestId) {
-                compositeTransfers.removeValue(forKey: message.requestId)?.discard()
-                compositeDirectories.removeValue(forKey: message.requestId)
-                compositeDimensions.removeValue(forKey: message.requestId)
-                continuation.resume(throwing: EditorBridgeError.invalidDocument)
+            } else if snapshotContinuations[message.requestId] != nil {
+                failSnapshotRequest(message.requestId, error: EditorBridgeError.invalidDocument)
+            } else if compositeContinuations[message.requestId] != nil {
+                failCompositeRequest(
+                    message.requestId,
+                    error: EditorBridgeError.invalidDocument,
+                    recordInvalidMessage: false
+                )
             } else {
                 lastError = .invalidMessage
             }
@@ -169,6 +224,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         guard case let .object(payload) = message.payload,
               case let .object(document)? = payload["document"]
         else {
+            if snapshotContinuations[message.requestId] != nil {
+                failSnapshotRequest(message.requestId, error: EditorBridgeError.invalidDocument)
+            }
             lastError = .invalidDocument
             return
         }
@@ -178,14 +236,14 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 try session.commitStaged(annotationJSON: data)
                 pendingProject = nil
                 pendingLoadRequestID = nil
-            } else if let continuation = snapshotContinuations.removeValue(forKey: message.requestId) {
+            } else if snapshotContinuations[message.requestId] != nil {
                 try session.install(annotationJSON: data)
-                continuation.resume(returning: data)
+                completeSnapshotRequest(message.requestId, data: data)
             } else {
                 lastError = .invalidMessage
             }
         } catch {
-            snapshotContinuations.removeValue(forKey: message.requestId)?.resume(throwing: error)
+            failSnapshotRequest(message.requestId, error: error)
             lastError = .invalidDocument
         }
     }
@@ -202,6 +260,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     }
 
     private func dispatchAnnotationSnapshotRequest(requestID: UUID) throws {
+        if let annotationSnapshotRequestObserver {
+            try annotationSnapshotRequestObserver(requestID)
+            return
+        }
         guard let webView else { throw EditorBridgeError.editorNotReady }
         let payload = try JSONSerialization.data(withJSONObject: ["requestId": requestID.uuidString])
         guard let json = String(data: payload, encoding: .utf8) else { throw EditorBridgeError.invalidMessage }
@@ -209,7 +271,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             "window.dispatchEvent(new CustomEvent('myshottr:request-annotation-snapshot', { detail: \(json) }));"
         ) { [weak self] _, error in
             guard let self, let error else { return }
-            self.snapshotContinuations.removeValue(forKey: requestID)?.resume(throwing: error)
+            self.failSnapshotRequest(requestID, error: error)
         }
     }
 
@@ -268,6 +330,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             compositeTransfers.removeValue(forKey: message.requestId)
             compositeDirectories.removeValue(forKey: message.requestId)
             compositeDimensions.removeValue(forKey: message.requestId)
+            cancelDeadline(for: message.requestId)
             compositeContinuations.removeValue(forKey: message.requestId)?.resume(returning: transfer)
         } catch {
             failCompositeRequest(message.requestId, error: error)
@@ -303,28 +366,89 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         if requestID == pendingLoadRequestID {
             discardPendingLoad()
             lastError = .invalidDocument
-        } else if let continuation = snapshotContinuations.removeValue(forKey: requestID) {
-            continuation.resume(throwing: error)
-        } else if let continuation = compositeContinuations.removeValue(forKey: requestID) {
-            compositeTransfers.removeValue(forKey: requestID)?.discard()
-            compositeDirectories.removeValue(forKey: requestID)
-            compositeDimensions.removeValue(forKey: requestID)
-            continuation.resume(throwing: error)
+        } else if snapshotContinuations[requestID] != nil {
+            failSnapshotRequest(requestID, error: error)
+        } else if compositeContinuations[requestID] != nil {
+            failCompositeRequest(requestID, error: error, recordInvalidMessage: false)
         } else {
             lastError = .invalidMessage
         }
     }
 
-    private func failCompositeRequest(_ requestID: UUID, error: Error) {
+    private func completeSnapshotRequest(_ requestID: UUID, data: Data) {
+        guard let continuation = snapshotContinuations.removeValue(forKey: requestID) else { return }
+        cancelDeadline(for: requestID)
+        continuation.resume(returning: data)
+    }
+
+    private func failSnapshotRequest(_ requestID: UUID, error: Error) {
+        guard let continuation = snapshotContinuations.removeValue(forKey: requestID) else { return }
+        cancelDeadline(for: requestID)
+        continuation.resume(throwing: error)
+    }
+
+    private func failCompositeRequest(
+        _ requestID: UUID,
+        error: Error,
+        recordInvalidMessage: Bool = true
+    ) {
         guard let continuation = compositeContinuations.removeValue(forKey: requestID) else {
-            lastError = .invalidMessage
+            if recordInvalidMessage { lastError = .invalidMessage }
             return
         }
+        cancelDeadline(for: requestID)
+        discardCompositeRequest(requestID)
+        continuation.resume(throwing: error)
+        if recordInvalidMessage { lastError = .invalidMessage }
+    }
+
+    private func discardCompositeRequest(_ requestID: UUID) {
         compositeTransfers.removeValue(forKey: requestID)?.discard()
         compositeDirectories.removeValue(forKey: requestID)
         compositeDimensions.removeValue(forKey: requestID)
-        continuation.resume(throwing: error)
-        lastError = .invalidMessage
+    }
+
+    private enum PendingRequestKind {
+        case snapshot
+        case composite
+    }
+
+    private func scheduleDeadline(for requestID: UUID, kind: PendingRequestKind) {
+        let timeout = requestTimeout
+        requestDeadlineTasks[requestID] = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: timeout)
+            } catch {
+                return
+            }
+            guard let self else { return }
+            switch kind {
+            case .snapshot:
+                self.failSnapshotRequest(requestID, error: EditorBridgeError.timedOut)
+            case .composite:
+                self.failCompositeRequest(
+                    requestID,
+                    error: EditorBridgeError.timedOut,
+                    recordInvalidMessage: false
+                )
+            }
+        }
+    }
+
+    private func cancelDeadline(for requestID: UUID) {
+        requestDeadlineTasks.removeValue(forKey: requestID)?.cancel()
+    }
+
+    private func correlatedRequestID(from data: Data, type expectedType: EditorToNativeMessageType) -> UUID? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["protocolVersion"] as? Int == EditorBridgeEnvelope<EditorToNativeMessageType, BridgeJSONValue>.protocolVersion,
+              let requestIDString = object["requestId"] as? String,
+              let requestID = UUID(uuidString: requestIDString),
+              object["type"] as? String == expectedType.rawValue
+        else {
+            return nil
+        }
+        return requestID
     }
 
     private func correlatedCompositeRequestID(from data: Data) -> UUID? {
