@@ -6,10 +6,12 @@ const textSizes: EditorDefaults["textSize"][] = [16, 24, 36];
 const roughnesses: EditorDefaults["roughness"][] = [0, 1, 2];
 const opacities: EditorDefaults["opacity"][] = [0.25, 0.5, 0.75, 1];
 
-export function ContextStylePalette({ tool, defaults, onChange }: {
+export function ContextStylePalette({ tool, defaults, fillColor, onChange, onFillChange }: {
   tool: EditorTool;
   defaults: EditorDefaults;
+  fillColor: PaletteColor | null;
   onChange: (defaults: EditorDefaults) => void;
+  onFillChange: (color: PaletteColor | null) => void;
 }) {
   if (tool === "selection") return null;
 
@@ -44,7 +46,7 @@ export function ContextStylePalette({ tool, defaults, onChange }: {
       {showFill && (
         <label>
           Fill
-          <select aria-label="Fill" defaultValue="none">
+          <select aria-label="Fill" value={fillColor ?? "none"} onChange={(event) => onFillChange(parseFillColor(event.target.value))}>
             <option value="none">None</option>
             {colors.map((color) => <option key={color} value={color}>{color}</option>)}
           </select>
@@ -76,4 +78,10 @@ export function ContextStylePalette({ tool, defaults, onChange }: {
       )}
     </section>
   );
+}
+
+function parseFillColor(value: string): PaletteColor | null {
+  if (value === "none") return null;
+  if (colors.includes(value as PaletteColor)) return value as PaletteColor;
+  throw new Error(`Unsupported fill color: ${value}`);
 }

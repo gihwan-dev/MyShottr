@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { EditorElementSchema } from "../../model/schema";
-import { creationGesture } from "../../test/fixtures";
+import { creationGesture, fixtureDocument } from "../../test/fixtures";
 import { createElement } from "./createElement";
+import { createCanvasElement } from "../EditorCanvas";
 
 const context = {
   defaults: {
@@ -28,5 +29,20 @@ describe("createElement", () => {
     const element = createElement("numberMarker", creationGesture("numberMarker"), context);
 
     expect(element).toMatchObject({ type: "numberMarker", number: 7, zIndex: 12, seed: 99 });
+  });
+
+  it("applies the active rectangle fill while preserving marker and z-index derivation", () => {
+    const existingMarker = createElement("numberMarker", creationGesture("numberMarker"), context);
+    if (existingMarker.type !== "numberMarker") throw new Error("Expected a number marker");
+    const document = fixtureDocument({ elements: [
+      ...fixtureDocument().elements,
+      { ...existingMarker, id: "marker-9", zIndex: 9, number: 9 },
+    ] });
+
+    const rectangle = createCanvasElement(document, "rectangle", creationGesture("rectangle"), "#FADB14");
+    const marker = createCanvasElement(document, "numberMarker", creationGesture("numberMarker"), null);
+
+    expect(rectangle).toMatchObject({ type: "rectangle", fillColor: "#FADB14", zIndex: 10 });
+    expect(marker).toMatchObject({ type: "numberMarker", number: 10, zIndex: 10 });
   });
 });

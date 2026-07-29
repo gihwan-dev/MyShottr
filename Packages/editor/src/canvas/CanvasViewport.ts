@@ -30,6 +30,16 @@ export class CanvasViewport {
     return { ...this.transform };
   }
 
+  public panBy(delta: Point): void {
+    assertFinite(delta.x, "pan delta x");
+    assertFinite(delta.y, "pan delta y");
+    this.transform = {
+      ...this.transform,
+      panX: this.transform.panX + delta.x,
+      panY: this.transform.panY + delta.y,
+    };
+  }
+
   public toSourcePoint(point: Point): Point {
     assertFinite(point.x, "pointer x");
     assertFinite(point.y, "pointer y");

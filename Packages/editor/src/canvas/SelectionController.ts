@@ -46,6 +46,66 @@ export function moveElementWithinBounds(
   }
 }
 
+export function duplicateElementWithinBounds(
+  element: EditorElement,
+  targetPosition: Point,
+  bounds: SourceBounds,
+): EditorElement {
+  return moveElementWithinBounds(element, targetPosition, bounds);
+}
+
+export function resizeElementWithinBounds(
+  element: EditorElement,
+  targetPosition: Point,
+  scaleX: number,
+  scaleY: number,
+  rotation: number,
+  bounds: SourceBounds,
+): EditorElement {
+  if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX < 0 || scaleY < 0) {
+    throw new Error("Transform scale must be a non-negative finite number");
+  }
+  if (!Number.isFinite(rotation)) {
+    throw new Error("Transform rotation must be finite");
+  }
+  assertFinite(targetPosition.x, "target x");
+  assertFinite(targetPosition.y, "target y");
+  const translated = translateElement(element, targetPosition);
+  const dimensions = { width: translated.width * scaleX, height: translated.height * scaleY, rotation };
+  const resized = (() => {
+    switch (translated.type) {
+      case "arrow":
+        return {
+          ...translated,
+          ...dimensions,
+          points: [scalePoint(translated.points[0], translated, scaleX, scaleY), scalePoint(translated.points[1], translated, scaleX, scaleY)] as [Point, Point],
+        };
+      case "freehand":
+      case "highlighter":
+        return { ...translated, ...dimensions, points: translated.points.map((point) => scalePoint(point, translated, scaleX, scaleY)) };
+      default:
+        return { ...translated, ...dimensions };
+    }
+  })();
+
+  return moveElementWithinBounds(resized, { x: resized.x, y: resized.y }, bounds);
+}
+
+function translateElement(element: EditorElement, targetPosition: Point): EditorElement {
+  const deltaX = targetPosition.x - element.x;
+  const deltaY = targetPosition.y - element.y;
+  const translate = (point: Point): Point => ({ x: point.x + deltaX, y: point.y + deltaY });
+  switch (element.type) {
+    case "arrow":
+      return { ...element, x: targetPosition.x, y: targetPosition.y, points: [translate(element.points[0]), translate(element.points[1])] };
+    case "freehand":
+    case "highlighter":
+      return { ...element, x: targetPosition.x, y: targetPosition.y, points: element.points.map(translate) };
+    default:
+      return { ...element, x: targetPosition.x, y: targetPosition.y };
+  }
+}
+
 function clampKeepingOnePixelVisible(position: number, size: number, sourceSize: number): number {
   return Math.min(Math.max(position, 1 - size), sourceSize - 1);
 }
@@ -63,4 +123,11 @@ function assertFinite(value: number, name: string): void {
   if (!Number.isFinite(value)) {
     throw new Error(`${name} must be finite`);
   }
+}
+
+function scalePoint(point: Point, element: EditorElement, scaleX: number, scaleY: number): Point {
+  return {
+    x: element.x + (point.x - element.x) * scaleX,
+    y: element.y + (point.y - element.y) * scaleY,
+  };
 }

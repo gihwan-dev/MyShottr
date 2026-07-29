@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorCanvas } from "./canvas/EditorCanvas";
-import { SelectionController } from "./canvas/SelectionController";
+import { duplicateElementWithinBounds, SelectionController } from "./canvas/SelectionController";
 import { keyboardCommandFor, isTextEntryTarget } from "./canvas/tools/ToolController";
 import { ContextStylePalette } from "./components/ContextStylePalette";
 import { FloatingToolPalette } from "./components/FloatingToolPalette";
@@ -8,7 +8,7 @@ import { ZoomControls } from "./components/ZoomControls";
 import { createEmptyDocument } from "./model/defaults";
 import { createHistoryStore, type HistoryStore } from "./model/history";
 import { findElement } from "./model/reducer";
-import type { EditorCommand, EditorDocument, EditorTool } from "./model/elements";
+import type { EditorCommand, EditorDocument, EditorTool, PaletteColor, Point } from "./model/elements";
 import "./styles.css";
 
 export type EditorAppProps = {
@@ -20,23 +20,30 @@ export type EditorAppProps = {
 export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorAppProps) {
   const history = useRef<HistoryStore | undefined>(undefined);
   if (!history.current) history.current = createHistoryStore(initialDocument);
+  const defaults = useRef(initialDocument.defaults);
   const selection = useRef(new SelectionController());
-  const [document, setDocument] = useState(() => history.current!.document);
+  const [document, setDocument] = useState(() => ({ ...history.current!.document, defaults: defaults.current }));
   const [selectedId, setSelectedId] = useState<string>();
   const [tool, setTool] = useState<EditorTool>("selection");
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
+  const [rectangleFillColor, setRectangleFillColor] = useState<PaletteColor | null>(null);
+
+  const publishDocument = useCallback(() => {
+    const next = { ...history.current!.document, defaults: defaults.current };
+    setDocument(next);
+    onChange(next);
+    return next;
+  }, [onChange]);
 
   const dispatch = useCallback((command: EditorCommand) => {
     history.current!.dispatch(command);
-    const next = history.current!.document;
-    setDocument(next);
-    onChange(next);
-  }, [onChange]);
-  const setDefaults = useCallback((defaults: EditorDocument["defaults"]) => {
-    const next = { ...document, defaults };
-    setDocument(next);
-    onChange(next);
-  }, [document, onChange]);
+    publishDocument();
+  }, [publishDocument]);
+  const setDefaults = useCallback((nextDefaults: EditorDocument["defaults"]) => {
+    defaults.current = nextDefaults;
+    publishDocument();
+  }, [publishDocument]);
   const select = useCallback((id: string | undefined) => {
     if (id) selection.current.select(id);
     else selection.current.clear();
@@ -51,7 +58,12 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
     const source = findElement(history.current!.document, selectedId);
     const nextSeed = Math.max(0, ...document.elements.map((element) => element.seed)) + 1;
     const nextZIndex = Math.max(-1, ...document.elements.map((element) => element.zIndex)) + 1;
-    dispatch({ type: "create", element: { ...source, id: `${source.type}-${nextSeed}`, seed: nextSeed, zIndex: nextZIndex, x: source.x + 12, y: source.y + 12 } });
+    const offset = duplicateElementWithinBounds(
+      source,
+      { x: source.x + 12, y: source.y + 12 },
+      { sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight },
+    );
+    dispatch({ type: "create", element: { ...offset, id: `${source.type}-${nextSeed}`, seed: nextSeed, zIndex: nextZIndex } });
   }, [dispatch, document.elements, selectedId]);
 
   useEffect(() => {
@@ -73,9 +85,7 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
       }
       if (command === "undo" || command === "redo") {
         history.current![command]();
-        const next = history.current!.document;
-        setDocument(next);
-        onChange(next);
+        publishDocument();
         select(undefined);
         return;
       }
@@ -83,7 +93,7 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dispatch, duplicateSelection, onChange, select, selectTool, selectedId]);
+  }, [dispatch, duplicateSelection, publishDocument, select, selectTool, selectedId]);
 
   return (
     <main className="editor-app" aria-label="MyShottr editor">
@@ -92,19 +102,20 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
         sourceImageURL={sourceImageURL}
         tool={tool}
         zoom={zoom}
+        pan={pan}
+        rectangleFillColor={rectangleFillColor}
         selectedId={selectedId}
         onSelect={select}
         onCommand={dispatch}
         onBeginTransaction={(label) => history.current!.beginTransaction(label)}
         onCommitTransaction={() => {
           history.current!.commitTransaction();
-          const next = history.current!.document;
-          setDocument(next);
-          onChange(next);
+          publishDocument();
         }}
+        onPanChange={setPan}
       />
       <FloatingToolPalette tool={tool} onSelect={selectTool} />
-      <ContextStylePalette tool={tool} defaults={document.defaults} onChange={setDefaults} />
+      <ContextStylePalette tool={tool} defaults={document.defaults} fillColor={rectangleFillColor} onChange={setDefaults} onFillChange={setRectangleFillColor} />
       <ZoomControls zoom={zoom} onChange={setZoom} />
     </main>
   );
