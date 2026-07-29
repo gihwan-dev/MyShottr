@@ -1,0 +1,45 @@
+name: MyShottr
+options:
+  bundleIdPrefix: com.myshottr
+  deploymentTarget:
+    macOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  MyShottr:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/MyShottrApp
+    info:
+      path: Config/MyShottr-Info.plist
+    entitlements:
+      path: Config/MyShottr.entitlements
+    preBuildScripts:
+      - name: Build Local Editor
+        script: Scripts/build-editor.sh
+        basedOnDependencyAnalysis: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.myshottr.app
+        PRODUCT_NAME: MyShottr
+        CODE_SIGN_STYLE: Automatic
+  MyShottrTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/MyShottrTests
+    dependencies:
+      - target: MyShottr
+schemes:
+  MyShottr:
+    build:
+      targets:
+        MyShottr: all
+        MyShottrTests: [test]
+    test:
+      targets:
+        - MyShottrTests
