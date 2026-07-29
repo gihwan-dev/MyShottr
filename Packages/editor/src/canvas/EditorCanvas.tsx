@@ -3,7 +3,7 @@ import type Konva from "konva";
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Transformer } from "react-konva";
 import type { CreationGesture, EditorCommand, EditorDocument, EditorElement, EditorTool, PaletteColor, Point } from "../model/elements";
 import { CanvasViewport } from "./CanvasViewport";
-import { moveElementWithinBounds, resizeElementWithinBounds } from "./SelectionController";
+import { CanvasPointerController, moveElementWithinBounds, resizeElementWithinBounds } from "./SelectionController";
 import { createElement } from "./tools/createElement";
 import { renderElement } from "./renderElement";
 
@@ -28,6 +28,9 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   const transformer = useRef<Konva.Transformer | null>(null);
   const gesture = useRef<{ start: Point; points: Point[] } | undefined>(undefined);
   const panGesture = useRef<{ start: Point; pan: Point } | undefined>(undefined);
+  const pointerController = useRef(new CanvasPointerController());
+  const suppressedAnnotationDrag = useRef(false);
+  const suppressedTransform = useRef(false);
   const [isTransforming, setIsTransforming] = useState(false);
 
   useEffect(() => {
@@ -69,7 +72,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
         onMouseDown={(event) => {
           const stage = event.target.getStage();
           if (!stage) throw new Error("Canvas stage is unavailable");
-          if (event.evt.shiftKey) {
+          if (pointerController.current.begin({ shiftKey: event.evt.shiftKey }) === "pan") {
             const start = stage.getPointerPosition();
             if (!start) throw new Error("Canvas pointer position is unavailable");
             panGesture.current = { start, pan };
@@ -103,9 +106,11 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
           if (!stage) throw new Error("Canvas stage is unavailable");
           if (panGesture.current) {
             panGesture.current = undefined;
+            pointerController.current.end();
             return;
           }
           finishGesture(stage);
+          if (tool !== "selection") pointerController.current.end();
         }}
       >
         <Layer id="sourceLayer" listening={false}>
@@ -119,18 +124,43 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
               selected: selectedId === element.id,
               draggable: tool === "selection" && selectedId === element.id,
               onSelect: (id) => onSelect(id),
-              onDragStart: () => onBeginTransaction("move"),
+              onDragStart: (node) => {
+                if (!pointerController.current.shouldDispatchAnnotationDrag()) {
+                  suppressedAnnotationDrag.current = true;
+                  node.stopDrag();
+                  return;
+                }
+                onBeginTransaction("move");
+              },
               onDragMove: (id, x, y) => {
+                if (!pointerController.current.shouldDispatchAnnotationDrag()) return;
                 const elementToMove = document.elements.find((candidate) => candidate.id === id);
                 if (!elementToMove) throw new Error(`Cannot move missing element: ${id}`);
                 onCommand({ type: "update", element: moveElementWithinBounds(elementToMove, { x, y }, { sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight }) });
               },
-              onDragEnd: onCommitTransaction,
+              onDragEnd: () => {
+                if (suppressedAnnotationDrag.current) {
+                  suppressedAnnotationDrag.current = false;
+                  return;
+                }
+                if (!pointerController.current.shouldDispatchAnnotationDrag()) return;
+                onCommitTransaction();
+                pointerController.current.end();
+              },
               onTransformStart: () => {
+                if (!pointerController.current.shouldDispatchAnnotationDrag()) {
+                  suppressedTransform.current = true;
+                  return;
+                }
                 setIsTransforming(true);
                 onBeginTransaction("transform");
               },
               onTransformEnd: (id, node) => {
+                if (suppressedTransform.current) {
+                  suppressedTransform.current = false;
+                  return;
+                }
+                if (!pointerController.current.shouldDispatchAnnotationDrag()) return;
                 const elementToTransform = document.elements.find((candidate) => candidate.id === id);
                 if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
                 onCommand({
@@ -146,6 +176,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                 });
                 setIsTransforming(false);
                 onCommitTransaction();
+                pointerController.current.end();
               },
               registerNode: (id, node) => {
                 if (node) nodes.current.set(id, node);

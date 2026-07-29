@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { allElementFixtures, fixtureRect } from "../test/fixtures";
-import { duplicateElementWithinBounds, resizeElementWithinBounds } from "./SelectionController";
+import { CanvasPointerController, duplicateElementWithinBounds, resizeElementWithinBounds } from "./SelectionController";
 
 describe("canvas element bounds", () => {
   it("offsets every path point when duplicating an arrow", () => {
@@ -23,5 +23,18 @@ describe("canvas element bounds", () => {
     const transformed = resizeElementWithinBounds(rectangle, { x: -50, y: 20 }, 0.1, 1, 0, { sourceWidth: 100, sourceHeight: 100 });
 
     expect(transformed).toMatchObject({ x: -9, y: 20, width: 10, height: 20 });
+  });
+});
+
+describe("CanvasPointerController", () => {
+  it("routes Shift-drag on a selected element to pan without an annotation move", () => {
+    const controller = new CanvasPointerController();
+
+    expect(controller.begin({ shiftKey: true })).toBe("pan");
+    expect(controller.shouldDispatchAnnotationDrag()).toBe(false);
+    controller.end();
+
+    expect(controller.begin({ shiftKey: false })).toBe("annotation");
+    expect(controller.shouldDispatchAnnotationDrag()).toBe(true);
   });
 });

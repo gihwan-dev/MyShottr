@@ -8,10 +8,10 @@ export type ElementInteractionHandlers = {
   selected: boolean;
   draggable: boolean;
   onSelect: (id: string) => void;
-  onDragStart: () => void;
+  onDragStart: (node: Konva.Group) => void;
   onDragMove: (id: string, x: number, y: number) => void;
   onDragEnd: () => void;
-  onTransformStart: () => void;
+  onTransformStart: (node: Konva.Group) => void;
   onTransformEnd: (id: string, node: Konva.Group) => void;
   registerNode: (id: string, node: Konva.Group | null) => void;
 };
@@ -28,13 +28,13 @@ export function renderElement(element: EditorElement, handlers: ElementInteracti
     draggable: handlers.draggable,
     onClick: () => handlers.onSelect(element.id),
     onTap: () => handlers.onSelect(element.id),
-    onDragStart: handlers.onDragStart,
+    onDragStart: (event) => handlers.onDragStart(event.currentTarget as Konva.Group),
     onDragMove: (event) => {
       const group = event.currentTarget as Konva.Group;
       handlers.onDragMove(element.id, group.x(), group.y());
     },
     onDragEnd: handlers.onDragEnd,
-    onTransformStart: handlers.onTransformStart,
+    onTransformStart: (event) => handlers.onTransformStart(event.currentTarget as Konva.Group),
     onTransformEnd: (event) => handlers.onTransformEnd(element.id, event.currentTarget as Konva.Group),
   };
 

@@ -20,6 +20,23 @@ export class SelectionController {
   }
 }
 
+export class CanvasPointerController {
+  private mode: "annotation" | "idle" | "pan" = "idle";
+
+  public begin(event: { shiftKey: boolean }): "annotation" | "pan" {
+    this.mode = event.shiftKey ? "pan" : "annotation";
+    return this.mode;
+  }
+
+  public shouldDispatchAnnotationDrag(): boolean {
+    return this.mode === "annotation";
+  }
+
+  public end(): void {
+    this.mode = "idle";
+  }
+}
+
 export function moveElementWithinBounds(
   element: EditorElement,
   targetPosition: Point,
