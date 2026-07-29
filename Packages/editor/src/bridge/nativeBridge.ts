@@ -27,6 +27,7 @@ export type NativeBridge = {
 };
 
 const nativeMessageEvent = "myshottr:native-message";
+const uuidPattern = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 
 export function createNativeBridge(): NativeBridge {
   const post = async <T extends EditorToNativeType>(requestId: string, type: T, payload: PayloadFor<T>): Promise<void> => {
@@ -58,16 +59,21 @@ export function createNativeBridge(): NativeBridge {
         }
         const message = NativeToEditorEnvelopeSchema.safeParse(event.detail);
         if (!message.success) {
-          const code = typeof event.detail === "object" && event.detail !== null && "type" in event.detail
-            && event.detail.type === "loadDocument"
-            ? "INVALID_DOCUMENT"
-            : "INVALID_MESSAGE";
-          void this.send("bridgeError", {
+          const loadRequestID = typeof event.detail === "object" && event.detail !== null
+            && "type" in event.detail && event.detail.type === "loadDocument"
+            && "requestId" in event.detail && typeof event.detail.requestId === "string"
+            && uuidPattern.test(event.detail.requestId)
+            ? event.detail.requestId
+            : undefined;
+          const code = loadRequestID ? "INVALID_DOCUMENT" : "INVALID_MESSAGE";
+          const payload = {
             code,
             message: code === "INVALID_DOCUMENT"
               ? "Native attempted to load an invalid document"
               : "Native sent an invalid bridge message",
-          });
+          } as const;
+          if (loadRequestID) void this.sendCorrelated(loadRequestID, "bridgeError", payload);
+          else void this.send("bridgeError", payload);
           return;
         }
         handler(message.data);

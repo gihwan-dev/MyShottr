@@ -15,6 +15,7 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
 
         handler.webView(WKWebView(frame: .zero), start: task)
         await Task.yield()
+        await Task.yield()
 
         XCTAssertEqual(task.response?.mimeType, "image/png")
         XCTAssertEqual(task.data, png)
@@ -40,10 +41,29 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
             let task = SchemeTask(request: request)
             handler.webView(WKWebView(frame: .zero), start: task)
             await Task.yield()
+            await Task.yield()
             XCTAssertNotNil(task.error)
             XCTAssertNil(task.data)
         }
         XCTAssertEqual(resolveCount, 1)
+    }
+
+    func testStopCancelsAQueuedLookupWithoutCompletingTheSchemeTask() async {
+        let handler = EditorResourceSchemeHandler { _ in
+            XCTFail("Cancelled lookup must not read session bytes")
+            return Data()
+        }
+        let task = SchemeTask(url: resourceURL(documentID: UUID()))
+
+        handler.webView(WKWebView(frame: .zero), start: task)
+        handler.webView(WKWebView(frame: .zero), stop: task)
+        await Task.yield()
+        await Task.yield()
+
+        XCTAssertNil(task.response)
+        XCTAssertNil(task.data)
+        XCTAssertNil(task.error)
+        XCTAssertFalse(task.didFinishCalled)
     }
 
     private func resourceURL(documentID: UUID) -> URL {

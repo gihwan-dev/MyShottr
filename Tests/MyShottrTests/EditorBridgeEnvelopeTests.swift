@@ -122,6 +122,23 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
 
         bridge.receive(data: try error.encodedData())
         XCTAssertFalse(session.isOpen)
+        XCTAssertNil(session.sourcePNG(for: loadDocumentID(from: load)))
+        XCTAssertEqual(bridge.lastError, .invalidDocument)
+    }
+
+    @MainActor
+    func testDeferredLoadFailureDiscardsStagedSourceBytes() throws {
+        let session = DocumentSession()
+        let bridge = EditorBridge(session: session)
+        var project = try project(annotationDocument: validDocument())
+        project.annotationJSON = Data("not json".utf8)
+
+        try bridge.load(project: project)
+        XCTAssertEqual(session.sourcePNG(for: project.manifest.documentId), project.originalPNG)
+
+        bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
+        XCTAssertFalse(session.isOpen)
+        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
         XCTAssertEqual(bridge.lastError, .invalidDocument)
     }
 
@@ -144,6 +161,14 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
 
     private func annotationValue(_ document: [String: Any]) throws -> BridgeJSONValue {
         try JSONDecoder().decode(BridgeJSONValue.self, from: JSONSerialization.data(withJSONObject: document))
+    }
+
+    private func loadDocumentID(from envelope: NativeToEditorEnvelope) -> UUID {
+        guard case let .object(payload) = envelope.payload,
+              case let .string(documentID)? = payload["documentId"],
+              let documentID = UUID(uuidString: documentID)
+        else { fatalError("Invalid load fixture") }
+        return documentID
     }
 
     private func validDocument() -> [String: Any] {

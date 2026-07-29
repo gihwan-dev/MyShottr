@@ -34,6 +34,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             pendingProject = project
             if editorIsReady { try sendLoadDocument(project) }
         } catch {
+            discardPendingLoad()
             lastError = .invalidDocument
             throw EditorBridgeError.invalidDocument
         }
@@ -95,6 +96,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 do {
                     try sendLoadDocument(pendingProject)
                 } catch {
+                    discardPendingLoad()
                     lastError = .invalidDocument
                 }
             }
@@ -156,6 +158,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         ])
         let requestID = try send(type: .loadDocument, payload: payload)
         pendingLoadRequestID = requestID
+    }
+
+    private func discardPendingLoad() {
+        session.discardStaged()
+        pendingProject = nil
+        pendingLoadRequestID = nil
     }
 
     @discardableResult

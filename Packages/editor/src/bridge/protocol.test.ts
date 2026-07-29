@@ -66,6 +66,7 @@ describe("EditorToNativeEnvelopeSchema", () => {
 
     expect(sent).toHaveLength(1);
     expect(EditorToNativeEnvelopeSchema.parse(sent[0])).toMatchObject({
+      requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
       type: "bridgeError",
       payload: { code: "INVALID_DOCUMENT" },
     });
