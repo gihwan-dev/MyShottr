@@ -66,6 +66,41 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
         XCTAssertFalse(task.didFinishCalled)
     }
 
+    func testCompletionWinsBeforeStopReturnsWhenDeliveryWasAlreadyClaimed() async {
+        let deliveryClaimed = DispatchSemaphore(value: 0)
+        let stopStarted = DispatchSemaphore(value: 0)
+        let releaseDelivery = DispatchSemaphore(value: 0)
+        let task = SchemeTask(url: resourceURL(documentID: UUID()))
+        let handler = EditorResourceSchemeHandler(
+            pngForDocument: { _ in Data([0x89, 0x50, 0x4E, 0x47]) },
+            deliveryBarrier: {
+                deliveryClaimed.signal()
+                releaseDelivery.wait()
+            }
+        )
+        let webView = WKWebView(frame: .zero)
+
+        let stopFinished = expectation(description: "stop returns after claimed delivery")
+        DispatchQueue.global().async {
+            deliveryClaimed.wait()
+            stopStarted.signal()
+            handler.webView(webView, stop: task)
+            stopFinished.fulfill()
+        }
+        DispatchQueue.global().async {
+            stopStarted.wait()
+            releaseDelivery.signal()
+        }
+
+        handler.webView(webView, start: task)
+        await fulfillment(of: [stopFinished])
+
+        XCTAssertEqual(task.response?.mimeType, "image/png")
+        XCTAssertEqual(task.data, Data([0x89, 0x50, 0x4E, 0x47]))
+        XCTAssertTrue(task.didFinishCalled)
+        XCTAssertNil(task.error)
+    }
+
     private func resourceURL(documentID: UUID) -> URL {
         URL(string: "myshottr-resource://document/\(documentID.uuidString)/original.png")!
     }
