@@ -194,7 +194,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         let annotationDocument = try JSONDecoder().decode(BridgeJSONValue.self, from: project.annotationJSON)
         let payload: BridgeJSONValue = .object([
             "documentId": .string(project.manifest.documentId.uuidString),
-            "sourceImageURL": .string("myshottr-resource://document/\(project.manifest.documentId.uuidString)/original.png"),
+            "sourceImageURL": .string("myshottr-editor://editor/document/\(project.manifest.documentId.uuidString)/original.png"),
             "annotationDocument": annotationDocument,
         ])
         let requestID = try send(type: .loadDocument, payload: payload)

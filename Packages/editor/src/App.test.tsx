@@ -107,7 +107,7 @@ describe("EditorApp", () => {
       type: "loadDocument",
       payload: {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        sourceImageURL: "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
       },
     });
@@ -142,7 +142,7 @@ describe("EditorApp", () => {
       type: "loadDocument",
       payload: {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        sourceImageURL: "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
       },
     });
@@ -181,7 +181,7 @@ describe("EditorApp", () => {
       type: "loadDocument",
       payload: {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        sourceImageURL: "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
       },
     });

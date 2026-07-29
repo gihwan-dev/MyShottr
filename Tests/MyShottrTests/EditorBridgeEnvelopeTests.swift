@@ -87,6 +87,10 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
         let load = try XCTUnwrap(outgoing.last)
         XCTAssertEqual(load.type, .loadDocument)
+        XCTAssertEqual(
+            sourceImageURL(from: load),
+            "myshottr-editor://editor/document/\(project.manifest.documentId.uuidString)/original.png"
+        )
 
         let wrongSnapshot = try EditorToNativeEnvelope(
             requestId: UUID(),
@@ -169,6 +173,13 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
               let documentID = UUID(uuidString: documentID)
         else { fatalError("Invalid load fixture") }
         return documentID
+    }
+
+    private func sourceImageURL(from envelope: NativeToEditorEnvelope) -> String {
+        guard case let .object(payload) = envelope.payload,
+              case let .string(sourceImageURL)? = payload["sourceImageURL"]
+        else { fatalError("Invalid load fixture") }
+        return sourceImageURL
     }
 
     private func validDocument() -> [String: Any] {

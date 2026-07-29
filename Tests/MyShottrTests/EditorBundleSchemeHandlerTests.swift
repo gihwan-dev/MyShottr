@@ -8,7 +8,7 @@ final class EditorBundleSchemeHandlerTests: XCTestCase {
     func testServesOnlyIndexAndHashedJavaScriptAndStylesheetAssets() async throws {
         let root = try makeBundleRoot()
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
-        let handler = EditorBundleSchemeHandler(rootURL: root)
+        let handler = EditorBundleSchemeHandler(rootURL: root, pngForDocument: { _ in nil })
         let indexTask = SchemeTask(url: editorURL("/index.html"))
         let scriptTask = SchemeTask(url: editorURL("/assets/index-AbC_12.js"))
         let stylesheetTask = SchemeTask(url: editorURL("/assets/index-AbC_12.css"))
@@ -36,7 +36,7 @@ final class EditorBundleSchemeHandlerTests: XCTestCase {
     func testRejectsNonGETUnknownAssetsTraversalAndMalformedURLs() async throws {
         let root = try makeBundleRoot()
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
-        let handler = EditorBundleSchemeHandler(rootURL: root)
+        let handler = EditorBundleSchemeHandler(rootURL: root, pngForDocument: { _ in nil })
         let invalidRequests = [
             request(url: editorURL("/assets/other.js"), method: "GET"),
             request(url: editorURL("/assets/index-Unreferenced.js"), method: "GET"),
@@ -74,6 +74,7 @@ final class EditorBundleSchemeHandlerTests: XCTestCase {
         let lookupReturned = expectation(description: "cancelled bundle lookup returns")
         let handler = EditorBundleSchemeHandler(
             rootURL: root,
+            pngForDocument: { _ in nil },
             taskAttachmentBarrier: {
                 attachmentPaused.signal()
                 releaseAttachment.wait()

@@ -4,14 +4,17 @@ import XCTest
 @testable import MyShottr
 
 @MainActor
-final class EditorResourceSchemeHandlerTests: XCTestCase {
+final class EditorDocumentResourceSchemeHandlerTests: XCTestCase {
     func testServesOnlyTheActiveSessionPNGAtTheExactDocumentURL() async {
         let activeDocumentID = UUID()
         let png = Data([0x89, 0x50, 0x4E, 0x47])
         let terminalCallback = expectation(description: "PNG delivery finishes")
-        let handler = EditorResourceSchemeHandler { documentID in
-            documentID == activeDocumentID ? png : nil
-        }
+        let handler = EditorBundleSchemeHandler(
+            rootURL: emptyBundleRoot,
+            pngForDocument: { documentID in
+                documentID == activeDocumentID ? png : nil
+            }
+        )
         let task = SchemeTask(
             url: resourceURL(documentID: activeDocumentID),
             onTerminalCallback: { terminalCallback.fulfill() }
@@ -34,14 +37,18 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
     func testRejectsUnknownIDsExtraSegmentsNonGETAndTraversalWithoutResolvingBytes() async {
         let activeDocumentID = UUID()
         var resolveCount = 0
-        let handler = EditorResourceSchemeHandler { documentID in
-            resolveCount += 1
-            return documentID == activeDocumentID ? Data([0x89, 0x50, 0x4E, 0x47]) : nil
-        }
+        let handler = EditorBundleSchemeHandler(
+            rootURL: emptyBundleRoot,
+            pngForDocument: { documentID in
+                resolveCount += 1
+                return documentID == activeDocumentID ? Data([0x89, 0x50, 0x4E, 0x47]) : nil
+            }
+        )
         let invalidRequests = [
             URLRequest(url: resourceURL(documentID: UUID())),
-            URLRequest(url: URL(string: "myshottr-resource://document/\(activeDocumentID.uuidString)/original.png/extra")!),
-            URLRequest(url: URL(string: "myshottr-resource://document/../original.png")!),
+            URLRequest(url: URL(string: "myshottr-editor://editor/document/\(activeDocumentID.uuidString)/original.png/extra")!),
+            URLRequest(url: URL(string: "myshottr-editor://editor/document/../original.png")!),
+            URLRequest(url: URL(string: "myshottr-resource://document/\(activeDocumentID.uuidString)/original.png")!),
             request(url: resourceURL(documentID: activeDocumentID), method: "POST"),
         ]
 
@@ -72,7 +79,8 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
 
     func testStopCancelsAQueuedLookupWithoutCompletingTheSchemeTask() async {
         let lookupReturned = expectation(description: "cancelled lookup returns")
-        let handler = EditorResourceSchemeHandler(
+        let handler = EditorBundleSchemeHandler(
+            rootURL: emptyBundleRoot,
             pngForDocument: { _ in
                 XCTFail("Cancelled lookup must not read session bytes")
                 return Data()
@@ -98,7 +106,8 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
         let releaseAttachment = DispatchSemaphore(value: 0)
         let lookupReturned = expectation(description: "stopped startup task returns")
         let task = SchemeTask(url: resourceURL(documentID: UUID()))
-        let handler = EditorResourceSchemeHandler(
+        let handler = EditorBundleSchemeHandler(
+            rootURL: emptyBundleRoot,
             pngForDocument: { _ in
                 XCTFail("A startup stopped before attachment must not read session bytes")
                 return Data()
@@ -134,7 +143,8 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
         let stopStarted = DispatchSemaphore(value: 0)
         let releaseDelivery = DispatchSemaphore(value: 0)
         let task = SchemeTask(url: resourceURL(documentID: UUID()))
-        let handler = EditorResourceSchemeHandler(
+        let handler = EditorBundleSchemeHandler(
+            rootURL: emptyBundleRoot,
             pngForDocument: { _ in Data([0x89, 0x50, 0x4E, 0x47]) },
             deliveryBarrier: {
                 deliveryClaimed.signal()
@@ -171,7 +181,8 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
     func testRegistrationExistsBeforeLookupTaskCanDeliver() async {
         let deliveryAttemptReturned = DispatchSemaphore(value: 0)
         let task = SchemeTask(url: resourceURL(documentID: UUID()))
-        let handler = EditorResourceSchemeHandler(
+        let handler = EditorBundleSchemeHandler(
+            rootURL: emptyBundleRoot,
             pngForDocument: { _ in Data([0x89, 0x50, 0x4E, 0x47]) },
             taskAttachmentBarrier: {
                 deliveryAttemptReturned.wait()
@@ -201,7 +212,12 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
     }
 
     private func resourceURL(documentID: UUID) -> URL {
-        URL(string: "myshottr-resource://document/\(documentID.uuidString)/original.png")!
+        URL(string: "myshottr-editor://editor/document/\(documentID.uuidString)/original.png")!
+    }
+
+    private var emptyBundleRoot: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("EditorDocumentResourceSchemeHandlerTests-Unused", isDirectory: true)
     }
 
     private func request(url: URL, method: String) -> URLRequest {

@@ -2,6 +2,11 @@ import Foundation
 import WebKit
 
 final class EditorBundleSchemeHandler: NSObject, WKURLSchemeHandler {
+    private enum Resource {
+        case bundledFile(url: URL, mimeType: String)
+        case documentPNG(UUID)
+    }
+
     private struct LookupRegistration: Equatable, Sendable {
         let token = UUID()
     }
@@ -97,21 +102,27 @@ final class EditorBundleSchemeHandler: NSObject, WKURLSchemeHandler {
 
     private let rootURL: URL
     private let referencedAssets: [String: String]
+    private let pngForDocument: @MainActor @Sendable (UUID) -> Data?
     private let deliveryBarrier: (@Sendable () -> Void)?
     private let taskAttachmentBarrier: (@Sendable () -> Void)?
+    private let deliveryAttemptDidReturn: (@Sendable () -> Void)?
     private let lookupTaskDidReturn: (@Sendable () -> Void)?
     private let lookupRegistry = LookupRegistry()
 
     init(
         rootURL: URL,
+        pngForDocument: @escaping @MainActor @Sendable (UUID) -> Data?,
         deliveryBarrier: (@Sendable () -> Void)? = nil,
         taskAttachmentBarrier: (@Sendable () -> Void)? = nil,
+        deliveryAttemptDidReturn: (@Sendable () -> Void)? = nil,
         lookupTaskDidReturn: (@Sendable () -> Void)? = nil
     ) {
         self.rootURL = rootURL.standardizedFileURL
         self.referencedAssets = Self.referencedAssets(in: rootURL.standardizedFileURL)
+        self.pngForDocument = pngForDocument
         self.deliveryBarrier = deliveryBarrier
         self.taskAttachmentBarrier = taskAttachmentBarrier
+        self.deliveryAttemptDidReturn = deliveryAttemptDidReturn
         self.lookupTaskDidReturn = lookupTaskDidReturn
     }
 
@@ -128,7 +139,7 @@ final class EditorBundleSchemeHandler: NSObject, WKURLSchemeHandler {
               requestURL.password == nil,
               requestURL.query == nil,
               requestURL.fragment == nil,
-              let file = bundledFile(for: requestURL)
+              let resource = resource(for: requestURL)
         else {
             let rejectionTask = Task { @MainActor [lookupRegistry, deliveryBarrier, lookupTaskDidReturn] in
                 defer { lookupTaskDidReturn?() }
@@ -142,19 +153,41 @@ final class EditorBundleSchemeHandler: NSObject, WKURLSchemeHandler {
             return
         }
 
-        let lookupTask = Task { @MainActor [lookupRegistry, deliveryBarrier, lookupTaskDidReturn] in
+        let lookupTask = Task { @MainActor [
+            pngForDocument,
+            lookupRegistry,
+            deliveryBarrier,
+            deliveryAttemptDidReturn,
+            lookupTaskDidReturn
+        ] in
+            defer { deliveryAttemptDidReturn?() }
             defer { lookupTaskDidReturn?() }
             guard lookupRegistry.isRegistered(taskID, registration: registration), !Task.isCancelled else { return }
-            do {
-                let data = try Data(contentsOf: file.url)
-                guard lookupRegistry.isRegistered(taskID, registration: registration), !Task.isCancelled else { return }
-                lookupRegistry.deliver(taskID, registration: registration, deliveryBarrier: deliveryBarrier) {
-                    callbacks.finish(data: data, responseURL: requestURL, mimeType: file.mimeType)
+            let data: Data
+            let mimeType: String
+            switch resource {
+            case let .bundledFile(url, bundledMimeType):
+                guard let bundledData = try? Data(contentsOf: url) else {
+                    lookupRegistry.deliver(taskID, registration: registration, deliveryBarrier: deliveryBarrier) {
+                        callbacks.reject()
+                    }
+                    return
                 }
-            } catch {
-                lookupRegistry.deliver(taskID, registration: registration, deliveryBarrier: deliveryBarrier) {
-                    callbacks.reject()
+                data = bundledData
+                mimeType = bundledMimeType
+            case let .documentPNG(documentID):
+                guard let png = pngForDocument(documentID) else {
+                    lookupRegistry.deliver(taskID, registration: registration, deliveryBarrier: deliveryBarrier) {
+                        callbacks.reject()
+                    }
+                    return
                 }
+                data = png
+                mimeType = "image/png"
+            }
+            guard lookupRegistry.isRegistered(taskID, registration: registration), !Task.isCancelled else { return }
+            lookupRegistry.deliver(taskID, registration: registration, deliveryBarrier: deliveryBarrier) {
+                callbacks.finish(data: data, responseURL: requestURL, mimeType: mimeType)
             }
         }
         taskAttachmentBarrier?()
@@ -169,10 +202,17 @@ final class EditorBundleSchemeHandler: NSObject, WKURLSchemeHandler {
         lookupRegistry.count
     }
 
-    private nonisolated func bundledFile(for requestURL: URL) -> (url: URL, mimeType: String)? {
+    private nonisolated func resource(for requestURL: URL) -> Resource? {
         guard let encodedPath = URLComponents(url: requestURL, resolvingAgainstBaseURL: false)?.percentEncodedPath else { return nil }
         if encodedPath == "/index.html" {
-            return (rootURL.appendingPathComponent("index.html"), "text/html")
+            return .bundledFile(
+                url: rootURL.appendingPathComponent("index.html"),
+                mimeType: "text/html"
+            )
+        }
+        if let documentID = documentID(in: requestURL),
+           encodedPath == "/document/\(documentID.uuidString)/original.png" {
+            return .documentPNG(documentID)
         }
         guard encodedPath.hasPrefix("/assets/"),
               let filename = String(encodedPath.dropFirst("/assets/".count)).removingPercentEncoding,
@@ -182,7 +222,19 @@ final class EditorBundleSchemeHandler: NSObject, WKURLSchemeHandler {
         }
         let fileURL = rootURL.appendingPathComponent("assets", isDirectory: true).appendingPathComponent(filename).standardizedFileURL
         guard fileURL.path.hasPrefix(rootURL.path + "/") else { return nil }
-        return (fileURL, mimeType)
+        return .bundledFile(url: fileURL, mimeType: mimeType)
+    }
+
+    private nonisolated func documentID(in url: URL) -> UUID? {
+        let components = url.pathComponents
+        guard components.count == 4,
+              components[0] == "/",
+              components[1] == "document",
+              components[3] == "original.png"
+        else {
+            return nil
+        }
+        return UUID(uuidString: components[2])
     }
 
     private static func referencedAssets(in rootURL: URL) -> [String: String] {

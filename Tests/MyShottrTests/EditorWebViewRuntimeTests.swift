@@ -1,12 +1,13 @@
 import Foundation
 import AppKit
+import ImageIO
 import WebKit
 import XCTest
 @testable import MyShottr
 
 @MainActor
 final class EditorWebViewRuntimeTests: XCTestCase {
-    func testBundledEditorLoadsValidProjectMountsReactAndSurfacesNavigationFailure() async throws {
+    func testBundledEditorLoadsValidProjectMountsCompositesTheSessionPNGAndSurfacesNavigationFailure() async throws {
         let session = DocumentSession()
         let editor = EditorWebView(session: session)
         let window = attach(editor.webView)
@@ -15,19 +16,22 @@ final class EditorWebViewRuntimeTests: XCTestCase {
             window.close()
             editor.tearDown()
         }
-        let navigationFinished = expectation(description: "editor index navigation finishes")
-        if editor.navigationFinished {
-            navigationFinished.fulfill()
-        } else {
-            editor.onNavigationFinished = { navigationFinished.fulfill() }
-        }
 
         try editor.load(project: validProject())
-        await fulfillment(of: [navigationFinished], timeout: 5)
         try await waitForEditorMount(in: editor.webView)
 
         XCTAssertNil(editor.navigationError)
         XCTAssertTrue(session.isOpen)
+        let transfer = try await editor.requestComposite()
+        let png = try transfer.data()
+        XCTAssertTrue(png.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(png as CFData, nil))
+        let properties = try XCTUnwrap(
+            CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        )
+        XCTAssertEqual(properties[kCGImagePropertyPixelWidth] as? Int, 2)
+        XCTAssertEqual(properties[kCGImagePropertyPixelHeight] as? Int, 2)
+
         let navigationFailed = expectation(description: "missing editor navigation failure is reported")
         editor.onNavigationFailure = { _ in navigationFailed.fulfill() }
         editor.webView(

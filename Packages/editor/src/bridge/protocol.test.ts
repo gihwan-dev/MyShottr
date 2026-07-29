@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fixtureDocument } from "../test/fixtures";
 import { createNativeBridge } from "./nativeBridge";
-import { EditorToNativeEnvelopeSchema } from "./protocol";
+import { EditorToNativeEnvelopeSchema, NativeToEditorEnvelopeSchema } from "./protocol";
 
 const editorReadyFixture = {
   protocolVersion: 1,
@@ -56,7 +56,7 @@ describe("EditorToNativeEnvelopeSchema", () => {
         type: "loadDocument",
         payload: {
           documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-          sourceImageURL: "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+          sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
           annotationDocument: fixtureDocument({
             elements: [{ ...fixtureDocument().elements[0], type: "video" } as never],
           }),
@@ -71,5 +71,33 @@ describe("EditorToNativeEnvelopeSchema", () => {
       payload: { code: "INVALID_DOCUMENT" },
     });
     unsubscribe();
+  });
+});
+
+describe("NativeToEditorEnvelopeSchema", () => {
+  const loadDocumentFixture = {
+    protocolVersion: 1,
+    requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+    type: "loadDocument",
+    payload: {
+      documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+      annotationDocument: fixtureDocument(),
+    },
+  };
+
+  it("accepts the exact same-origin session PNG URL", () => {
+    expect(NativeToEditorEnvelopeSchema.parse(loadDocumentFixture)).toEqual(loadDocumentFixture);
+  });
+
+  it.each([
+    "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+    "myshottr-editor://editor/document/FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB/original.png",
+    "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png/extra",
+  ])("rejects a source PNG URL outside the exact document route: %s", (sourceImageURL) => {
+    expect(() => NativeToEditorEnvelopeSchema.parse({
+      ...loadDocumentFixture,
+      payload: { ...loadDocumentFixture.payload, sourceImageURL },
+    })).toThrow();
   });
 });

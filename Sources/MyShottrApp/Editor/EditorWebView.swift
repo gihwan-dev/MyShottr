@@ -39,12 +39,16 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
 
     private init(session: DocumentSession, editorURL: URL, editorBundleRootURL: URL) {
         let bridge = EditorBridge(session: session)
-        let resourceHandler = EditorResourceSchemeHandler { documentID in
-            session.sourcePNG(for: documentID)
-        }
         let configuration = WKWebViewConfiguration()
-        configuration.setURLSchemeHandler(resourceHandler, forURLScheme: "myshottr-resource")
-        configuration.setURLSchemeHandler(EditorBundleSchemeHandler(rootURL: editorBundleRootURL), forURLScheme: "myshottr-editor")
+        configuration.setURLSchemeHandler(
+            EditorBundleSchemeHandler(
+                rootURL: editorBundleRootURL,
+                pngForDocument: { documentID in
+                    session.sourcePNG(for: documentID)
+                }
+            ),
+            forURLScheme: "myshottr-editor"
+        )
         configuration.userContentController.add(bridge, name: "myshottr")
 
         self.bridge = bridge

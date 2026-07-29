@@ -34,7 +34,7 @@ describe("renderDocumentToBlob", () => {
     const blob = await renderDocumentToBlob(fixtureDocument({
       sourcePixelWidth: 3000,
       sourcePixelHeight: 2000,
-    }), "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png");
+    }), "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png");
 
     expect(canvas.width).toBe(3000);
     expect(canvas.height).toBe(2000);

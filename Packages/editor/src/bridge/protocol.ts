@@ -63,7 +63,7 @@ const LoadDocumentPayloadSchema = z.object({
   sourceImageURL: z.string(),
   annotationDocument: EditorDocumentSchema,
 }).strict().superRefine((payload, context) => {
-  const expectedURL = `myshottr-resource://document/${payload.documentId}/original.png`;
+  const expectedURL = `myshottr-editor://editor/document/${payload.documentId}/original.png`;
   if (payload.sourceImageURL !== expectedURL) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
