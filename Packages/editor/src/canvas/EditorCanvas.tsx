@@ -36,7 +36,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   useEffect(() => {
     const selectedNode = selectedId ? nodes.current.get(selectedId) : undefined;
     transformer.current?.nodes(selectedNode ? [selectedNode] : []);
-    transformer.current?.getLayer()?.batchDraw();
+    transformer.current?.getLayer()?.draw();
   }, [selectedId, document]);
 
   const sourcePoint = (stage: Konva.Stage): Point => {
