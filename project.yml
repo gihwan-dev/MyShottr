@@ -32,6 +32,8 @@ targets:
     platform: macOS
     sources:
       - Tests/MyShottrTests
+      - path: Tests/Fixtures/source-2x.png
+        buildPhase: resources
     dependencies:
       - target: MyShottr
 schemes:
