@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { allElementFixtures, fixtureRect } from "../test/fixtures";
+import { beginTransformerInteraction } from "./EditorCanvas";
 import { CanvasPointerController, duplicateElementWithinBounds, resizeElementWithinBounds } from "./SelectionController";
 
 describe("canvas element bounds", () => {
@@ -36,5 +37,29 @@ describe("CanvasPointerController", () => {
 
     expect(controller.begin({ shiftKey: false })).toBe("annotation");
     expect(controller.shouldDispatchAnnotationDrag()).toBe(true);
+  });
+
+  it("cancels a Shift-pan transformer handle before it can alter the selected node", () => {
+    const controller = new CanvasPointerController();
+    const transformer = { stopTransform: vi.fn(), forceUpdate: vi.fn() };
+    const node = { x: vi.fn(), y: vi.fn(), scaleX: vi.fn(), scaleY: vi.fn(), rotation: vi.fn() };
+    const element = fixtureRect();
+
+    controller.begin({ shiftKey: true });
+    expect(beginTransformerInteraction(controller, transformer, node, element)).toBe(false);
+    expect(transformer.stopTransform).toHaveBeenCalledOnce();
+    expect(node.x).toHaveBeenCalledWith(element.x);
+    expect(node.y).toHaveBeenCalledWith(element.y);
+    expect(node.scaleX).toHaveBeenCalledWith(1);
+    expect(node.scaleY).toHaveBeenCalledWith(1);
+    expect(node.rotation).toHaveBeenCalledWith(element.rotation);
+    expect(transformer.forceUpdate).toHaveBeenCalledOnce();
+
+    controller.end();
+    controller.begin({ shiftKey: false });
+    expect(beginTransformerInteraction(controller, transformer, node, element)).toBe(true);
+    expect(transformer.stopTransform).toHaveBeenCalledOnce();
+    expect(node.scaleX).toHaveBeenCalledOnce();
+    expect(node.scaleY).toHaveBeenCalledOnce();
   });
 });

@@ -11,7 +11,7 @@ export type ElementInteractionHandlers = {
   onDragStart: (node: Konva.Group) => void;
   onDragMove: (id: string, x: number, y: number) => void;
   onDragEnd: () => void;
-  onTransformStart: (node: Konva.Group) => void;
+  onTransformStart: (id: string, node: Konva.Group) => void;
   onTransformEnd: (id: string, node: Konva.Group) => void;
   registerNode: (id: string, node: Konva.Group | null) => void;
 };
@@ -34,7 +34,7 @@ export function renderElement(element: EditorElement, handlers: ElementInteracti
       handlers.onDragMove(element.id, group.x(), group.y());
     },
     onDragEnd: handlers.onDragEnd,
-    onTransformStart: (event) => handlers.onTransformStart(event.currentTarget as Konva.Group),
+    onTransformStart: (event) => handlers.onTransformStart(element.id, event.currentTarget as Konva.Group),
     onTransformEnd: (event) => handlers.onTransformEnd(element.id, event.currentTarget as Konva.Group),
   };
 

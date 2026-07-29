@@ -147,8 +147,10 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                 onCommitTransaction();
                 pointerController.current.end();
               },
-              onTransformStart: () => {
-                if (!pointerController.current.shouldDispatchAnnotationDrag()) {
+              onTransformStart: (id, node) => {
+                const elementToTransform = document.elements.find((candidate) => candidate.id === id);
+                if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
+                if (!beginTransformerInteraction(pointerController.current, transformer.current, node, elementToTransform)) {
                   suppressedTransform.current = true;
                   return;
                 }
@@ -198,6 +200,38 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
 
 function byZIndex(left: EditorElement, right: EditorElement): number {
   return left.zIndex - right.zIndex;
+}
+
+type TransformerControl = {
+  stopTransform(): void;
+  forceUpdate(): void;
+};
+
+type TransformableNode = {
+  x(value: number): unknown;
+  y(value: number): unknown;
+  scaleX(value: number): unknown;
+  scaleY(value: number): unknown;
+  rotation(value: number): unknown;
+};
+
+export function beginTransformerInteraction(
+  pointerController: CanvasPointerController,
+  transformer: TransformerControl | null,
+  node: TransformableNode,
+  element: EditorElement,
+): boolean {
+  if (pointerController.shouldDispatchAnnotationDrag()) return true;
+  if (!transformer) throw new Error("Transformer is unavailable for pan cancellation");
+
+  transformer.stopTransform();
+  node.x(element.x);
+  node.y(element.y);
+  node.scaleX(1);
+  node.scaleY(1);
+  node.rotation(element.rotation);
+  transformer.forceUpdate();
+  return false;
 }
 
 export function createCanvasElement(
