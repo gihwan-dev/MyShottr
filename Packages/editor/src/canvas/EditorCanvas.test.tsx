@@ -8,6 +8,46 @@ import { EditorCanvas } from "./EditorCanvas";
 vi.mock("react-konva", async () => {
   const React = await import("react");
   const primitive = ({ children }: { children?: React.ReactNode }) => React.createElement("div", null, children);
+  const Group = React.forwardRef((props: Record<string, unknown> & { children?: React.ReactNode }, ref) => {
+    const values = React.useRef({
+      x: Number(props.x ?? 0),
+      y: Number(props.y ?? 0),
+      scaleX: Number(props.scaleX ?? 1),
+      scaleY: Number(props.scaleY ?? 1),
+      rotation: Number(props.rotation ?? 0),
+    });
+    const node = React.useMemo(() => ({
+      x: (value?: number) => value === undefined ? values.current.x : (values.current.x = value),
+      y: (value?: number) => value === undefined ? values.current.y : (values.current.y = value),
+      scaleX: (value?: number) => value === undefined ? values.current.scaleX : (values.current.scaleX = value),
+      scaleY: (value?: number) => value === undefined ? values.current.scaleY : (values.current.scaleY = value),
+      rotation: (value?: number) => value === undefined ? values.current.rotation : (values.current.rotation = value),
+      stopDrag: () => {},
+    }), []);
+    React.useImperativeHandle(ref, () => node);
+    const onDragStart = props.onDragStart as ((event: { currentTarget: typeof node }) => void) | undefined;
+    const onDragMove = props.onDragMove as ((event: { currentTarget: typeof node }) => void) | undefined;
+    const onDragEnd = props.onDragEnd as (() => void) | undefined;
+    const onTransformStart = props.onTransformStart as ((event: { currentTarget: typeof node }) => void) | undefined;
+    const onTransformEnd = props.onTransformEnd as ((event: { currentTarget: typeof node }) => void) | undefined;
+    if (!onDragStart) return React.createElement("div", null, props.children);
+    return React.createElement("div", {
+      "data-testid": "annotation-node",
+      draggable: true,
+      onDragStart: () => onDragStart({ currentTarget: node }),
+      onDrag: () => {
+        values.current.x = 40;
+        values.current.y = 50;
+        onDragMove?.({ currentTarget: node });
+      },
+      onDragEnd,
+      onDoubleClick: () => onTransformStart?.({ currentTarget: node }),
+      onContextMenu: (event: React.MouseEvent) => {
+        event.preventDefault();
+        onTransformEnd?.({ currentTarget: node });
+      },
+    }, props.children);
+  });
   const Transformer = React.forwardRef((_props, ref) => {
     React.useImperativeHandle(ref, () => ({
       nodes: () => {},
@@ -44,7 +84,7 @@ vi.mock("react-konva", async () => {
   };
   return {
     Circle: primitive,
-    Group: primitive,
+    Group,
     Image: primitive,
     Layer: primitive,
     Line: primitive,
@@ -77,6 +117,7 @@ describe("EditorCanvas gesture terminals", () => {
           onCommand={(command) => history.dispatch(command)}
           onBeginTransaction={(label) => history.beginTransaction(label)}
           onCommitTransaction={() => history.commitTransaction()}
+          onCancelTransaction={() => history.cancelTransaction()}
           onPanChange={() => {}}
         />,
       );
@@ -94,4 +135,67 @@ describe("EditorCanvas gesture terminals", () => {
       expect(history.document.elements).toHaveLength(1);
     },
   );
+
+  it("cancels an active annotation move on pointercancel and leaves history usable", () => {
+    const initial = fixtureDocument();
+    const history = createHistoryStore(initial);
+    renderSelectionCanvas(initial, history);
+    const stage = screen.getByTestId("stage");
+    const annotation = screen.getByTestId("annotation-node");
+
+    fireEvent.mouseDown(stage);
+    fireEvent.dragStart(annotation);
+    fireEvent.drag(annotation, { clientX: 40, clientY: 50 });
+    expect(history.document.elements[0]).toMatchObject({ x: 40, y: 50 });
+    window.dispatchEvent(new Event("pointercancel", { bubbles: true, cancelable: true }));
+    history.dispatch({
+      type: "create",
+      element: { ...initial.elements[0], id: "rect-2", seed: 102, zIndex: 1 },
+    });
+
+    expect(() => history.undo()).not.toThrow();
+    expect(history.document.elements).toEqual(initial.elements);
+  });
+
+  it("cancels an active transform on pointercancel and leaves history usable", () => {
+    const initial = fixtureDocument();
+    const history = createHistoryStore(initial);
+    renderSelectionCanvas(initial, history);
+    const stage = screen.getByTestId("stage");
+    const annotation = screen.getByTestId("annotation-node");
+
+    fireEvent.mouseDown(stage);
+    fireEvent.doubleClick(annotation);
+    window.dispatchEvent(new Event("pointercancel", { bubbles: true, cancelable: true }));
+    history.dispatch({
+      type: "create",
+      element: { ...initial.elements[0], id: "rect-2", seed: 102, zIndex: 1 },
+    });
+
+    expect(() => history.undo()).not.toThrow();
+    expect(history.document.elements).toEqual(initial.elements);
+  });
 });
+
+function renderSelectionCanvas(
+  document: ReturnType<typeof fixtureDocument>,
+  history: ReturnType<typeof createHistoryStore>,
+) {
+  render(
+    <EditorCanvas
+      document={document}
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      tool="selection"
+      zoom={1}
+      pan={{ x: 0, y: 0 }}
+      rectangleFillColor={null}
+      selectedId="rect-1"
+      onSelect={() => {}}
+      onCommand={(command) => history.dispatch(command)}
+      onBeginTransaction={(label) => history.beginTransaction(label)}
+      onCommitTransaction={() => history.commitTransaction()}
+      onCancelTransaction={() => history.cancelTransaction()}
+      onPanChange={() => {}}
+    />,
+  );
+}

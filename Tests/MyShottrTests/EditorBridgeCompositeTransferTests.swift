@@ -4,6 +4,163 @@ import XCTest
 
 @MainActor
 final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
+    func testLoadWithoutAcknowledgementTimesOutAndDiscardsTheStagedProject() async throws {
+        let session = DocumentSession()
+        var outgoing: [NativeToEditorEnvelope] = []
+        let bridge = EditorBridge(
+            session: session,
+            requestTimeout: .milliseconds(10),
+            outgoingMessageObserver: { outgoing.append($0) }
+        )
+        defer { bridge.tearDown() }
+        bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
+        let project = validProject()
+
+        try bridge.load(project: project)
+        XCTAssertEqual(outgoing.last?.type, .loadDocument)
+        XCTAssertEqual(session.sourcePNG(for: project.manifest.documentId), project.originalPNG)
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
+        XCTAssertFalse(session.isOpen)
+        XCTAssertEqual(bridge.lastError, .timedOut)
+    }
+
+    func testMalformedCorrelatedLoadAcknowledgementFailsImmediatelyAndDiscardsStagedBytes() async throws {
+        let session = DocumentSession()
+        var outgoing: [NativeToEditorEnvelope] = []
+        let bridge = EditorBridge(
+            session: session,
+            requestTimeout: .seconds(1),
+            outgoingMessageObserver: { outgoing.append($0) }
+        )
+        defer { bridge.tearDown() }
+        bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
+        let project = validProject()
+
+        try bridge.load(project: project)
+        let load = try XCTUnwrap(outgoing.last)
+        bridge.receive(data: try EditorToNativeEnvelope(
+            requestId: load.requestId,
+            type: .annotationSnapshot,
+            payload: .object([:])
+        ).encodedData())
+        await Task.yield()
+
+        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
+        XCTAssertFalse(session.isOpen)
+        XCTAssertEqual(bridge.lastError, .invalidMessage)
+    }
+
+    func testInvalidCorrelatedLoadDocumentFailsAndDiscardsStagedBytes() async throws {
+        let session = DocumentSession()
+        var outgoing: [NativeToEditorEnvelope] = []
+        let bridge = EditorBridge(
+            session: session,
+            requestTimeout: .seconds(1),
+            outgoingMessageObserver: { outgoing.append($0) }
+        )
+        defer { bridge.tearDown() }
+        bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
+        let project = validProject()
+
+        try bridge.load(project: project)
+        let load = try XCTUnwrap(outgoing.last)
+        bridge.receive(data: try annotationSnapshot(
+            requestID: load.requestId,
+            sourcePixelWidth: 3
+        ))
+        await Task.yield()
+
+        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
+        XCTAssertFalse(session.isOpen)
+        XCTAssertEqual(bridge.lastError, .invalidDocument)
+    }
+
+    func testSupersedingLoadCancelsOnlyTheOldDeadlineAndTheAcceptedLoadCancelsItsOwn() async throws {
+        let session = DocumentSession()
+        var outgoing: [NativeToEditorEnvelope] = []
+        let bridge = EditorBridge(
+            session: session,
+            requestTimeout: .milliseconds(60),
+            outgoingMessageObserver: { envelope in
+                if envelope.type == .loadDocument { outgoing.append(envelope) }
+            }
+        )
+        defer { bridge.tearDown() }
+        bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
+        let first = validProject()
+        let second = validProject()
+
+        try bridge.load(project: first)
+        let firstLoad = try XCTUnwrap(outgoing.last)
+        try await Task.sleep(for: .milliseconds(40))
+        try bridge.load(project: second)
+        let secondLoad = try XCTUnwrap(outgoing.last)
+        bridge.receive(data: try annotationSnapshot(requestID: firstLoad.requestId))
+        await Task.yield()
+        XCTAssertNil(bridge.lastError)
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertNil(session.sourcePNG(for: first.manifest.documentId))
+        XCTAssertEqual(session.sourcePNG(for: second.manifest.documentId), second.originalPNG)
+        XCTAssertNil(bridge.lastError)
+
+        bridge.receive(data: try annotationSnapshot(requestID: secondLoad.requestId))
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertEqual(session.project?.manifest.documentId, second.manifest.documentId)
+        XCTAssertNil(bridge.lastError)
+    }
+
+    func testLateLoadAcknowledgementAfterTimeoutIsIgnored() async throws {
+        let session = DocumentSession()
+        var outgoing: [NativeToEditorEnvelope] = []
+        let bridge = EditorBridge(
+            session: session,
+            requestTimeout: .milliseconds(10),
+            outgoingMessageObserver: { envelope in
+                if envelope.type == .loadDocument { outgoing.append(envelope) }
+            }
+        )
+        bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
+        let project = validProject()
+
+        try bridge.load(project: project)
+        let load = try XCTUnwrap(outgoing.last)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(bridge.lastError, .timedOut)
+
+        bridge.receive(data: try annotationSnapshot(requestID: load.requestId))
+        await Task.yield()
+        XCTAssertEqual(bridge.lastError, .timedOut)
+        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
+        bridge.tearDown()
+    }
+
+    func testTearDownCancelsLoadDeadlineAndDiscardsStagedBytes() async throws {
+        let session = DocumentSession()
+        var outgoing: [NativeToEditorEnvelope] = []
+        let bridge = EditorBridge(
+            session: session,
+            requestTimeout: .milliseconds(10),
+            outgoingMessageObserver: { envelope in
+                if envelope.type == .loadDocument { outgoing.append(envelope) }
+            }
+        )
+        bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
+        let project = validProject()
+
+        try bridge.load(project: project)
+        let load = try XCTUnwrap(outgoing.last)
+        bridge.tearDown()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(bridge.lastError)
+        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
+        bridge.receive(data: try annotationSnapshot(requestID: load.requestId))
+        await Task.yield()
+        XCTAssertNil(bridge.lastError)
+    }
+
     func testSnapshotDispatchFailureUsesTheSameCleanupPathAsOtherTerminals() async throws {
         let session = DocumentSession()
         let bridge = EditorBridge(
@@ -75,11 +232,34 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         request.cancel()
         await assertBridgeError(request, equals: .cancelled)
 
-        bridge.receive(data: try EditorToNativeEnvelope(
-            requestId: requestID,
-            type: .annotationSnapshot,
-            payload: .object([:])
-        ).encodedData())
+        bridge.receive(data: try annotationSnapshot(requestID: requestID))
+        await Task.yield()
+        XCTAssertNil(bridge.lastError)
+    }
+
+    func testLateCompositeReplyAfterCancellationIsIgnored() async throws {
+        let session = DocumentSession()
+        try session.open(project: validProject())
+        var requests: [NativeToEditorEnvelope] = []
+        let bridge = EditorBridge(session: session) { envelope in
+            if envelope.type == .requestComposite { requests.append(envelope) }
+        }
+        defer { bridge.tearDown() }
+        bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
+
+        let request = Task { @MainActor in try await bridge.requestComposite(destinationDirectory: temporaryDirectory) }
+        let envelope = try await nextRequest(from: &requests, expectedCount: 1)
+        request.cancel()
+        await assertBridgeError(request, equals: .cancelled)
+
+        bridge.receive(data: try compositeChunk(
+            requestID: envelope.requestId,
+            payloadRequestID: envelope.requestId,
+            index: 0,
+            total: 1,
+            base64: ProjectFixtures.pngData.base64EncodedString()
+        ))
+        await Task.yield()
         XCTAssertNil(bridge.lastError)
     }
 
@@ -151,6 +331,15 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
 
         await assertBridgeError(tornDown, equals: .cancelled)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: temporaryDirectory.path), [])
+        bridge.receive(data: try compositeChunk(
+            requestID: tornDownEnvelope.requestId,
+            payloadRequestID: tornDownEnvelope.requestId,
+            index: 0,
+            total: 1,
+            base64: ProjectFixtures.pngData.base64EncodedString()
+        ))
+        await Task.yield()
+        XCTAssertNil(bridge.lastError)
     }
 
     func testCorrelatedMismatchedChunkFailsOnlyItsRequestAndAllowsTheNextRequest() async throws {
@@ -307,6 +496,23 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
                 "total": .number(Double(total)),
                 "dataBase64": .string(base64),
             ])
+        ).encodedData()
+    }
+
+    private func annotationSnapshot(requestID: UUID, sourcePixelWidth: Int = 2) throws -> Data {
+        let project = validProject()
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: project.annotationJSON) as? [String: Any]
+        )
+        object["sourcePixelWidth"] = sourcePixelWidth
+        let document = try JSONDecoder().decode(
+            BridgeJSONValue.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        return try EditorToNativeEnvelope(
+            requestId: requestID,
+            type: .annotationSnapshot,
+            payload: .object(["document": document])
         ).encodedData()
     }
 

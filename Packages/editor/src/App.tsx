@@ -116,6 +116,11 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
           history.current!.commitTransaction();
           publishDocument();
         }}
+        onCancelTransaction={() => {
+          if (history.current!.cancelTransaction()) {
+            publishDocument();
+          }
+        }}
         onPanChange={setPan}
       />
       <FloatingToolPalette tool={tool} onSelect={selectTool} />

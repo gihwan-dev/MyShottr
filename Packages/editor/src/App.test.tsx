@@ -7,10 +7,12 @@ import type { EditorCommand, EditorDocument, PaletteColor } from "./model/elemen
 import { fixtureDocument } from "./test/fixtures";
 
 vi.mock("./canvas/EditorCanvas", () => ({
-  EditorCanvas: ({ document, onCommand, onSelect, rectangleFillColor }: {
+  EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCancelTransaction, rectangleFillColor }: {
     document: EditorDocument;
     onCommand: (command: EditorCommand) => void;
     onSelect: (id: string | undefined) => void;
+    onBeginTransaction: (label: string) => void;
+    onCancelTransaction: () => void;
     rectangleFillColor: PaletteColor | null;
   }) => (
     <>
@@ -38,6 +40,19 @@ vi.mock("./canvas/EditorCanvas", () => ({
         })}
       >
         Create rectangle from canvas
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          onBeginTransaction("move");
+          onCommand({
+            type: "update",
+            element: { ...document.elements[0], x: 40, y: 50 },
+          });
+          onCancelTransaction();
+        }}
+      >
+        Move then cancel
       </button>
     </>
   ),
@@ -92,6 +107,18 @@ describe("EditorApp", () => {
     fireEvent.keyDown(window, { key: "y", metaKey: true });
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("publishes the restored document when an active annotation transaction is cancelled", () => {
+    const changes: EditorDocument[] = [];
+    const initial = fixtureDocument();
+    render(<EditorApp initialDocument={initial} sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(document) => changes.push(document)} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Move then cancel" }));
+
+    expect(changes).toHaveLength(2);
+    expect(changes[0].elements[0]).toMatchObject({ x: 40, y: 50 });
+    expect(changes[1].elements).toEqual(initial.elements);
   });
 
   it("duplicates with an id that cannot collide with arbitrary loaded ids", () => {

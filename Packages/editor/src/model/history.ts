@@ -7,6 +7,7 @@ export type HistoryStore = {
   beginTransaction(label: string): void;
   dispatch(command: EditorCommand): void;
   commitTransaction(): void;
+  cancelTransaction(): boolean;
   undo(): boolean;
   redo(): boolean;
 };
@@ -55,6 +56,15 @@ export function createHistoryStore(initialDocument: EditorDocument): HistoryStor
         future.length = 0;
       }
       transaction = undefined;
+    },
+    cancelTransaction() {
+      if (!transaction) {
+        throw new Error("Cannot cancel without an active transaction");
+      }
+      const changed = document !== transaction.startingDocument;
+      document = transaction.startingDocument;
+      transaction = undefined;
+      return changed;
     },
     undo() {
       assertNoActiveTransaction(transaction, "undo");
