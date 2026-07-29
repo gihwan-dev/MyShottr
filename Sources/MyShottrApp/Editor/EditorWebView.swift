@@ -52,6 +52,10 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
         try await bridge.requestAnnotationSnapshot()
     }
 
+    func requestComposite(destinationDirectory: URL? = nil) async throws -> CompositeTransfer {
+        try await bridge.requestComposite(destinationDirectory: destinationDirectory)
+    }
+
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         guard navigationAction.request.url == editorURL else {
             decisionHandler(.cancel)

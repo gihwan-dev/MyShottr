@@ -14,7 +14,10 @@ final class DocumentSession {
 
     private(set) var project: MyShottrProject?
     private var stagedProject: MyShottrProject?
-    private(set) var isModified = false
+    private(set) var isModified = false {
+        didSet { onModifiedStateChange?(isModified) }
+    }
+    var onModifiedStateChange: ((Bool) -> Void)?
 
     var isOpen: Bool { project != nil }
 
@@ -59,9 +62,22 @@ final class DocumentSession {
     func install(annotationJSON: Data) throws {
         guard var project else { throw DocumentSessionError.noOpenDocument }
         try validate(annotationJSON: annotationJSON, for: project.manifest)
+        let changed = project.annotationJSON != annotationJSON
         project.annotationJSON = annotationJSON
         self.project = project
-        isModified = true
+        if changed { isModified = true }
+    }
+
+    func projectForSave() throws -> MyShottrProject {
+        guard var project else { throw DocumentSessionError.noOpenDocument }
+        project.manifest.updatedAt = .now
+        return project
+    }
+
+    func completeSave(_ savedProject: MyShottrProject) throws {
+        try validate(annotationJSON: savedProject.annotationJSON, for: savedProject.manifest)
+        project = savedProject
+        isModified = false
     }
 
     func sourcePNG(for documentID: UUID) -> Data? {

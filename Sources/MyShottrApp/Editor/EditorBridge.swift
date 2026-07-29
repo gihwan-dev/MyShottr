@@ -16,6 +16,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private var pendingProject: MyShottrProject?
     private var pendingLoadRequestID: UUID?
     private var snapshotContinuations: [UUID: CheckedContinuation<Data, Error>] = [:]
+    private var compositeContinuations: [UUID: CheckedContinuation<CompositeTransfer, Error>] = [:]
+    private var compositeTransfers: [UUID: CompositeTransfer] = [:]
+    private var compositeDirectories: [UUID: URL] = [:]
+    private var compositeDimensions: [UUID: (width: Int, height: Int)] = [:]
     private let outgoingMessageObserver: ((NativeToEditorEnvelope) -> Void)?
     private(set) var lastError: EditorBridgeError?
 
@@ -46,13 +50,31 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         return try await withCheckedThrowingContinuation { continuation in
             snapshotContinuations[requestID] = continuation
             do {
+                try dispatchAnnotationSnapshotRequest(requestID: requestID)
+            } catch {
+                snapshotContinuations.removeValue(forKey: requestID)?.resume(throwing: error)
+            }
+        }
+    }
+
+    func requestComposite(destinationDirectory: URL? = nil) async throws -> CompositeTransfer {
+        guard editorIsReady, webView != nil || outgoingMessageObserver != nil else { throw EditorBridgeError.editorNotReady }
+        guard let project = session.project else { throw EditorBridgeError.invalidDocument }
+        let requestID = UUID()
+        if let destinationDirectory { compositeDirectories[requestID] = destinationDirectory }
+        compositeDimensions[requestID] = (project.manifest.sourcePixelWidth, project.manifest.sourcePixelHeight)
+        return try await withCheckedThrowingContinuation { continuation in
+            compositeContinuations[requestID] = continuation
+            do {
                 _ = try send(
                     requestID: requestID,
                     type: .requestComposite,
                     payload: .object(["requestId": .string(requestID.uuidString)])
                 )
             } catch {
-                snapshotContinuations.removeValue(forKey: requestID)?.resume(throwing: error)
+                compositeDirectories.removeValue(forKey: requestID)
+                compositeDimensions.removeValue(forKey: requestID)
+                compositeContinuations.removeValue(forKey: requestID)?.resume(throwing: error)
             }
         }
     }
@@ -66,6 +88,14 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             continuation.resume(throwing: EditorBridgeError.cancelled)
         }
         snapshotContinuations.removeAll()
+        for continuation in compositeContinuations.values {
+            continuation.resume(throwing: EditorBridgeError.cancelled)
+        }
+        compositeContinuations.removeAll()
+        for transfer in compositeTransfers.values { transfer.discard() }
+        compositeTransfers.removeAll()
+        compositeDirectories.removeAll()
+        compositeDimensions.removeAll()
         webView = nil
     }
 
@@ -116,11 +146,18 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 lastError = .invalidDocument
             } else if let continuation = snapshotContinuations.removeValue(forKey: message.requestId) {
                 continuation.resume(throwing: EditorBridgeError.invalidDocument)
+            } else if let continuation = compositeContinuations.removeValue(forKey: message.requestId) {
+                compositeTransfers.removeValue(forKey: message.requestId)?.discard()
+                compositeDirectories.removeValue(forKey: message.requestId)
+                compositeDimensions.removeValue(forKey: message.requestId)
+                continuation.resume(throwing: EditorBridgeError.invalidDocument)
             } else {
                 lastError = .invalidMessage
             }
-        case .compositeChunk, .compositeCompleted:
-            break
+        case .compositeChunk:
+            installCompositeChunk(message)
+        case .compositeCompleted:
+            finishComposite(message)
         }
     }
 
@@ -160,6 +197,78 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         pendingLoadRequestID = requestID
     }
 
+    private func dispatchAnnotationSnapshotRequest(requestID: UUID) throws {
+        guard let webView else { throw EditorBridgeError.editorNotReady }
+        let payload = try JSONSerialization.data(withJSONObject: ["requestId": requestID.uuidString])
+        guard let json = String(data: payload, encoding: .utf8) else { throw EditorBridgeError.invalidMessage }
+        webView.evaluateJavaScript(
+            "window.dispatchEvent(new CustomEvent('myshottr:request-annotation-snapshot', { detail: \(json) }));"
+        ) { [weak self] _, error in
+            guard let self, let error else { return }
+            self.snapshotContinuations.removeValue(forKey: requestID)?.resume(throwing: error)
+        }
+    }
+
+    private func installCompositeChunk(_ message: EditorToNativeEnvelope) {
+        guard let continuation = compositeContinuations[message.requestId],
+              case let .object(payload) = message.payload,
+              case let .string(requestIDString)? = payload["requestId"],
+              UUID(uuidString: requestIDString) == message.requestId,
+              case let .number(indexNumber)? = payload["index"],
+              let index = Int(exactly: indexNumber),
+              case let .number(totalNumber)? = payload["total"],
+              let total = Int(exactly: totalNumber),
+              case let .string(base64)? = payload["dataBase64"]
+        else {
+            lastError = .invalidMessage
+            return
+        }
+        do {
+            let transfer: CompositeTransfer
+            if let existing = compositeTransfers[message.requestId] {
+                transfer = existing
+            } else {
+                transfer = try CompositeTransfer.begin(
+                    requestId: message.requestId,
+                    expectedChunks: total,
+                    directory: compositeDirectories[message.requestId],
+                    expectedPixelSize: compositeDimensions[message.requestId]
+                )
+                compositeTransfers[message.requestId] = transfer
+            }
+            try transfer.append(index: index, total: total, base64: base64)
+        } catch {
+            compositeTransfers.removeValue(forKey: message.requestId)?.discard()
+            compositeDirectories.removeValue(forKey: message.requestId)
+            compositeDimensions.removeValue(forKey: message.requestId)
+            compositeContinuations.removeValue(forKey: message.requestId)
+            continuation.resume(throwing: error)
+            lastError = .invalidMessage
+        }
+    }
+
+    private func finishComposite(_ message: EditorToNativeEnvelope) {
+        guard case let .object(payload) = message.payload,
+              case let .string(requestIDString)? = payload["requestId"],
+              UUID(uuidString: requestIDString) == message.requestId,
+              let continuation = compositeContinuations.removeValue(forKey: message.requestId),
+              let transfer = compositeTransfers.removeValue(forKey: message.requestId)
+        else {
+            lastError = .invalidMessage
+            return
+        }
+        compositeDirectories.removeValue(forKey: message.requestId)
+        compositeDimensions.removeValue(forKey: message.requestId)
+        do {
+            _ = try transfer.finish()
+            continuation.resume(returning: transfer)
+        } catch {
+            transfer.discard()
+            continuation.resume(throwing: error)
+            lastError = .invalidMessage
+        }
+    }
+
     private func discardPendingLoad() {
         session.discardStaged()
         pendingProject = nil
@@ -175,9 +284,29 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         else {
             throw EditorBridgeError.invalidMessage
         }
+        if webView == nil, outgoingMessageObserver == nil { throw EditorBridgeError.editorNotReady }
         webView?.evaluateJavaScript(
             "window.dispatchEvent(new CustomEvent('myshottr:native-message', { detail: \(json) }));"
-        )
+        ) { [weak self] _, error in
+            guard let self, let error else { return }
+            self.failPendingRequest(requestID, error: error)
+        }
         return requestID
+    }
+
+    private func failPendingRequest(_ requestID: UUID, error: Error) {
+        if requestID == pendingLoadRequestID {
+            discardPendingLoad()
+            lastError = .invalidDocument
+        } else if let continuation = snapshotContinuations.removeValue(forKey: requestID) {
+            continuation.resume(throwing: error)
+        } else if let continuation = compositeContinuations.removeValue(forKey: requestID) {
+            compositeTransfers.removeValue(forKey: requestID)?.discard()
+            compositeDirectories.removeValue(forKey: requestID)
+            compositeDimensions.removeValue(forKey: requestID)
+            continuation.resume(throwing: error)
+        } else {
+            lastError = .invalidMessage
+        }
     }
 }

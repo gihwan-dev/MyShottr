@@ -120,6 +120,45 @@ describe("EditorApp", () => {
     });
   });
 
+  it("returns a correlated annotation snapshot through the local native request event", async () => {
+    vi.stubGlobal("Image", class {
+      naturalWidth = 1440;
+      naturalHeight = 900;
+      onload: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    });
+    let receiveNative: ((message: Parameters<NativeBridge["subscribe"]>[0] extends (message: infer Message) => void ? Message : never) => void) | undefined;
+    const sent: Array<{ requestId?: string; type: string; payload: unknown }> = [];
+    const bridge: NativeBridge = {
+      send: async (type, payload) => { sent.push({ type, payload }); },
+      sendCorrelated: async (requestId, type, payload) => { sent.push({ requestId, type, payload }); },
+      subscribe: (handler) => { receiveNative = handler; return () => { receiveNative = undefined; }; },
+    };
+
+    render(<NativeBridgeProvider bridge={bridge}><App /></NativeBridgeProvider>);
+    receiveNative!({
+      protocolVersion: 1,
+      requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      type: "loadDocument",
+      payload: {
+        documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        sourceImageURL: "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        annotationDocument: fixtureDocument(),
+      },
+    });
+    await screen.findByRole("main", { name: "MyShottr editor" });
+
+    window.dispatchEvent(new CustomEvent("myshottr:request-annotation-snapshot", {
+      detail: { requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB" },
+    }));
+
+    await vi.waitFor(() => expect(sent).toContainEqual({
+      requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB",
+      type: "annotationSnapshot",
+      payload: { document: fixtureDocument() },
+    }));
+  });
+
   it("reports INVALID_DOCUMENT when the source image dimensions differ", async () => {
     vi.stubGlobal("Image", class {
       naturalWidth = 2;

@@ -6,6 +6,8 @@ import { ContextStylePalette } from "./components/ContextStylePalette";
 import { FloatingToolPalette } from "./components/FloatingToolPalette";
 import { ZoomControls } from "./components/ZoomControls";
 import { useNativeBridge } from "./bridge/nativeBridge";
+import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
+import { sendComposite } from "./export/sendComposite";
 import { createHistoryStore, type HistoryStore } from "./model/history";
 import { findElement } from "./model/reducer";
 import type { EditorCommand, EditorDocument, EditorTool, PaletteColor, Point } from "./model/elements";
@@ -146,18 +148,39 @@ export function App() {
       setLoadedDocument(nextDocument);
       await bridge.sendCorrelated(message.requestId, "annotationSnapshot", { document: annotationDocument });
     };
+    const receiveAnnotationSnapshotRequest = (event: Event) => {
+      if (!(event instanceof CustomEvent) || typeof event.detail?.requestId !== "string") return;
+      const loaded = loadedDocumentRef.current;
+      if (!loaded) {
+        void bridge.sendCorrelated(event.detail.requestId, "bridgeError", {
+          code: "INVALID_DOCUMENT",
+          message: "No editor document is loaded",
+        });
+        return;
+      }
+      void bridge.sendCorrelated(event.detail.requestId, "annotationSnapshot", { document: loaded.document });
+    };
     void bridge.send("editorReady", {});
-    return bridge.subscribe((message) => {
+    const unsubscribe = bridge.subscribe((message) => {
       if (message.type === "loadDocument") {
         void acceptLoad(message);
         return;
       }
       if (message.type === "requestComposite" && loadedDocumentRef.current) {
-        void bridge.sendCorrelated(message.requestId, "annotationSnapshot", {
-          document: loadedDocumentRef.current.document,
-        });
+        const loaded = loadedDocumentRef.current;
+        void renderDocumentToBlob(loaded.document, loaded.sourceImageURL)
+          .then((blob) => sendComposite({ requestId: message.requestId, blob, sendCorrelated: bridge.sendCorrelated }))
+          .catch((error: unknown) => bridge.sendCorrelated(message.requestId, "bridgeError", {
+            code: "RENDER_FAILED",
+            message: error instanceof Error ? error.message : "Unable to render composite PNG",
+          }));
       }
     });
+    window.addEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
+    };
   }, [bridge]);
 
   if (!loadedDocument) return <main aria-label="MyShottr editor">Waiting for document</main>;
