@@ -1,4 +1,6 @@
 import type { EditorDocument, EditorElement, Point } from "../model/elements";
+import { roughPathsFor } from "../canvas/roughRenderer";
+import { KONVA_DEFAULT_FONT_FAMILY, NUMBER_MARKER_FONT_SIZE } from "../canvas/renderingConstants";
 
 export async function renderDocumentToBlob(document: EditorDocument, sourceImageURL: string): Promise<Blob> {
   const sourceImage = await loadSourceImage(sourceImageURL);
@@ -44,20 +46,12 @@ function drawElement(context: CanvasRenderingContext2D, element: EditorElement):
 
   switch (element.type) {
     case "rectangle":
-      context.lineWidth = element.strokeWidth;
-      context.strokeStyle = element.strokeColor;
-      if (element.fillColor) {
-        context.fillStyle = element.fillColor;
-        context.fillRect(0, 0, element.width, element.height);
-      }
-      context.strokeRect(0, 0, element.width, element.height);
-      break;
     case "arrow":
-      drawPath(context, element.points, element.x, element.y, element.strokeColor, element.strokeWidth);
+      drawRoughElement(context, element);
       break;
     case "text":
       context.fillStyle = element.color;
-      context.font = `${element.fontSize}px sans-serif`;
+      context.font = `${element.fontSize}px ${KONVA_DEFAULT_FONT_FAMILY}`;
       context.textBaseline = "top";
       context.fillText(element.text, 0, 0, element.width);
       break;
@@ -76,7 +70,7 @@ function drawElement(context: CanvasRenderingContext2D, element: EditorElement):
       context.arc(element.width / 2, element.height / 2, radius, 0, 2 * Math.PI);
       context.fill();
       context.fillStyle = "#FFFFFF";
-      context.font = `${Math.floor(radius)}px sans-serif`;
+      context.font = `${NUMBER_MARKER_FONT_SIZE}px ${KONVA_DEFAULT_FONT_FAMILY}`;
       context.textAlign = "center";
       context.textBaseline = "middle";
       context.fillText(String(element.number), element.width / 2, element.height / 2);
@@ -84,6 +78,22 @@ function drawElement(context: CanvasRenderingContext2D, element: EditorElement):
     }
   }
   context.restore();
+}
+
+function drawRoughElement(
+  context: CanvasRenderingContext2D,
+  element: Extract<EditorElement, { type: "rectangle" | "arrow" }>,
+): void {
+  for (const roughPath of roughPathsFor(element)) {
+    const path = new Path2D(roughPath.d);
+    if (roughPath.fill) {
+      context.fillStyle = roughPath.fill;
+      context.fill(path);
+    }
+    context.strokeStyle = roughPath.stroke;
+    context.lineWidth = roughPath.strokeWidth;
+    context.stroke(path);
+  }
 }
 
 function drawPath(context: CanvasRenderingContext2D, points: Point[], originX: number, originY: number, color: string, strokeWidth: number): void {

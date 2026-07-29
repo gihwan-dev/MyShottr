@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fixtureDocument } from "../test/fixtures";
+import { roughPathsFor } from "../canvas/roughRenderer";
+import { fixtureDocument, fixtureRect } from "../test/fixtures";
 import { renderDocumentToBlob } from "./renderDocumentToBlob";
 
 describe("renderDocumentToBlob", () => {
@@ -27,6 +28,7 @@ describe("renderDocumentToBlob", () => {
       onerror: (() => void) | null = null;
       set src(_value: string) { queueMicrotask(() => this.onload?.()); }
     });
+    vi.stubGlobal("Path2D", class { constructor(_path: string) {} });
 
     const blob = await renderDocumentToBlob(fixtureDocument({
       sourcePixelWidth: 3000,
@@ -37,4 +39,68 @@ describe("renderDocumentToBlob", () => {
     expect(canvas.height).toBe(2000);
     expect(blob.type).toBe("image/png");
   });
+
+  it("uses the live rough path generator for seeded rectangles and arrows", async () => {
+    const canvas = document.createElement("canvas");
+    const context = canvasContext();
+    const pathData: string[] = [];
+    vi.spyOn(document, "createElement").mockReturnValue(canvas);
+    vi.spyOn(canvas, "getContext").mockReturnValue(context);
+    vi.spyOn(canvas, "toBlob").mockImplementation((callback) => callback(new Blob(["png"], { type: "image/png" })));
+    vi.stubGlobal("Image", loadedImage(1440, 900));
+    vi.stubGlobal("Path2D", class {
+      constructor(path: string) { pathData.push(path); }
+    });
+    const rectangle = { ...fixtureRect(), fillColor: "#FADB14" as const, roughness: 2 as const, seed: 711 };
+    const arrow = {
+      id: "arrow-1", type: "arrow" as const, x: 20, y: 25, width: 100, height: 40,
+      rotation: 0, opacity: 1 as const, zIndex: 1, seed: 712,
+      points: [{ x: 20, y: 25 }, { x: 120, y: 65 }] as [{ x: number; y: number }, { x: number; y: number }],
+      strokeColor: "#FF4D4F" as const, strokeWidth: 2 as const, roughness: 1 as const,
+    };
+
+    await renderDocumentToBlob(fixtureDocument({ elements: [arrow, rectangle] }), "source.png");
+
+    expect(pathData).toEqual([...roughPathsFor(rectangle), ...roughPathsFor(arrow)].map((path) => path.d));
+    expect(context.stroke).toHaveBeenCalledTimes(pathData.length);
+  });
+
+  it("uses the live number-marker text size", async () => {
+    const canvas = document.createElement("canvas");
+    const context = canvasContext();
+    const fonts: string[] = [];
+    Object.defineProperty(context, "font", { set: (value: string) => fonts.push(value) });
+    vi.spyOn(document, "createElement").mockReturnValue(canvas);
+    vi.spyOn(canvas, "getContext").mockReturnValue(context);
+    vi.spyOn(canvas, "toBlob").mockImplementation((callback) => callback(new Blob(["png"], { type: "image/png" })));
+    vi.stubGlobal("Image", loadedImage(1440, 900));
+    const marker = {
+      id: "marker-1", type: "numberMarker" as const, x: 20, y: 25, width: 32, height: 32,
+      rotation: 0, opacity: 1 as const, zIndex: 0, seed: 1, number: 1, color: "#FF4D4F" as const,
+    };
+
+    await renderDocumentToBlob(fixtureDocument({ elements: [marker] }), "source.png");
+
+    expect(fonts).toContain("12px Arial");
+  });
 });
+
+function canvasContext(): CanvasRenderingContext2D & { stroke: ReturnType<typeof vi.fn> } {
+  return {
+    globalAlpha: 1,
+    save: vi.fn(), restore: vi.fn(), translate: vi.fn(), rotate: vi.fn(),
+    drawImage: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), stroke: vi.fn(), fill: vi.fn(),
+    moveTo: vi.fn(), lineTo: vi.fn(), fillText: vi.fn(), arc: vi.fn(),
+    closePath: vi.fn(), fillRect: vi.fn(), strokeRect: vi.fn(),
+  } as unknown as CanvasRenderingContext2D & { stroke: ReturnType<typeof vi.fn> };
+}
+
+function loadedImage(width: number, height: number) {
+  return class {
+    naturalWidth = width;
+    naturalHeight = height;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+  };
+}

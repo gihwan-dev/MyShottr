@@ -115,6 +115,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         do {
             message = try EditorToNativeEnvelope.decode(from: data)
         } catch {
+            if let requestID = correlatedCompositeRequestID(from: data) {
+                failCompositeRequest(requestID, error: EditorBridgeError.invalidMessage)
+                return
+            }
             lastError = .invalidMessage
             return
         }
@@ -210,7 +214,11 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     }
 
     private func installCompositeChunk(_ message: EditorToNativeEnvelope) {
-        guard let continuation = compositeContinuations[message.requestId],
+        guard compositeContinuations[message.requestId] != nil else {
+            lastError = .invalidMessage
+            return
+        }
+        guard
               case let .object(payload) = message.payload,
               case let .string(requestIDString)? = payload["requestId"],
               UUID(uuidString: requestIDString) == message.requestId,
@@ -220,7 +228,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
               let total = Int(exactly: totalNumber),
               case let .string(base64)? = payload["dataBase64"]
         else {
-            lastError = .invalidMessage
+            failCompositeRequest(message.requestId, error: EditorBridgeError.invalidMessage)
             return
         }
         do {
@@ -238,34 +246,31 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             }
             try transfer.append(index: index, total: total, base64: base64)
         } catch {
-            compositeTransfers.removeValue(forKey: message.requestId)?.discard()
-            compositeDirectories.removeValue(forKey: message.requestId)
-            compositeDimensions.removeValue(forKey: message.requestId)
-            compositeContinuations.removeValue(forKey: message.requestId)
-            continuation.resume(throwing: error)
-            lastError = .invalidMessage
+            failCompositeRequest(message.requestId, error: error)
         }
     }
 
     private func finishComposite(_ message: EditorToNativeEnvelope) {
-        guard case let .object(payload) = message.payload,
-              case let .string(requestIDString)? = payload["requestId"],
-              UUID(uuidString: requestIDString) == message.requestId,
-              let continuation = compositeContinuations.removeValue(forKey: message.requestId),
-              let transfer = compositeTransfers.removeValue(forKey: message.requestId)
-        else {
+        guard compositeContinuations[message.requestId] != nil else {
             lastError = .invalidMessage
             return
         }
-        compositeDirectories.removeValue(forKey: message.requestId)
-        compositeDimensions.removeValue(forKey: message.requestId)
+        guard case let .object(payload) = message.payload,
+              case let .string(requestIDString)? = payload["requestId"],
+              UUID(uuidString: requestIDString) == message.requestId,
+              let transfer = compositeTransfers[message.requestId]
+        else {
+            failCompositeRequest(message.requestId, error: EditorBridgeError.invalidMessage)
+            return
+        }
         do {
             _ = try transfer.finish()
-            continuation.resume(returning: transfer)
+            compositeTransfers.removeValue(forKey: message.requestId)
+            compositeDirectories.removeValue(forKey: message.requestId)
+            compositeDimensions.removeValue(forKey: message.requestId)
+            compositeContinuations.removeValue(forKey: message.requestId)?.resume(returning: transfer)
         } catch {
-            transfer.discard()
-            continuation.resume(throwing: error)
-            lastError = .invalidMessage
+            failCompositeRequest(message.requestId, error: error)
         }
     }
 
@@ -308,5 +313,30 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         } else {
             lastError = .invalidMessage
         }
+    }
+
+    private func failCompositeRequest(_ requestID: UUID, error: Error) {
+        guard let continuation = compositeContinuations.removeValue(forKey: requestID) else {
+            lastError = .invalidMessage
+            return
+        }
+        compositeTransfers.removeValue(forKey: requestID)?.discard()
+        compositeDirectories.removeValue(forKey: requestID)
+        compositeDimensions.removeValue(forKey: requestID)
+        continuation.resume(throwing: error)
+        lastError = .invalidMessage
+    }
+
+    private func correlatedCompositeRequestID(from data: Data) -> UUID? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["protocolVersion"] as? Int == EditorBridgeEnvelope<EditorToNativeMessageType, BridgeJSONValue>.protocolVersion,
+              let requestIDString = object["requestId"] as? String,
+              let requestID = UUID(uuidString: requestIDString),
+              let type = object["type"] as? String,
+              type == EditorToNativeMessageType.compositeChunk.rawValue || type == EditorToNativeMessageType.compositeCompleted.rawValue
+        else {
+            return nil
+        }
+        return requestID
     }
 }
