@@ -370,6 +370,7 @@ final class EditorWebViewRuntimeTests: XCTestCase {
             backing: .buffered,
             defer: false
         )
+        window.isReleasedWhenClosed = false
         window.contentView = webView
         window.orderFrontRegardless()
         return window
