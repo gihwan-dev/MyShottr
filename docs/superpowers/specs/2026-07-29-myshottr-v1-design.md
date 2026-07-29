@@ -1,7 +1,7 @@
 # MyShottr v1 Design
 
 - Date: 2026-07-29
-- Status: Approved in brainstorming; awaiting written-spec review
+- Status: Approved for implementation planning
 - Product scope: Personal or internal macOS use
 - Development environment: macOS 26.5.2, Xcode 26.6, Swift 6.3.3, Chrome 150
 - Minimum supported macOS version: macOS 15
@@ -85,10 +85,10 @@ The following are explicitly excluded from v1:
   integration fixtures
 
 Konva owns canvas scene management, hit testing, selection handles, and
-transforms. rough.js supplies deterministic hand-drawn paths through custom
-Konva shapes. Zod validates persisted documents and every JavaScript-side
-bridge message. MyShottr does not embed the Excalidraw application or adopt its
-infinite-canvas document model.
+transforms. rough.js supplies deterministic hand-drawn path data that renders
+as Konva `Path` nodes. Zod validates persisted documents and every
+JavaScript-side bridge message. MyShottr does not embed the Excalidraw
+application or adopt its infinite-canvas document model.
 
 ### 5.2 Component Flow
 
@@ -326,6 +326,13 @@ The editor sends:
 Both sides validate the protocol version, message type, required fields, and
 payload size. Unknown messages fail explicitly.
 
+The immutable source PNG is exposed to the bundled editor through a
+`WKURLSchemeHandler` URL scoped to the active document:
+`myshottr-resource://document/<document-id>/original.png`. The handler serves
+only that exact resource from in-memory document data and never accepts a
+filesystem path. This keeps large source images out of bridge JSON while
+preserving the local-only boundary.
+
 For clipboard and PNG export, the editor renders an offscreen canvas at source
 pixel dimensions, creates a PNG, and sends base64 data in 512 KiB chunks. The
 native app assembles the chunks in a temporary owner-only file, validates the
@@ -451,8 +458,8 @@ v1 is complete when:
 1. `Command-Shift-2` opens region selection and a successful capture opens the
    editor.
 2. Chrome capture contains the visible webpage but no browser chrome.
-3. All eight tools can be created, selected, transformed, duplicated, and
-   deleted.
+3. All seven drawable annotation types can be created, selected, transformed,
+   duplicated, and deleted through the selection tool.
 4. Undo and redo cover all document-changing editor actions.
 5. clipboard output pastes as a PNG into common chat and document applications.
 6. exported PNG dimensions match the source image dimensions.
