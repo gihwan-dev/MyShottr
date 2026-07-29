@@ -5,7 +5,7 @@ import { keyboardCommandFor, isTextEntryTarget } from "./canvas/tools/ToolContro
 import { ContextStylePalette } from "./components/ContextStylePalette";
 import { FloatingToolPalette } from "./components/FloatingToolPalette";
 import { ZoomControls } from "./components/ZoomControls";
-import { createEmptyDocument } from "./model/defaults";
+import { useNativeBridge } from "./bridge/nativeBridge";
 import { createHistoryStore, type HistoryStore } from "./model/history";
 import { findElement } from "./model/reducer";
 import type { EditorCommand, EditorDocument, EditorTool, PaletteColor, Point } from "./model/elements";
@@ -121,8 +121,44 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
   );
 }
 
-const blankSourceImage = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL5xQAAAABJRU5ErkJggg==";
-
 export function App() {
-  return <EditorApp initialDocument={createEmptyDocument()} sourceImageURL={blankSourceImage} onChange={() => {}} />;
+  const bridge = useNativeBridge();
+  const [loadedDocument, setLoadedDocument] = useState<{ document: EditorDocument; sourceImageURL: string }>();
+  const loadedDocumentRef = useRef<{ document: EditorDocument; sourceImageURL: string } | undefined>(undefined);
+
+  useEffect(() => {
+    void bridge.send("editorReady", {});
+    return bridge.subscribe((message) => {
+      if (message.type === "loadDocument") {
+        const nextDocument = {
+          document: message.payload.annotationDocument,
+          sourceImageURL: message.payload.sourceImageURL,
+        };
+        loadedDocumentRef.current = nextDocument;
+        setLoadedDocument(nextDocument);
+        void bridge.sendCorrelated(message.requestId, "annotationSnapshot", {
+          document: message.payload.annotationDocument,
+        });
+        return;
+      }
+      if (message.type === "requestComposite" && loadedDocumentRef.current) {
+        void bridge.sendCorrelated(message.requestId, "annotationSnapshot", {
+          document: loadedDocumentRef.current.document,
+        });
+      }
+    });
+  }, [bridge]);
+
+  if (!loadedDocument) return <main aria-label="MyShottr editor">Waiting for document</main>;
+  return <EditorApp
+    key={loadedDocument.sourceImageURL}
+    initialDocument={loadedDocument.document}
+    sourceImageURL={loadedDocument.sourceImageURL}
+    onChange={(document) => {
+      if (loadedDocumentRef.current) {
+        loadedDocumentRef.current = { ...loadedDocumentRef.current, document };
+      }
+      void bridge.send("documentChanged", {});
+    }}
+  />;
 }

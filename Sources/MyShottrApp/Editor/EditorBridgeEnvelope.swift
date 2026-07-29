@@ -12,6 +12,7 @@ enum EditorToNativeMessageType: String, Codable, Sendable {
 enum EditorBridgeEnvelopeError: Error, Equatable {
     case unsupportedProtocolVersion(Int)
     case payloadTooLarge
+    case malformedMessage
 }
 
 struct EditorBridgeEnvelope<MessageType: RawRepresentable & Codable & Sendable, Payload: Codable & Sendable>: Codable, Sendable where MessageType.RawValue == String {
@@ -71,6 +72,55 @@ extension EditorBridgeEnvelope where Payload == BridgeJSONValue {
 
     func encodedData() throws -> Data {
         try JSONEncoder().encode(self)
+    }
+}
+
+extension EditorBridgeEnvelope where MessageType == EditorToNativeMessageType, Payload == BridgeJSONValue {
+    static func decode(from data: Data) throws -> Self {
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Set(object.keys) == ["protocolVersion", "requestId", "type", "payload"]
+        else {
+            throw EditorBridgeEnvelopeError.malformedMessage
+        }
+        let envelope = try JSONDecoder().decode(Self.self, from: data)
+        try envelope.validatePayload()
+        return envelope
+    }
+
+    private func validatePayload() throws {
+        guard case let .object(payload) = payload else { throw EditorBridgeEnvelopeError.malformedMessage }
+        let exact: (Set<String>) -> Bool = { Set(payload.keys) == $0 }
+        switch type {
+        case .editorReady, .documentChanged:
+            guard exact([]) else { throw EditorBridgeEnvelopeError.malformedMessage }
+        case .annotationSnapshot:
+            guard exact(["document"]), case let .object(document)? = payload["document"],
+                  Set(document.keys) == ["schemaVersion", "sourcePixelWidth", "sourcePixelHeight", "elements", "defaults"]
+            else { throw EditorBridgeEnvelopeError.malformedMessage }
+        case .compositeChunk:
+            guard exact(["requestId", "index", "total", "dataBase64"]),
+                  uuid(payload["requestId"]), let index = integer(payload["index"]), index >= 0,
+                  let total = integer(payload["total"]), total > index,
+                  case .string = payload["dataBase64"]
+            else { throw EditorBridgeEnvelopeError.malformedMessage }
+        case .compositeCompleted:
+            guard exact(["requestId"]), uuid(payload["requestId"]) else { throw EditorBridgeEnvelopeError.malformedMessage }
+        case .bridgeError:
+            guard exact(["code", "message"]), case let .string(code)? = payload["code"],
+                  ["INVALID_DOCUMENT", "INVALID_MESSAGE", "RENDER_FAILED"].contains(code),
+                  case let .string(message)? = payload["message"], !message.isEmpty
+            else { throw EditorBridgeEnvelopeError.malformedMessage }
+        }
+    }
+
+    private func uuid(_ value: BridgeJSONValue?) -> Bool {
+        guard case let .string(string)? = value else { return false }
+        return UUID(uuidString: string) != nil
+    }
+
+    private func integer(_ value: BridgeJSONValue?) -> Int? {
+        guard case let .number(number)? = value, number.isFinite, number.rounded() == number else { return nil }
+        return Int(exactly: number)
     }
 }
 

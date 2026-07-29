@@ -25,20 +25,21 @@ final class EditorResourceSchemeHandler: NSObject, WKURLSchemeHandler {
             return
         }
 
-        let png = MainActor.assumeIsolated { pngForDocument(documentID) }
-        guard let png else {
-            reject(urlSchemeTask)
-            return
+        Task { @MainActor [pngForDocument] in
+            guard let png = pngForDocument(documentID) else {
+                self.reject(urlSchemeTask)
+                return
+            }
+            let response = URLResponse(
+                url: requestURL,
+                mimeType: "image/png",
+                expectedContentLength: png.count,
+                textEncodingName: nil
+            )
+            urlSchemeTask.didReceive(response)
+            urlSchemeTask.didReceive(png)
+            urlSchemeTask.didFinish()
         }
-        let response = URLResponse(
-            url: requestURL,
-            mimeType: "image/png",
-            expectedContentLength: png.count,
-            textEncodingName: nil
-        )
-        urlSchemeTask.didReceive(response)
-        urlSchemeTask.didReceive(png)
-        urlSchemeTask.didFinish()
     }
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}

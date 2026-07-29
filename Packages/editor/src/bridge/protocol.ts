@@ -60,9 +60,18 @@ const EditorToNativeMessageSchema = z.discriminatedUnion("type", [
 
 const LoadDocumentPayloadSchema = z.object({
   documentId: RequestIDSchema,
-  sourceImageURL: z.string().url(),
+  sourceImageURL: z.string(),
   annotationDocument: EditorDocumentSchema,
-}).strict();
+}).strict().superRefine((payload, context) => {
+  const expectedURL = `myshottr-resource://document/${payload.documentId}/original.png`;
+  if (payload.sourceImageURL !== expectedURL) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["sourceImageURL"],
+      message: "sourceImageURL must address this document's original PNG",
+    });
+  }
+});
 const SaveCompletedPayloadSchema = z.object({ requestId: RequestIDSchema }).strict();
 const SaveFailedPayloadSchema = z.object({ requestId: RequestIDSchema, message: z.string().min(1) }).strict();
 const RequestCompositePayloadSchema = z.object({ requestId: RequestIDSchema }).strict();

@@ -22,23 +22,30 @@ declare global {
 
 export type NativeBridge = {
   send<T extends EditorToNativeType>(type: T, payload: PayloadFor<T>): Promise<void>;
+  sendCorrelated<T extends EditorToNativeType>(requestId: string, type: T, payload: PayloadFor<T>): Promise<void>;
   subscribe(handler: (message: NativeToEditorEnvelope) => void): () => void;
 };
 
 const nativeMessageEvent = "myshottr:native-message";
 
 export function createNativeBridge(): NativeBridge {
+  const post = async <T extends EditorToNativeType>(requestId: string, type: T, payload: PayloadFor<T>): Promise<void> => {
+    const message = EditorToNativeEnvelopeSchema.parse({
+      protocolVersion: PROTOCOL_VERSION,
+      requestId,
+      type,
+      payload,
+    });
+    const handler = window.webkit?.messageHandlers?.myshottr;
+    if (!handler) throw new Error("MyShottr native bridge is unavailable");
+    handler.postMessage(message);
+  };
   return {
     async send<T extends EditorToNativeType>(type: T, payload: PayloadFor<T>): Promise<void> {
-      const message = EditorToNativeEnvelopeSchema.parse({
-        protocolVersion: PROTOCOL_VERSION,
-        requestId: crypto.randomUUID(),
-        type,
-        payload,
-      });
-      const handler = window.webkit?.messageHandlers?.myshottr;
-      if (!handler) throw new Error("MyShottr native bridge is unavailable");
-      handler.postMessage(message);
+      await post(crypto.randomUUID(), type, payload);
+    },
+    async sendCorrelated<T extends EditorToNativeType>(requestId: string, type: T, payload: PayloadFor<T>): Promise<void> {
+      await post(requestId, type, payload);
     },
     subscribe(handler: (message: NativeToEditorEnvelope) => void): () => void {
       const receive = (event: Event) => {

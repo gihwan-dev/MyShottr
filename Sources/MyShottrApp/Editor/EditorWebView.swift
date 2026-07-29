@@ -7,6 +7,7 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
     private let editorURL: URL
     private let bridge: EditorBridge
     private let configuration: WKWebViewConfiguration
+    private var didTearDown = false
 
     init(session: DocumentSession) {
         let bridge = EditorBridge(session: session)
@@ -17,9 +18,12 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
         configuration.setURLSchemeHandler(resourceHandler, forURLScheme: "myshottr-resource")
         configuration.userContentController.add(bridge, name: "myshottr")
 
-        guard let resourcesURL = Bundle.main.resourceURL,
-              let editorURL = URL(string: "Editor/index.html", relativeTo: resourcesURL)
+        guard let resourcesURL = Bundle.main.resourceURL
         else {
+            preconditionFailure("Bundled editor is missing")
+        }
+        let editorURL = resourcesURL.appendingPathComponent("Editor/index.html", isDirectory: false)
+        guard FileManager.default.fileExists(atPath: editorURL.path) else {
             preconditionFailure("Bundled editor is missing")
         }
 
@@ -33,10 +37,11 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
         webView.loadFileURL(editorURL, allowingReadAccessTo: resourcesURL)
     }
 
-    deinit {
-        Task { @MainActor [configuration] in
-            configuration.userContentController.removeScriptMessageHandler(forName: "myshottr")
-        }
+    func tearDown() {
+        guard !didTearDown else { return }
+        didTearDown = true
+        bridge.tearDown()
+        configuration.userContentController.removeScriptMessageHandler(forName: "myshottr")
     }
 
     func load(project: MyShottrProject) throws {

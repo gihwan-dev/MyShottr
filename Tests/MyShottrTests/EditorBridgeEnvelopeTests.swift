@@ -26,6 +26,8 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             "{\"protocolVersion\":2,\"requestId\":\"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\",\"type\":\"editorReady\",\"payload\":{}}",
             "{\"protocolVersion\":1,\"requestId\":\"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\",\"type\":\"futureMessage\",\"payload\":{}}",
             "{\"protocolVersion\":1,\"type\":\"editorReady\",\"payload\":{}}",
+            "{\"protocolVersion\":1,\"requestId\":\"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\",\"type\":\"editorReady\",\"payload\":{},\"extra\":true}",
+            "{\"protocolVersion\":1,\"requestId\":\"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\",\"type\":\"editorReady\",\"payload\":{\"extra\":true}}",
         ]
 
         for message in invalidMessages {
@@ -72,6 +74,57 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         XCTAssertNil(session.project)
     }
 
+    @MainActor
+    func testStagesLoadUntilItsCorrelatedSnapshotIsAccepted() throws {
+        let session = DocumentSession()
+        var outgoing: [NativeToEditorEnvelope] = []
+        let bridge = EditorBridge(session: session) { outgoing.append($0) }
+        let project = try project(annotationDocument: validDocument())
+
+        try bridge.load(project: project)
+        XCTAssertFalse(session.isOpen)
+
+        bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
+        let load = try XCTUnwrap(outgoing.last)
+        XCTAssertEqual(load.type, .loadDocument)
+
+        let wrongSnapshot = try EditorToNativeEnvelope(
+            requestId: UUID(),
+            type: .annotationSnapshot,
+            payload: .object(["document": try annotationValue(validDocument())])
+        )
+        bridge.receive(data: try wrongSnapshot.encodedData())
+        XCTAssertFalse(session.isOpen)
+
+        let acceptedSnapshot = try EditorToNativeEnvelope(
+            requestId: load.requestId,
+            type: .annotationSnapshot,
+            payload: .object(["document": try annotationValue(validDocument())])
+        )
+        bridge.receive(data: try acceptedSnapshot.encodedData())
+        XCTAssertTrue(session.isOpen)
+    }
+
+    @MainActor
+    func testBridgeErrorForPendingLoadDiscardsTheStagedDocument() throws {
+        let session = DocumentSession()
+        var outgoing: [NativeToEditorEnvelope] = []
+        let bridge = EditorBridge(session: session) { outgoing.append($0) }
+
+        try bridge.load(project: try project(annotationDocument: validDocument()))
+        bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
+        let load = try XCTUnwrap(outgoing.last)
+        let error = try EditorToNativeEnvelope(
+            requestId: load.requestId,
+            type: .bridgeError,
+            payload: .object(["code": .string("INVALID_DOCUMENT"), "message": .string("Rejected")])
+        )
+
+        bridge.receive(data: try error.encodedData())
+        XCTAssertFalse(session.isOpen)
+        XCTAssertEqual(bridge.lastError, .invalidDocument)
+    }
+
     private func project(annotationDocument: [String: Any]) throws -> MyShottrProject {
         let documentID = UUID()
         return MyShottrProject(
@@ -87,5 +140,24 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             originalPNG: Data([0x89, 0x50, 0x4E, 0x47]),
             annotationJSON: try JSONSerialization.data(withJSONObject: annotationDocument)
         )
+    }
+
+    private func annotationValue(_ document: [String: Any]) throws -> BridgeJSONValue {
+        try JSONDecoder().decode(BridgeJSONValue.self, from: JSONSerialization.data(withJSONObject: document))
+    }
+
+    private func validDocument() -> [String: Any] {
+        [
+            "schemaVersion": 1,
+            "sourcePixelWidth": 2,
+            "sourcePixelHeight": 2,
+            "elements": [[
+                "id": "rectangle-1", "type": "rectangle", "x": 0, "y": 0,
+                "width": 1, "height": 1, "rotation": 0, "opacity": 1,
+                "zIndex": 0, "seed": 1, "strokeColor": "#1677FF", "strokeWidth": 4,
+                "fillColor": NSNull(), "roughness": 1,
+            ]],
+            "defaults": ["color": "#1677FF", "strokeWidth": 4, "textSize": 24, "roughness": 1, "opacity": 1],
+        ]
     }
 }

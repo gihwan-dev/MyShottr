@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { EditorApp } from "./App";
+import { App, EditorApp } from "./App";
+import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
 import type { EditorCommand, EditorDocument, PaletteColor } from "./model/elements";
 import { fixtureDocument } from "./test/fixtures";
 
@@ -77,5 +78,39 @@ describe("EditorApp", () => {
 
     fireEvent.keyDown(window, { key: "z", metaKey: true });
     expect(changes.at(-1)).toMatchObject({ defaults: { color: "#FF4D4F" }, elements: [{ id: "rect-1" }] });
+  });
+
+  it("acknowledges an accepted native document with the correlated snapshot", async () => {
+    let receiveNative: ((message: Parameters<NativeBridge["subscribe"]>[0] extends (message: infer Message) => void ? Message : never) => void) | undefined;
+    const sent: Array<{ requestId?: string; type: string; payload: unknown }> = [];
+    const bridge: NativeBridge = {
+      send: async (type, payload) => { sent.push({ type, payload }); },
+      sendCorrelated: async (requestId, type, payload) => { sent.push({ requestId, type, payload }); },
+      subscribe: (handler) => {
+        receiveNative = handler;
+        return () => { receiveNative = undefined; };
+      },
+    };
+
+    render(<NativeBridgeProvider bridge={bridge}><App /></NativeBridgeProvider>);
+    expect(sent).toContainEqual({ type: "editorReady", payload: {} });
+
+    receiveNative!({
+      protocolVersion: 1,
+      requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      type: "loadDocument",
+      payload: {
+        documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        sourceImageURL: "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        annotationDocument: fixtureDocument(),
+      },
+    });
+
+    expect(await screen.findByRole("main", { name: "MyShottr editor" })).toBeTruthy();
+    expect(sent).toContainEqual({
+      requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      type: "annotationSnapshot",
+      payload: { document: fixtureDocument() },
+    });
   });
 });

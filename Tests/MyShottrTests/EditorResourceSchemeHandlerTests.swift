@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class EditorResourceSchemeHandlerTests: XCTestCase {
-    func testServesOnlyTheActiveSessionPNGAtTheExactDocumentURL() {
+    func testServesOnlyTheActiveSessionPNGAtTheExactDocumentURL() async {
         let activeDocumentID = UUID()
         let png = Data([0x89, 0x50, 0x4E, 0x47])
         let handler = EditorResourceSchemeHandler { documentID in
@@ -14,6 +14,7 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
         let task = SchemeTask(url: resourceURL(documentID: activeDocumentID))
 
         handler.webView(WKWebView(frame: .zero), start: task)
+        await Task.yield()
 
         XCTAssertEqual(task.response?.mimeType, "image/png")
         XCTAssertEqual(task.data, png)
@@ -21,7 +22,7 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
         XCTAssertNil(task.error)
     }
 
-    func testRejectsUnknownIDsExtraSegmentsNonGETAndTraversalWithoutResolvingBytes() {
+    func testRejectsUnknownIDsExtraSegmentsNonGETAndTraversalWithoutResolvingBytes() async {
         let activeDocumentID = UUID()
         var resolveCount = 0
         let handler = EditorResourceSchemeHandler { documentID in
@@ -38,6 +39,7 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
         for request in invalidRequests {
             let task = SchemeTask(request: request)
             handler.webView(WKWebView(frame: .zero), start: task)
+            await Task.yield()
             XCTAssertNotNil(task.error)
             XCTAssertNil(task.data)
         }
