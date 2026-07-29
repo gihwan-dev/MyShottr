@@ -86,7 +86,7 @@ function drawRoughElement(
 ): void {
   for (const roughPath of roughPathsFor(element)) {
     const path = new Path2D(roughPath.d);
-    if (roughPath.fill) {
+    if (roughPath.fill && roughPath.fill !== "none") {
       context.fillStyle = roughPath.fill;
       context.fill(path);
     }
