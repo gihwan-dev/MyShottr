@@ -81,6 +81,12 @@ describe("EditorApp", () => {
   });
 
   it("acknowledges an accepted native document with the correlated snapshot", async () => {
+    vi.stubGlobal("Image", class {
+      naturalWidth = 1440;
+      naturalHeight = 900;
+      onload: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    });
     let receiveNative: ((message: Parameters<NativeBridge["subscribe"]>[0] extends (message: infer Message) => void ? Message : never) => void) | undefined;
     const sent: Array<{ requestId?: string; type: string; payload: unknown }> = [];
     const bridge: NativeBridge = {
@@ -112,5 +118,40 @@ describe("EditorApp", () => {
       type: "annotationSnapshot",
       payload: { document: fixtureDocument() },
     });
+  });
+
+  it("reports INVALID_DOCUMENT when the source image dimensions differ", async () => {
+    vi.stubGlobal("Image", class {
+      naturalWidth = 2;
+      naturalHeight = 2;
+      onload: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    });
+    let receiveNative: ((message: Parameters<NativeBridge["subscribe"]>[0] extends (message: infer Message) => void ? Message : never) => void) | undefined;
+    const sent: Array<{ requestId?: string; type: string; payload: unknown }> = [];
+    const bridge: NativeBridge = {
+      send: async (type, payload) => { sent.push({ type, payload }); },
+      sendCorrelated: async (requestId, type, payload) => { sent.push({ requestId, type, payload }); },
+      subscribe: (handler) => { receiveNative = handler; return () => { receiveNative = undefined; }; },
+    };
+
+    render(<NativeBridgeProvider bridge={bridge}><App /></NativeBridgeProvider>);
+    receiveNative!({
+      protocolVersion: 1,
+      requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      type: "loadDocument",
+      payload: {
+        documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        sourceImageURL: "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        annotationDocument: fixtureDocument(),
+      },
+    });
+
+    await vi.waitFor(() => expect(sent).toContainEqual({
+      requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      type: "bridgeError",
+      payload: { code: "INVALID_DOCUMENT", message: "Source image dimensions do not match the document" },
+    }));
+    expect(screen.queryByRole("navigation", { name: "Annotation tools" })).toBeNull();
   });
 });

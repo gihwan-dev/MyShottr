@@ -127,18 +127,29 @@ export function App() {
   const loadedDocumentRef = useRef<{ document: EditorDocument; sourceImageURL: string } | undefined>(undefined);
 
   useEffect(() => {
+    const acceptLoad = async (message: Extract<Parameters<typeof bridge.subscribe>[0] extends (message: infer T) => void ? T : never, { type: "loadDocument" }>) => {
+      const { annotationDocument, sourceImageURL } = message.payload;
+      try {
+        const dimensions = await sourceDimensions(sourceImageURL);
+        if (dimensions.width !== annotationDocument.sourcePixelWidth || dimensions.height !== annotationDocument.sourcePixelHeight) {
+          throw new Error("Source image dimensions do not match the document");
+        }
+      } catch (error) {
+        await bridge.sendCorrelated(message.requestId, "bridgeError", {
+          code: "INVALID_DOCUMENT",
+          message: error instanceof Error ? error.message : "Source image could not be loaded",
+        });
+        return;
+      }
+      const nextDocument = { document: annotationDocument, sourceImageURL };
+      loadedDocumentRef.current = nextDocument;
+      setLoadedDocument(nextDocument);
+      await bridge.sendCorrelated(message.requestId, "annotationSnapshot", { document: annotationDocument });
+    };
     void bridge.send("editorReady", {});
     return bridge.subscribe((message) => {
       if (message.type === "loadDocument") {
-        const nextDocument = {
-          document: message.payload.annotationDocument,
-          sourceImageURL: message.payload.sourceImageURL,
-        };
-        loadedDocumentRef.current = nextDocument;
-        setLoadedDocument(nextDocument);
-        void bridge.sendCorrelated(message.requestId, "annotationSnapshot", {
-          document: message.payload.annotationDocument,
-        });
+        void acceptLoad(message);
         return;
       }
       if (message.type === "requestComposite" && loadedDocumentRef.current) {
@@ -161,4 +172,13 @@ export function App() {
       void bridge.send("documentChanged", {});
     }}
   />;
+}
+
+function sourceDimensions(sourceImageURL: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => reject(new Error("Source image could not be loaded"));
+    image.src = sourceImageURL;
+  });
 }
