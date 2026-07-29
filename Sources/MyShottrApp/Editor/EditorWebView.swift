@@ -8,16 +8,12 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
     private let bridge: EditorBridge
     private let configuration: WKWebViewConfiguration
     private var didTearDown = false
+    private(set) var navigationError: Error?
+    private(set) var navigationFinished = false
+    var onNavigationFinished: (() -> Void)?
+    var onNavigationFailure: ((Error) -> Void)?
 
-    init(session: DocumentSession) {
-        let bridge = EditorBridge(session: session)
-        let resourceHandler = EditorResourceSchemeHandler { documentID in
-            session.sourcePNG(for: documentID)
-        }
-        let configuration = WKWebViewConfiguration()
-        configuration.setURLSchemeHandler(resourceHandler, forURLScheme: "myshottr-resource")
-        configuration.userContentController.add(bridge, name: "myshottr")
-
+    convenience init(session: DocumentSession) {
         guard let resourcesURL = Bundle.main.resourceURL
         else {
             preconditionFailure("Bundled editor is missing")
@@ -27,6 +23,30 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
             preconditionFailure("Bundled editor is missing")
         }
 
+        self.init(
+            session: session,
+            editorBundleRootURL: editorURL.deletingLastPathComponent()
+        )
+    }
+
+    private convenience init(session: DocumentSession, editorBundleRootURL: URL) {
+        self.init(
+            session: session,
+            editorURL: URL(string: "myshottr-editor://editor/index.html")!,
+            editorBundleRootURL: editorBundleRootURL
+        )
+    }
+
+    private init(session: DocumentSession, editorURL: URL, editorBundleRootURL: URL) {
+        let bridge = EditorBridge(session: session)
+        let resourceHandler = EditorResourceSchemeHandler { documentID in
+            session.sourcePNG(for: documentID)
+        }
+        let configuration = WKWebViewConfiguration()
+        configuration.setURLSchemeHandler(resourceHandler, forURLScheme: "myshottr-resource")
+        configuration.setURLSchemeHandler(EditorBundleSchemeHandler(rootURL: editorBundleRootURL), forURLScheme: "myshottr-editor")
+        configuration.userContentController.add(bridge, name: "myshottr")
+
         self.bridge = bridge
         self.configuration = configuration
         self.editorURL = editorURL
@@ -34,7 +54,7 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
         super.init()
         webView.navigationDelegate = self
         bridge.attach(to: webView)
-        webView.loadFileURL(editorURL, allowingReadAccessTo: resourcesURL)
+        webView.load(URLRequest(url: editorURL))
     }
 
     func tearDown() {
@@ -62,5 +82,23 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
             return
         }
         decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        navigationFinished = true
+        onNavigationFinished?()
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation?, withError error: Error) {
+        reportNavigationFailure(error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        reportNavigationFailure(error)
+    }
+
+    private func reportNavigationFailure(_ error: Error) {
+        navigationError = error
+        onNavigationFailure?(error)
     }
 }

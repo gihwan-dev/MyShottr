@@ -28,6 +28,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         window.delegate = self
         window.toolbar = makeToolbar()
         session.onModifiedStateChange = { [weak window] modified in window?.isDocumentEdited = modified }
+        editorWebView.onNavigationFailure = { [weak self] error in self?.present(error) }
         try editorWebView.load(project: project)
     }
 
