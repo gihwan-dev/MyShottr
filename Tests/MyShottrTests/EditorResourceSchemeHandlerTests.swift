@@ -28,6 +28,7 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
         XCTAssertEqual(task.dataCount, 1)
         XCTAssertEqual(task.didFinishCount, 1)
         XCTAssertEqual(task.failureCount, 0)
+        XCTAssertTrue(task.callbacksWereOnMainThread)
     }
 
     func testRejectsUnknownIDsExtraSegmentsNonGETAndTraversalWithoutResolvingBytes() async {
@@ -64,6 +65,7 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
             XCTAssertEqual(task.dataCount, 0)
             XCTAssertEqual(task.didFinishCount, 0)
             XCTAssertEqual(task.failureCount, 1)
+            XCTAssertTrue(task.callbacksWereOnMainThread)
         }
         XCTAssertEqual(resolveCount, 1)
     }
@@ -195,6 +197,7 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
         XCTAssertEqual(task.didFinishCount, 1)
         XCTAssertEqual(task.failureCount, 0)
         XCTAssertEqual(pendingLookupCount, 0)
+        XCTAssertTrue(task.callbacksWereOnMainThread)
     }
 
     private func resourceURL(documentID: UUID) -> URL {
@@ -218,6 +221,7 @@ private final class SchemeTask: NSObject, WKURLSchemeTask, @unchecked Sendable {
     private(set) var dataCount = 0
     private(set) var didFinishCount = 0
     private(set) var failureCount = 0
+    private(set) var callbacksWereOnMainThread = true
     private let onTerminalCallback: (() -> Void)?
 
     init(url: URL, onTerminalCallback: (() -> Void)? = nil) {
@@ -231,24 +235,32 @@ private final class SchemeTask: NSObject, WKURLSchemeTask, @unchecked Sendable {
     }
 
     func didReceive(_ response: URLResponse) {
+        recordCallbackExecutor()
         responseCount += 1
         self.response = response
     }
 
     func didReceive(_ data: Data) {
+        recordCallbackExecutor()
         dataCount += 1
         self.data = data
     }
 
     func didFinish() {
+        recordCallbackExecutor()
         didFinishCount += 1
         didFinishCalled = true
         onTerminalCallback?()
     }
 
     func didFailWithError(_ error: Error) {
+        recordCallbackExecutor()
         failureCount += 1
         self.error = error
         onTerminalCallback?()
+    }
+
+    private func recordCallbackExecutor() {
+        callbacksWereOnMainThread = callbacksWereOnMainThread && Thread.isMainThread
     }
 }

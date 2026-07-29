@@ -1,25 +1,126 @@
 import Foundation
 import WebKit
 
-final class EditorResourceSchemeHandler: NSObject, WKURLSchemeHandler, @unchecked Sendable {
-    private final class LookupRegistration: @unchecked Sendable {
+final class EditorResourceSchemeHandler: NSObject, WKURLSchemeHandler {
+    private struct LookupRegistration: Equatable, Sendable {
+        let token = UUID()
+    }
+
+    private struct LookupEntry {
+        let registration: LookupRegistration
         var task: Task<Void, Never>?
     }
 
-    private nonisolated(unsafe) let pngForDocument: @MainActor (UUID) -> Data?
-    private nonisolated(unsafe) let deliveryBarrier: (() -> Void)?
-    private nonisolated(unsafe) let taskAttachmentBarrier: (() -> Void)?
-    private nonisolated(unsafe) let deliveryAttemptDidReturn: (() -> Void)?
-    private nonisolated(unsafe) let lookupTaskDidReturn: (() -> Void)?
-    private let taskLock = NSLock()
-    private nonisolated(unsafe) var lookupTasks: [ObjectIdentifier: LookupRegistration] = [:]
+    // Every access to entries is lock-protected. Entries contain only a Sendable
+    // registration token and the Task handle used for cancellation.
+    private final class LookupRegistry: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [ObjectIdentifier: LookupEntry] = [:]
+
+        func register(_ taskID: ObjectIdentifier) -> LookupRegistration {
+            let registration = LookupRegistration()
+            lock.lock()
+            entries[taskID] = LookupEntry(registration: registration)
+            lock.unlock()
+            return registration
+        }
+
+        func isRegistered(_ taskID: ObjectIdentifier, registration: LookupRegistration) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return entries[taskID]?.registration == registration
+        }
+
+        func attach(
+            _ task: Task<Void, Never>,
+            to taskID: ObjectIdentifier,
+            registration: LookupRegistration
+        ) {
+            lock.lock()
+            let shouldCancel = entries[taskID]?.registration != registration
+            if !shouldCancel {
+                entries[taskID]?.task = task
+            }
+            lock.unlock()
+            if shouldCancel {
+                task.cancel()
+            }
+        }
+
+        func stop(_ taskID: ObjectIdentifier) {
+            lock.lock()
+            let task = entries.removeValue(forKey: taskID)?.task
+            lock.unlock()
+            task?.cancel()
+        }
+
+        @MainActor
+        func deliver(
+            _ taskID: ObjectIdentifier,
+            registration: LookupRegistration,
+            deliveryBarrier: (@Sendable () -> Void)?,
+            callback: @MainActor () -> Void
+        ) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard entries[taskID]?.registration == registration else { return }
+            entries.removeValue(forKey: taskID)
+            deliveryBarrier?()
+            callback()
+        }
+
+        var count: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return entries.count
+        }
+    }
+
+    // WebKit does not declare WKURLSchemeTask Sendable. The wrapped value is
+    // never exposed: its terminal callback methods are mechanically confined
+    // to MainActor, while the registry shares only identity tokens and Task
+    // cancellation state with other executors.
+    private final class SchemeTaskCallbacks: @unchecked Sendable {
+        let identity: ObjectIdentifier
+        private let task: WKURLSchemeTask
+
+        init(_ task: WKURLSchemeTask) {
+            identity = ObjectIdentifier(task as AnyObject)
+            self.task = task
+        }
+
+        @MainActor
+        func reject() {
+            task.didFailWithError(NSError(domain: "MyShottr.EditorResourceScheme", code: 1))
+        }
+
+        @MainActor
+        func finish(with png: Data, responseURL: URL) {
+            let response = URLResponse(
+                url: responseURL,
+                mimeType: "image/png",
+                expectedContentLength: png.count,
+                textEncodingName: nil
+            )
+            task.didReceive(response)
+            task.didReceive(png)
+            task.didFinish()
+        }
+    }
+
+    private let pngForDocument: @MainActor @Sendable (UUID) -> Data?
+    private let deliveryBarrier: (@Sendable () -> Void)?
+    private let taskAttachmentBarrier: (@Sendable () -> Void)?
+    private let deliveryAttemptDidReturn: (@Sendable () -> Void)?
+    private let lookupTaskDidReturn: (@Sendable () -> Void)?
+    private let lookupRegistry = LookupRegistry()
 
     init(
-        pngForDocument: @escaping @MainActor (UUID) -> Data?,
-        deliveryBarrier: (() -> Void)? = nil,
-        taskAttachmentBarrier: (() -> Void)? = nil,
-        deliveryAttemptDidReturn: (() -> Void)? = nil,
-        lookupTaskDidReturn: (() -> Void)? = nil
+        pngForDocument: @escaping @MainActor @Sendable (UUID) -> Data?,
+        deliveryBarrier: (@Sendable () -> Void)? = nil,
+        taskAttachmentBarrier: (@Sendable () -> Void)? = nil,
+        deliveryAttemptDidReturn: (@Sendable () -> Void)? = nil,
+        lookupTaskDidReturn: (@Sendable () -> Void)? = nil
     ) {
         self.pngForDocument = pngForDocument
         self.deliveryBarrier = deliveryBarrier
@@ -29,8 +130,10 @@ final class EditorResourceSchemeHandler: NSObject, WKURLSchemeHandler, @unchecke
     }
 
     nonisolated func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
-        guard let requestURL = urlSchemeTask.request.url,
-              urlSchemeTask.request.httpMethod == "GET",
+        let request = urlSchemeTask.request
+        let callbacks = SchemeTaskCallbacks(urlSchemeTask)
+        guard let requestURL = request.url,
+              request.httpMethod == "GET",
               requestURL.scheme == "myshottr-resource",
               requestURL.host == "document",
               requestURL.port == nil,
@@ -41,101 +144,61 @@ final class EditorResourceSchemeHandler: NSObject, WKURLSchemeHandler, @unchecke
               let documentID = documentID(in: requestURL),
               URLComponents(url: requestURL, resolvingAgainstBaseURL: false)?.percentEncodedPath == "/\(documentID.uuidString)/original.png"
         else {
-            reject(urlSchemeTask)
+            Task { @MainActor in
+                callbacks.reject()
+            }
             return
         }
 
-        let taskID = ObjectIdentifier(urlSchemeTask as AnyObject)
-        let registration = LookupRegistration()
-        taskLock.lock()
-        lookupTasks[taskID] = registration
-        taskLock.unlock()
+        let taskID = callbacks.identity
+        let registration = lookupRegistry.register(taskID)
 
         let lookupTask = Task { @MainActor [
-            weak self,
             pngForDocument,
-            registration,
+            lookupRegistry,
+            deliveryBarrier,
+            deliveryAttemptDidReturn,
             lookupTaskDidReturn
         ] in
             defer { lookupTaskDidReturn?() }
-            guard let self else { return }
-            guard self.isRegistered(taskID, registration: registration), !Task.isCancelled else { return }
+            guard lookupRegistry.isRegistered(taskID, registration: registration), !Task.isCancelled else { return }
             guard let png = pngForDocument(documentID) else {
-                self.deliver(taskID, registration: registration) {
-                    self.reject(urlSchemeTask)
+                lookupRegistry.deliver(
+                    taskID,
+                    registration: registration,
+                    deliveryBarrier: deliveryBarrier
+                ) {
+                    callbacks.reject()
                 }
-                self.deliveryAttemptDidReturn?()
+                deliveryAttemptDidReturn?()
                 return
             }
-            guard self.isRegistered(taskID, registration: registration), !Task.isCancelled else { return }
-            self.deliver(taskID, registration: registration) {
-                let response = URLResponse(
-                    url: requestURL,
-                    mimeType: "image/png",
-                    expectedContentLength: png.count,
-                    textEncodingName: nil
-                )
-                urlSchemeTask.didReceive(response)
-                urlSchemeTask.didReceive(png)
-                urlSchemeTask.didFinish()
+            guard lookupRegistry.isRegistered(taskID, registration: registration), !Task.isCancelled else { return }
+            lookupRegistry.deliver(
+                taskID,
+                registration: registration,
+                deliveryBarrier: deliveryBarrier
+            ) {
+                callbacks.finish(with: png, responseURL: requestURL)
             }
-            self.deliveryAttemptDidReturn?()
+            deliveryAttemptDidReturn?()
         }
         taskAttachmentBarrier?()
-        taskLock.lock()
-        let shouldCancel = lookupTasks[taskID] !== registration
-        if !shouldCancel {
-            registration.task = lookupTask
-        }
-        taskLock.unlock()
-        if shouldCancel {
-            lookupTask.cancel()
-        }
+        lookupRegistry.attach(lookupTask, to: taskID, registration: registration)
     }
 
     nonisolated func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
         let taskID = ObjectIdentifier(urlSchemeTask as AnyObject)
-        taskLock.lock()
-        let registration = lookupTasks.removeValue(forKey: taskID)
-        taskLock.unlock()
-        registration?.task?.cancel()
+        lookupRegistry.stop(taskID)
     }
 
     nonisolated var pendingLookupCount: Int {
-        taskLock.lock()
-        defer { taskLock.unlock() }
-        return lookupTasks.count
+        lookupRegistry.count
     }
 
     private nonisolated func documentID(in url: URL) -> UUID? {
         let components = url.pathComponents
         guard components.count == 3, components[0] == "/", components[2] == "original.png" else { return nil }
         return UUID(uuidString: components[1])
-    }
-
-    private nonisolated func reject(_ task: WKURLSchemeTask) {
-        task.didFailWithError(NSError(domain: "MyShottr.EditorResourceScheme", code: 1))
-    }
-
-    private nonisolated func isRegistered(
-        _ taskID: ObjectIdentifier,
-        registration: LookupRegistration
-    ) -> Bool {
-        taskLock.lock()
-        defer { taskLock.unlock() }
-        return lookupTasks[taskID] === registration
-    }
-
-    private nonisolated func deliver(
-        _ taskID: ObjectIdentifier,
-        registration: LookupRegistration,
-        callback: () -> Void
-    ) {
-        taskLock.lock()
-        defer { taskLock.unlock() }
-        guard lookupTasks[taskID] === registration else { return }
-        lookupTasks.removeValue(forKey: taskID)
-        deliveryBarrier?()
-        callback()
     }
 }
