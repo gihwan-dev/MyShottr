@@ -8,19 +8,26 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
     func testServesOnlyTheActiveSessionPNGAtTheExactDocumentURL() async {
         let activeDocumentID = UUID()
         let png = Data([0x89, 0x50, 0x4E, 0x47])
+        let terminalCallback = expectation(description: "PNG delivery finishes")
         let handler = EditorResourceSchemeHandler { documentID in
             documentID == activeDocumentID ? png : nil
         }
-        let task = SchemeTask(url: resourceURL(documentID: activeDocumentID))
+        let task = SchemeTask(
+            url: resourceURL(documentID: activeDocumentID),
+            onTerminalCallback: { terminalCallback.fulfill() }
+        )
 
         handler.webView(WKWebView(frame: .zero), start: task)
-        await Task.yield()
-        await Task.yield()
+        await fulfillment(of: [terminalCallback])
 
         XCTAssertEqual(task.response?.mimeType, "image/png")
         XCTAssertEqual(task.data, png)
         XCTAssertTrue(task.didFinishCalled)
         XCTAssertNil(task.error)
+        XCTAssertEqual(task.responseCount, 1)
+        XCTAssertEqual(task.dataCount, 1)
+        XCTAssertEqual(task.didFinishCount, 1)
+        XCTAssertEqual(task.failureCount, 0)
     }
 
     func testRejectsUnknownIDsExtraSegmentsNonGETAndTraversalWithoutResolvingBytes() async {
@@ -37,33 +44,87 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
             request(url: resourceURL(documentID: activeDocumentID), method: "POST"),
         ]
 
-        for request in invalidRequests {
-            let task = SchemeTask(request: request)
+        let terminalCallbacks = invalidRequests.indices.map {
+            expectation(description: "invalid request \($0) fails")
+        }
+        let tasks = zip(invalidRequests, terminalCallbacks).map { request, terminalCallback in
+            let task = SchemeTask(
+                request: request,
+                onTerminalCallback: { terminalCallback.fulfill() }
+            )
             handler.webView(WKWebView(frame: .zero), start: task)
-            await Task.yield()
-            await Task.yield()
+            return task
+        }
+
+        await fulfillment(of: terminalCallbacks)
+        for task in tasks {
             XCTAssertNotNil(task.error)
             XCTAssertNil(task.data)
+            XCTAssertEqual(task.responseCount, 0)
+            XCTAssertEqual(task.dataCount, 0)
+            XCTAssertEqual(task.didFinishCount, 0)
+            XCTAssertEqual(task.failureCount, 1)
         }
         XCTAssertEqual(resolveCount, 1)
     }
 
     func testStopCancelsAQueuedLookupWithoutCompletingTheSchemeTask() async {
-        let handler = EditorResourceSchemeHandler { _ in
-            XCTFail("Cancelled lookup must not read session bytes")
-            return Data()
-        }
+        let lookupReturned = expectation(description: "cancelled lookup returns")
+        let handler = EditorResourceSchemeHandler(
+            pngForDocument: { _ in
+                XCTFail("Cancelled lookup must not read session bytes")
+                return Data()
+            },
+            lookupTaskDidReturn: {
+                lookupReturned.fulfill()
+            }
+        )
         let task = SchemeTask(url: resourceURL(documentID: UUID()))
 
         handler.webView(WKWebView(frame: .zero), start: task)
         handler.webView(WKWebView(frame: .zero), stop: task)
-        await Task.yield()
-        await Task.yield()
+        await fulfillment(of: [lookupReturned])
 
         XCTAssertNil(task.response)
         XCTAssertNil(task.data)
         XCTAssertNil(task.error)
         XCTAssertFalse(task.didFinishCalled)
+    }
+
+    func testStopDuringTaskAttachmentLeavesNoCallbacksOrPendingLookup() async {
+        let attachmentPaused = DispatchSemaphore(value: 0)
+        let releaseAttachment = DispatchSemaphore(value: 0)
+        let lookupReturned = expectation(description: "stopped startup task returns")
+        let task = SchemeTask(url: resourceURL(documentID: UUID()))
+        let handler = EditorResourceSchemeHandler(
+            pngForDocument: { _ in
+                XCTFail("A startup stopped before attachment must not read session bytes")
+                return Data()
+            },
+            taskAttachmentBarrier: {
+                attachmentPaused.signal()
+                releaseAttachment.wait()
+            },
+            lookupTaskDidReturn: {
+                lookupReturned.fulfill()
+            }
+        )
+        let webView = WKWebView(frame: .zero)
+
+        DispatchQueue.global().async {
+            attachmentPaused.wait()
+            handler.webView(webView, stop: task)
+            releaseAttachment.signal()
+        }
+
+        handler.webView(webView, start: task)
+        await fulfillment(of: [lookupReturned])
+
+        XCTAssertEqual(task.responseCount, 0)
+        XCTAssertEqual(task.dataCount, 0)
+        XCTAssertEqual(task.didFinishCount, 0)
+        XCTAssertEqual(task.failureCount, 0)
+        XCTAssertEqual(handler.pendingLookupCount, 0)
     }
 
     func testCompletionWinsBeforeStopReturnsWhenDeliveryWasAlreadyClaimed() async {
@@ -99,6 +160,41 @@ final class EditorResourceSchemeHandlerTests: XCTestCase {
         XCTAssertEqual(task.data, Data([0x89, 0x50, 0x4E, 0x47]))
         XCTAssertTrue(task.didFinishCalled)
         XCTAssertNil(task.error)
+        XCTAssertEqual(task.responseCount, 1)
+        XCTAssertEqual(task.dataCount, 1)
+        XCTAssertEqual(task.didFinishCount, 1)
+        XCTAssertEqual(task.failureCount, 0)
+    }
+
+    func testRegistrationExistsBeforeLookupTaskCanDeliver() async {
+        let deliveryAttemptReturned = DispatchSemaphore(value: 0)
+        let task = SchemeTask(url: resourceURL(documentID: UUID()))
+        let handler = EditorResourceSchemeHandler(
+            pngForDocument: { _ in Data([0x89, 0x50, 0x4E, 0x47]) },
+            taskAttachmentBarrier: {
+                deliveryAttemptReturned.wait()
+            },
+            deliveryAttemptDidReturn: {
+                deliveryAttemptReturned.signal()
+            }
+        )
+        let webView = WKWebView(frame: .zero)
+        let startFinished = expectation(description: "start returns after forced early delivery")
+
+        DispatchQueue.global().async {
+            handler.webView(webView, start: task)
+            startFinished.fulfill()
+        }
+
+        await fulfillment(of: [startFinished])
+        let pendingLookupCount = handler.pendingLookupCount
+        handler.webView(webView, stop: task)
+
+        XCTAssertEqual(task.responseCount, 1)
+        XCTAssertEqual(task.dataCount, 1)
+        XCTAssertEqual(task.didFinishCount, 1)
+        XCTAssertEqual(task.failureCount, 0)
+        XCTAssertEqual(pendingLookupCount, 0)
     }
 
     private func resourceURL(documentID: UUID) -> URL {
@@ -118,28 +214,41 @@ private final class SchemeTask: NSObject, WKURLSchemeTask, @unchecked Sendable {
     private(set) var data: Data?
     private(set) var error: Error?
     private(set) var didFinishCalled = false
+    private(set) var responseCount = 0
+    private(set) var dataCount = 0
+    private(set) var didFinishCount = 0
+    private(set) var failureCount = 0
+    private let onTerminalCallback: (() -> Void)?
 
-    init(url: URL) {
+    init(url: URL, onTerminalCallback: (() -> Void)? = nil) {
         self.request = URLRequest(url: url)
+        self.onTerminalCallback = onTerminalCallback
     }
 
-    init(request: URLRequest) {
+    init(request: URLRequest, onTerminalCallback: (() -> Void)? = nil) {
         self.request = request
+        self.onTerminalCallback = onTerminalCallback
     }
 
     func didReceive(_ response: URLResponse) {
+        responseCount += 1
         self.response = response
     }
 
     func didReceive(_ data: Data) {
+        dataCount += 1
         self.data = data
     }
 
     func didFinish() {
+        didFinishCount += 1
         didFinishCalled = true
+        onTerminalCallback?()
     }
 
     func didFailWithError(_ error: Error) {
+        failureCount += 1
         self.error = error
+        onTerminalCallback?()
     }
 }
