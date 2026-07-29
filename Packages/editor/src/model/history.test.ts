@@ -92,4 +92,34 @@ describe("createHistoryStore", () => {
 
     expect(findElement(history.document, "rect-1").x).toBe(30);
   });
+
+  it("isolates external document mutations from current and transaction history", () => {
+    const history = createHistoryStore(fixtureDocument());
+    history.beginTransaction("transform");
+    findElement(history.document, "rect-1").x = 99;
+
+    expect(findElement(history.document, "rect-1").x).toBe(0);
+
+    history.dispatch({ type: "update", element: { ...fixtureRect(), x: 20 } });
+    history.commitTransaction();
+    history.undo();
+
+    expect(findElement(history.document, "rect-1").x).toBe(0);
+  });
+
+  it("preserves redo and undo depth after a boundary reorder no-op", () => {
+    const history = createHistoryStore(fixtureDocument());
+    history.dispatch({ type: "update", element: { ...fixtureRect(), x: 10 } });
+    history.undo();
+    const beforeReorder = history.document;
+
+    history.dispatch({ type: "reorder", ids: ["rect-1"], direction: "forward" });
+
+    expect(history.document).toEqual(beforeReorder);
+    history.redo();
+    expect(findElement(history.document, "rect-1").x).toBe(10);
+    history.undo();
+    history.undo();
+    expect(findElement(history.document, "rect-1").x).toBe(0);
+  });
 });

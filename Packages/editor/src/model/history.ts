@@ -24,7 +24,7 @@ export function createHistoryStore(initialDocument: EditorDocument): HistoryStor
 
   return {
     get document() {
-      return document;
+      return EditorDocumentSchema.parse(document) as EditorDocument;
     },
     beginTransaction(label) {
       if (transaction) {
@@ -37,6 +37,9 @@ export function createHistoryStore(initialDocument: EditorDocument): HistoryStor
     },
     dispatch(command) {
       const next = applyCommand(document, command);
+      if (next === document) {
+        return;
+      }
       if (!transaction) {
         past.push(document);
         future.length = 0;
