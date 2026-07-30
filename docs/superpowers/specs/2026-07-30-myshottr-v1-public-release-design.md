@@ -244,6 +244,21 @@ The extension requests only:
 Its action and keyboard command call `chrome.tabs.captureVisibleTab()` with PNG
 output. It has no content script and no persistent host permission.
 
+A browser-capture request carries an explicit mode:
+
+```text
+BrowserCaptureMode
+├── visibleViewport
+└── fullPage (unsupported in v0.1.0)
+```
+
+The v1 action always requests `visibleViewport`. The extension command,
+progress UI, and native protocol use the mode rather than hard-coding a
+viewport-only message name throughout the system. A future popup switch can
+enable `fullPage` after its tile-capture implementation exists. Receiving
+`fullPage` in v1 produces an unsupported-mode error; it does not capture a
+viewport while claiming full-page success.
+
 A manifest key pins the unpacked extension to a stable extension ID. The Native
 Messaging host manifest accepts only that origin.
 
@@ -313,7 +328,22 @@ and roughness for the next capture.
 Trackpad pinch zooms the canvas. Holding Space while dragging pans a zoomed
 canvas.
 
-### 8.3 Output Actions
+### 8.3 Additional Tool Semantics
+
+The earlier v1 design remains authoritative for existing tools. The two public
+release additions behave as follows:
+
+| Tool | v1 behavior |
+| --- | --- |
+| Line | A two-endpoint segment with movable endpoints, stable rough seed, current color, stroke width, opacity, and roughness. |
+| Blur | A movable and resizable rectangular effect that shows a deterministic source-resolution Gaussian blur of the source pixels beneath it. |
+
+Blur is composited above the immutable source image and below vector
+annotations. Its editor preview and exported result use the same radius in
+source-image coordinates. It does not modify `original.png`, and it is not
+described as secure redaction.
+
+### 8.4 Output Actions
 
 The title-bar actions use explicit labels:
 
@@ -469,6 +499,15 @@ A semantic-version tag such as `v0.1.0` triggers a release workflow that:
 
 Release automation must fail closed. A failed test, build, validation, or
 packaging step prevents publication.
+
+Live ScreenCaptureKit permission behavior, a real Chrome connection, Retina
+coordinate fidelity, common-app paste behavior, abnormal-termination recovery,
+and Gatekeeper installation cannot be proven by headless CI alone. Before
+tagging, the release candidate's exact commit receives the documented manual
+acceptance run on a Mac. After publication, the uploaded archives are downloaded
+again, their checksums are verified, and installation is smoke-tested from
+those downloaded files. The tag, automated result, manual evidence, and
+published artifacts must all refer to the same commit.
 
 ## 16. Acceptance Criteria
 
