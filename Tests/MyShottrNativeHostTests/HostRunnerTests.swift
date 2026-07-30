@@ -39,6 +39,22 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         )
     }
 
+    func testRejectsExcessiveJSONNestingWithoutStagingOrActivation() throws {
+        let depth = 256
+        let message = Data(
+            (
+                String(repeating: "[", count: depth)
+                    + "0"
+                    + String(repeating: "]", count: depth)
+            ).utf8
+        )
+
+        try assertRejected(
+            message: message,
+            code: .invalidMessage
+        )
+    }
+
     func testRejectsUnexpectedMessageTypeWithoutStaging() throws {
         try assertRejected(
             message: HostFixtures.protocolMessage(type: "ping"),

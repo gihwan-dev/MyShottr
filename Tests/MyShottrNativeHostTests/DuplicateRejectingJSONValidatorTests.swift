@@ -25,4 +25,30 @@ final class DuplicateRejectingJSONValidatorTests: XCTestCase {
             )
         )
     }
+
+    func testAcceptsDocumentAtConservativeNestingDepth() {
+        XCTAssertTrue(
+            DuplicateRejectingJSONValidator.isValid(
+                deeplyNestedArray(depth: 64)
+            )
+        )
+    }
+
+    func testRejectsDocumentBeyondNestingDepthLimit() {
+        XCTAssertFalse(
+            DuplicateRejectingJSONValidator.isValid(
+                deeplyNestedArray(depth: 256)
+            )
+        )
+    }
+
+    private func deeplyNestedArray(depth: Int) -> Data {
+        Data(
+            (
+                String(repeating: "[", count: depth)
+                    + "0"
+                    + String(repeating: "]", count: depth)
+            ).utf8
+        )
+    }
 }

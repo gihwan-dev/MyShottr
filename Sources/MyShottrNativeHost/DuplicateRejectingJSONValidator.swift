@@ -8,6 +8,8 @@ enum DuplicateRejectingJSONValidator {
 }
 
 private struct Parser {
+    private static let maximumNestingDepth = 128
+
     private let bytes: [UInt8]
     private var index = 0
 
@@ -18,7 +20,7 @@ private struct Parser {
     mutating func parseDocument() -> Bool {
         do {
             skipWhitespace()
-            try parseValue()
+            try parseValue(nestingDepth: 0)
             skipWhitespace()
             return index == bytes.count
         } catch {
@@ -26,16 +28,22 @@ private struct Parser {
         }
     }
 
-    private mutating func parseValue() throws {
+    private mutating func parseValue(nestingDepth: Int) throws {
         guard let byte = current else {
             throw ParseError.invalidJSON
         }
 
         switch byte {
         case 0x7B:
-            try parseObject()
+            guard nestingDepth < Self.maximumNestingDepth else {
+                throw ParseError.nestingTooDeep
+            }
+            try parseObject(nestingDepth: nestingDepth + 1)
         case 0x5B:
-            try parseArray()
+            guard nestingDepth < Self.maximumNestingDepth else {
+                throw ParseError.nestingTooDeep
+            }
+            try parseArray(nestingDepth: nestingDepth + 1)
         case 0x22:
             _ = try parseString()
         case 0x74:
@@ -51,7 +59,7 @@ private struct Parser {
         }
     }
 
-    private mutating func parseObject() throws {
+    private mutating func parseObject(nestingDepth: Int) throws {
         index += 1
         skipWhitespace()
         if consume(0x7D) {
@@ -73,7 +81,7 @@ private struct Parser {
                 throw ParseError.invalidJSON
             }
             skipWhitespace()
-            try parseValue()
+            try parseValue(nestingDepth: nestingDepth)
             skipWhitespace()
 
             if consume(0x7D) {
@@ -86,7 +94,7 @@ private struct Parser {
         }
     }
 
-    private mutating func parseArray() throws {
+    private mutating func parseArray(nestingDepth: Int) throws {
         index += 1
         skipWhitespace()
         if consume(0x5D) {
@@ -94,7 +102,7 @@ private struct Parser {
         }
 
         while true {
-            try parseValue()
+            try parseValue(nestingDepth: nestingDepth)
             skipWhitespace()
             if consume(0x5D) {
                 return
@@ -229,4 +237,5 @@ private struct Parser {
 private enum ParseError: Error {
     case duplicateMember
     case invalidJSON
+    case nestingTooDeep
 }
