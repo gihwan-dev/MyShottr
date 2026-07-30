@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fixtureDocument, fixtureRect, fixtureText } from "../test/fixtures";
+import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "../test/fixtures";
 import type { EditorElement } from "./elements";
 import { findElement, applyCommand } from "./reducer";
 import { createHistoryStore } from "./history";
@@ -77,6 +77,47 @@ describe("applyCommand", () => {
 
     expect(next.elements.map((element) => element.zIndex)).toEqual([0, 3]);
     expect(next.elements.map((element) => element.opacity)).toEqual([0.5, 0.5]);
+  });
+
+  it("creates a batch atomically with unique ids and z-indices", () => {
+    const document = fixtureDocument();
+    const next = applyCommand(document, {
+      type: "createMany",
+      elements: [
+        { ...fixtureRect(), id: "rect-2", seed: 102, zIndex: 1 },
+        { ...fixtureText(), id: "text-2", seed: 103, zIndex: 2 },
+      ],
+    });
+
+    expect(next.elements.map((element) => element.id)).toEqual(["rect-1", "rect-2", "text-2"]);
+    expect(next.elements.map((element) => element.zIndex)).toEqual([0, 1, 2]);
+    expect(() => applyCommand(document, {
+      type: "createMany",
+      elements: [
+        { ...fixtureRect(), id: "rect-2", seed: 102, zIndex: 1 },
+        { ...fixtureText(), id: "rect-2", seed: 103, zIndex: 2 },
+      ],
+    })).toThrow();
+  });
+
+  it("moves a selected pair forward without duplicate z-indices", () => {
+    const document = fixtureDocument({
+      elements: [
+        fixtureRect(),
+        { ...fixtureText(), zIndex: 1 },
+        { ...fixtureLine(), zIndex: 2 },
+      ],
+    });
+
+    const next = applyCommand(document, {
+      type: "reorder",
+      ids: ["rect-1", "text-1"],
+      direction: "forward",
+    });
+
+    expect(new Set(next.elements.map((element) => element.zIndex)).size).toBe(next.elements.length);
+    expect([...next.elements].sort((left, right) => left.zIndex - right.zIndex).map((element) => element.id))
+      .toEqual(["line-1", "rect-1", "text-1"]);
   });
 });
 
@@ -165,5 +206,21 @@ describe("createHistoryStore", () => {
 
     expect(history.undo()).toBe(true);
     expect(history.document.elements.map((element) => element.opacity)).toEqual([1, 1]);
+  });
+
+  it("applies createMany as one undoable command", () => {
+    const history = createHistoryStore(fixtureDocument());
+    history.dispatch({
+      type: "createMany",
+      elements: [
+        { ...fixtureRect(), id: "rect-2", seed: 102, zIndex: 1 },
+        { ...fixtureText(), id: "text-2", seed: 103, zIndex: 2 },
+      ],
+    });
+
+    expect(history.document.elements).toHaveLength(3);
+    expect(history.undo()).toBe(true);
+    expect(history.document.elements.map((element) => element.id)).toEqual(["rect-1"]);
+    expect(history.undo()).toBe(false);
   });
 });

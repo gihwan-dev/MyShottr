@@ -18,6 +18,18 @@ export function applyCommand(document: EditorDocument, command: EditorCommand): 
       const element = EditorElementSchema.parse(command.element) as EditorElement;
       return EditorDocumentSchema.parse({ ...current, elements: [...current.elements, element] }) as EditorDocument;
     }
+    case "createMany": {
+      if (command.elements.length === 0) {
+        throw new Error("Cannot createMany without elements");
+      }
+      const elements = command.elements.map((element) => (
+        EditorElementSchema.parse(element) as EditorElement
+      ));
+      return EditorDocumentSchema.parse({
+        ...current,
+        elements: [...current.elements, ...elements],
+      }) as EditorDocument;
+    }
     case "update": {
       const element = EditorElementSchema.parse(command.element) as EditorElement;
       const index = current.elements.findIndex((candidate) => candidate.id === element.id);

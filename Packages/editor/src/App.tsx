@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorCanvas } from "./canvas/EditorCanvas";
-import { duplicateElementWithinBounds, SelectionController } from "./canvas/SelectionController";
+import { moveElementsWithinBounds, SelectionController } from "./canvas/SelectionController";
 import { createElementId } from "./canvas/tools/createElement";
 import { keyboardCommandFor, isTextEntryTarget } from "./canvas/tools/ToolController";
 import { ContextStylePalette } from "./components/ContextStylePalette";
@@ -30,7 +30,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   const defaults = useRef(initialDocument.defaults);
   const selection = useRef(new SelectionController());
   const [document, setDocument] = useState(() => ({ ...history.current!.document, defaults: defaults.current }));
-  const [selectedId, setSelectedId] = useState<string>();
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<EditorTool>(initialTool);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
@@ -53,10 +53,11 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     setDocument((current) => ({ ...current, defaults: nextDefaults }));
     onPreferencesChange(tool, nextDefaults);
   }, [onPreferencesChange, tool]);
-  const select = useCallback((id: string | undefined) => {
-    if (id) selection.current.select(id);
-    else selection.current.clear();
-    setSelectedId(selection.current.selectedElementId);
+  const select = useCallback((id: string | undefined, toggle = false) => {
+    if (!id) selection.current.clear();
+    else if (toggle) selection.current.toggle(id);
+    else selection.current.replace(id);
+    setSelectedIds([...selection.current.selectedIds]);
   }, []);
   const selectTool = useCallback((nextTool: EditorTool) => {
     setTool(nextTool);
@@ -64,17 +65,38 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     onPreferencesChange(nextTool, defaults.current);
   }, [onPreferencesChange, select]);
   const duplicateSelection = useCallback(() => {
-    if (!selectedId) return;
-    const source = findElement(history.current!.document, selectedId);
-    const nextSeed = Math.max(0, ...document.elements.map((element) => element.seed)) + 1;
-    const nextZIndex = Math.max(-1, ...document.elements.map((element) => element.zIndex)) + 1;
-    const offset = duplicateElementWithinBounds(
-      source,
-      { x: source.x + 12, y: source.y + 12 },
-      { sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight },
+    if (selectedIds.length === 0) return;
+    const current = history.current!.document;
+    const nextSeed = Math.max(0, ...current.elements.map((element) => element.seed)) + 1;
+    const nextZIndex = Math.max(-1, ...current.elements.map((element) => element.zIndex)) + 1;
+    const existingIds = new Set(current.elements.map((element) => element.id));
+    const duplicateIds = selectedIds.map(() => createElementId());
+    if (
+      new Set(duplicateIds).size !== duplicateIds.length
+      || duplicateIds.some((id) => existingIds.has(id))
+    ) {
+      throw new Error("Duplicate element ids must be unique");
+    }
+    const sources = selectedIds.map((id) => findElement(current, id));
+    const offsets = moveElementsWithinBounds(
+      sources,
+      { x: 12, y: 12 },
+      { sourceWidth: current.sourcePixelWidth, sourceHeight: current.sourcePixelHeight },
     );
-    dispatch({ type: "create", element: { ...offset, id: createElementId(), seed: nextSeed, zIndex: nextZIndex } });
-  }, [dispatch, document.elements, selectedId]);
+    const elements = offsets.map((offset, index) => {
+      return {
+        ...offset,
+        id: duplicateIds[index],
+        seed: nextSeed + index,
+        zIndex: nextZIndex + index,
+      };
+    });
+    dispatch({ type: "createMany", elements });
+  }, [dispatch, selectedIds]);
+  const reorderSelection = useCallback((direction: "forward" | "backward") => {
+    if (selectedIds.length === 0) return;
+    dispatch({ type: "reorder", ids: selectedIds, direction });
+  }, [dispatch, selectedIds]);
   const beginTextEdit = useCallback((id: string) => {
     const element = findElement(history.current!.document, id);
     if (element.type !== "text") {
@@ -98,9 +120,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     }
     setEditingTextId(undefined);
   }, [dispatch, editingTextId, select]);
-  const selectedElements = selectedId
-    ? document.elements.filter((element) => element.id === selectedId)
-    : [];
+  const selectedElements = selectedIds.map((id) => findElement(document, id));
   const editingText = editingTextId
     ? document.elements.find((element): element is TextElement => element.id === editingTextId && element.type === "text")
     : undefined;
@@ -112,14 +132,18 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       if (!command) return;
       event.preventDefault();
       if (command === "delete") {
-        if (selectedId) {
-          dispatch({ type: "delete", ids: [selectedId] });
+        if (selectedIds.length > 0) {
+          dispatch({ type: "delete", ids: selectedIds });
           select(undefined);
         }
         return;
       }
       if (command === "duplicate") {
         duplicateSelection();
+        return;
+      }
+      if (command === "bringForward" || command === "sendBackward") {
+        reorderSelection(command === "bringForward" ? "forward" : "backward");
         return;
       }
       if (command === "undo" || command === "redo") {
@@ -133,7 +157,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dispatch, duplicateSelection, publishDocument, select, selectTool, selectedId]);
+  }, [dispatch, duplicateSelection, publishDocument, reorderSelection, select, selectTool, selectedIds]);
 
   return (
     <main className="editor-app" aria-label="MyShottr editor">
@@ -144,7 +168,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         zoom={zoom}
         pan={pan}
         rectangleFillColor={rectangleFillColor}
-        selectedId={selectedId}
+        selectedIds={selectedIds}
         onSelect={select}
         onEditText={beginTextEdit}
         onCommand={dispatch}
@@ -174,6 +198,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         selectedElements={selectedElements}
         onDefaultsChange={setDefaults}
         onElementsChange={(elements) => dispatch({ type: "updateMany", elements })}
+        onReorder={reorderSelection}
         fillColor={rectangleFillColor}
         onFillChange={setRectangleFillColor}
       />

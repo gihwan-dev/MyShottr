@@ -16,6 +16,7 @@ describe("ContextStylePalette", () => {
       selectedElements={[fixtureRect(), fixtureBlur()]}
       onDefaultsChange={() => {}}
       onElementsChange={onElementsChange}
+      onReorder={() => {}}
     />);
 
     fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
@@ -65,6 +66,7 @@ describe("ContextStylePalette", () => {
       selectedElements={selected}
       onDefaultsChange={() => {}}
       onElementsChange={onElementsChange}
+      onReorder={() => {}}
     />);
 
     fireEvent.change(screen.getByLabelText(control), { target: { value } });
@@ -82,6 +84,7 @@ describe("ContextStylePalette", () => {
       selectedElements={[highlighter, rectangle]}
       onDefaultsChange={() => {}}
       onElementsChange={onElementsChange}
+      onReorder={() => {}}
     />);
 
     const opacity = screen.getByLabelText("Opacity") as HTMLSelectElement;
@@ -104,6 +107,7 @@ describe("ContextStylePalette", () => {
       selectedElements={[fixtureRect(), fixtureBlur(), redaction]}
       onDefaultsChange={() => {}}
       onElementsChange={onElementsChange}
+      onReorder={() => {}}
     />);
 
     fireEvent.change(screen.getByLabelText("Opacity"), { target: { value: "0.5" } });
@@ -113,5 +117,22 @@ describe("ContextStylePalette", () => {
       fixtureBlur(),
       redaction,
     ]);
+  });
+
+  it("offers forward and backward controls for a selection", () => {
+    const onReorder = vi.fn();
+    render(<ContextStylePalette
+      tool="selection"
+      defaults={fixtureDocument().defaults}
+      selectedElements={[fixtureRect(), fixtureText()]}
+      onDefaultsChange={() => {}}
+      onElementsChange={() => {}}
+      onReorder={onReorder}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Bring Forward" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send Backward" }));
+
+    expect(onReorder.mock.calls).toEqual([["forward"], ["backward"]]);
   });
 });

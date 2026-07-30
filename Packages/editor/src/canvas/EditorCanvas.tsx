@@ -3,20 +3,24 @@ import type Konva from "konva";
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Transformer } from "react-konva";
 import type { CreationGesture, EditorCommand, EditorDocument, EditorElement, EditorTool, PaletteColor, Point } from "../model/elements";
 import { CanvasViewport } from "./CanvasViewport";
-import { CanvasPointerController, moveElementWithinBounds, resizeElementWithinBounds } from "./SelectionController";
+import {
+  CanvasPointerController,
+  moveElementsWithinBounds,
+  resizeElementWithinBounds,
+} from "./SelectionController";
 import { createElement } from "./tools/createElement";
 import { renderElement } from "./renderElement";
 import { BLUR_RADIUS_PX, createBlurredSourceCanvas } from "./blurSource";
 
-export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectangleFillColor, selectedId, onSelect, onEditText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onPanChange, textEditorOverlay }: {
+export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectangleFillColor, selectedIds, onSelect, onEditText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onPanChange, textEditorOverlay }: {
   document: EditorDocument;
   sourceImageURL: string;
   tool: EditorTool;
   zoom: number;
   pan: Point;
   rectangleFillColor: PaletteColor | null;
-  selectedId: string | undefined;
-  onSelect: (id: string | undefined) => void;
+  selectedIds: readonly string[];
+  onSelect: (id: string | undefined, toggle?: boolean) => void;
   onEditText: (id: string) => void;
   onCommand: (command: EditorCommand) => void;
   onBeginTransaction: (label: string) => void;
@@ -44,16 +48,20 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   const gesture = useRef<{ start: Point; points: Point[] } | undefined>(undefined);
   const panGesture = useRef<{ start: Point; pan: Point } | undefined>(undefined);
   const pointerController = useRef(new CanvasPointerController());
+  const selectionToggle = useRef(false);
   const suppressedAnnotationDrag = useRef(false);
   const suppressedTransform = useRef(false);
   const activeAnnotationInteraction = useRef<ActiveAnnotationInteraction | undefined>(undefined);
   const [isTransforming, setIsTransforming] = useState(false);
 
   useEffect(() => {
-    const selectedNode = selectedId ? nodes.current.get(selectedId) : undefined;
-    transformer.current?.nodes(selectedNode ? [selectedNode] : []);
+    const selectedNodes = selectedIds.flatMap((id) => {
+      const node = nodes.current.get(id);
+      return node ? [node] : [];
+    });
+    transformer.current?.nodes(selectedNodes);
     transformer.current?.getLayer()?.draw();
-  }, [selectedId, document]);
+  }, [selectedIds, document]);
 
   const sourcePoint = (stage: Konva.Stage): Point => {
     const pointer = stage.getPointerPosition();
@@ -113,7 +121,12 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
     ...document.elements.filter((element) => element.type === "highlighter").sort(byZIndex),
     ...document.elements.filter((element) => element.type !== "blur" && element.type !== "highlighter").sort(byZIndex),
   ];
-  const selectedElement = selectedId ? document.elements.find((element) => element.id === selectedId) : undefined;
+  const selectedElements = selectedIds.map((id) => {
+    const element = document.elements.find((candidate) => candidate.id === id);
+    if (!element) throw new Error(`Cannot select missing element: ${id}`);
+    return element;
+  });
+  const selectedIdSet = new Set(selectedIds);
 
   return (
     <div className="canvas-shell" data-testid="editor-canvas" style={{ position: "relative" }}>
@@ -123,6 +136,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
         onMouseDown={(event) => {
           const stage = event.target.getStage();
           if (!stage) throw new Error("Canvas stage is unavailable");
+          selectionToggle.current = event.evt.shiftKey;
           if (pointerController.current.begin({ shiftKey: event.evt.shiftKey }) === "pan") {
             const start = stage.getPointerPosition();
             if (!start) throw new Error("Canvas pointer position is unavailable");
@@ -171,10 +185,13 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
         <Layer id="annotationLayer">
           <Group x={pan.x} y={pan.y} scaleX={zoom} scaleY={zoom}>
             {orderedElements.map((element) => renderElement(element, {
-              selected: selectedId === element.id,
-              draggable: tool === "selection" && selectedId === element.id,
+              selected: selectedIdSet.has(element.id),
+              draggable: tool === "selection" && selectedIdSet.has(element.id),
               textEditingEnabled: tool === "selection",
-              onSelect: (id) => onSelect(id),
+              onSelect: (id) => {
+                onSelect(id, selectionToggle.current);
+                selectionToggle.current = false;
+              },
               onEditText: (id) => onEditText(id),
               onDragStart: (node) => {
                 if (!pointerController.current.shouldDispatchAnnotationDrag()) {
@@ -182,8 +199,8 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                   node.stopDrag();
                   return;
                 }
-                const elementToMove = document.elements.find(
-                  (candidate) => candidate.id === element.id
+                const elementToMove = selectedElements.find(
+                  (candidate) => candidate.id === element.id,
                 );
                 if (!elementToMove) {
                   throw new Error(`Cannot move missing element: ${element.id}`);
@@ -193,14 +210,30 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                   kind: "move",
                   node,
                   element: elementToMove,
+                  elements: selectedElements,
+                  nodes: selectedNodeMap(selectedElements, nodes.current),
                 };
               },
               onDragMove: (id, x, y) => {
                 if (!pointerController.current.shouldDispatchAnnotationDrag()) return;
                 try {
-                  const elementToMove = document.elements.find((candidate) => candidate.id === id);
+                  const active = activeAnnotationInteraction.current;
+                  if (!active || active.kind !== "move") {
+                    throw new Error("Cannot move without an active selection");
+                  }
+                  const elementToMove = active.elements.find((candidate) => candidate.id === id);
                   if (!elementToMove) throw new Error(`Cannot move missing element: ${id}`);
-                  onCommand({ type: "update", element: moveElementWithinBounds(elementToMove, { x, y }, { sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight }) });
+                  onCommand({
+                    type: "updateMany",
+                    elements: moveElementsWithinBounds(
+                      active.elements,
+                      { x: x - elementToMove.x, y: y - elementToMove.y },
+                      {
+                        sourceWidth: document.sourcePixelWidth,
+                        sourceHeight: document.sourcePixelHeight,
+                      },
+                    ),
+                  });
                 } catch (error) {
                   cancelAnnotationTransaction();
                   pointerController.current.end();
@@ -224,7 +257,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                 }
               },
               onTransformStart: (id, node) => {
-                const elementToTransform = document.elements.find((candidate) => candidate.id === id);
+                const elementToTransform = selectedElements.find((candidate) => candidate.id === id);
                 if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
                 if (!beginTransformerInteraction(pointerController.current, transformer.current, node, elementToTransform)) {
                   suppressedTransform.current = true;
@@ -235,6 +268,8 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                   kind: "transform",
                   node,
                   element: elementToTransform,
+                  elements: selectedElements,
+                  nodes: selectedNodeMap(selectedElements, nodes.current),
                 };
                 setIsTransforming(true);
               },
@@ -245,18 +280,30 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                 }
                 if (activeAnnotationInteraction.current?.kind !== "transform") return;
                 try {
-                  const elementToTransform = document.elements.find((candidate) => candidate.id === id);
-                  if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
-                  onCommand({
-                    type: "update",
-                    element: resizeElementWithinBounds(
+                  const active = activeAnnotationInteraction.current;
+                  const transformedElements = active.elements.map((elementToTransform) => {
+                    const selectedNode = active.nodes.get(elementToTransform.id);
+                    if (!selectedNode) {
+                      throw new Error(`Cannot transform unregistered element: ${elementToTransform.id}`);
+                    }
+                    const resized = resizeElementWithinBounds(
                       elementToTransform,
-                      { x: node.x(), y: node.y() },
-                      node.scaleX(),
-                      node.scaleY(),
-                      node.rotation(),
-                      { sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight },
-                    ),
+                      { x: selectedNode.x(), y: selectedNode.y() },
+                      selectedNode.scaleX(),
+                      selectedNode.scaleY(),
+                      selectedNode.rotation(),
+                      {
+                        sourceWidth: document.sourcePixelWidth,
+                        sourceHeight: document.sourcePixelHeight,
+                      },
+                    );
+                    selectedNode.scaleX(1);
+                    selectedNode.scaleY(1);
+                    return resized;
+                  });
+                  onCommand({
+                    type: "updateMany",
+                    elements: transformedElements,
                   });
                   onCommitTransaction();
                   activeAnnotationInteraction.current = undefined;
@@ -273,12 +320,23 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                 else nodes.current.delete(id);
               },
             }, blurredSource))}
-            {selectedId && document.elements.find((element) => element.id === selectedId) && (() => {
-              const selected = document.elements.find((element) => element.id === selectedId);
-              if (!selected) throw new Error(`Cannot outline missing selected element: ${selectedId}`);
-              return <Rect x={selected.x} y={selected.y} width={selected.width} height={selected.height} stroke="#1677FF" dash={[4, 4]} listening={false} />;
-            })()}
-            <Transformer ref={transformer} rotateEnabled={selectedElement?.type !== "blur"} flipEnabled={false} />
+            {selectedElements.map((selected) => (
+              <Rect
+                key={`selection-outline-${selected.id}`}
+                x={selected.x}
+                y={selected.y}
+                width={selected.width}
+                height={selected.height}
+                stroke="#1677FF"
+                dash={[4, 4]}
+                listening={false}
+              />
+            ))}
+            <Transformer
+              ref={transformer}
+              rotateEnabled={!selectedElements.some((element) => element.type === "blur")}
+              flipEnabled={false}
+            />
           </Group>
         </Layer>
       </Stage>
@@ -308,6 +366,8 @@ type ActiveAnnotationInteraction = {
   kind: "move" | "transform";
   node: Konva.Group;
   element: EditorElement;
+  elements: EditorElement[];
+  nodes: Map<string, Konva.Group>;
 };
 
 export function cancelAnnotationInteraction(
@@ -320,13 +380,32 @@ export function cancelAnnotationInteraction(
     if (!transformer) throw new Error("Transformer is unavailable for cancellation");
     transformer.stopTransform();
   }
-  interaction.node.x(interaction.element.x);
-  interaction.node.y(interaction.element.y);
-  interaction.node.scaleX(1);
-  interaction.node.scaleY(1);
-  interaction.node.rotation(interaction.element.rotation);
+  interaction.elements.forEach((element) => {
+    const node = interaction.nodes.get(element.id);
+    if (!node) {
+      throw new Error(`Cannot restore unregistered element: ${element.id}`);
+    }
+    node.x(element.x);
+    node.y(element.y);
+    node.scaleX(1);
+    node.scaleY(1);
+    node.rotation(element.rotation);
+    node.getLayer()?.draw();
+  });
   transformer?.forceUpdate();
-  interaction.node.getLayer()?.draw();
+}
+
+function selectedNodeMap(
+  elements: EditorElement[],
+  registeredNodes: Map<string, Konva.Group>,
+): Map<string, Konva.Group> {
+  return new Map(elements.map((element) => {
+    const node = registeredNodes.get(element.id);
+    if (!node) {
+      throw new Error(`Cannot interact with unregistered element: ${element.id}`);
+    }
+    return [element.id, node];
+  }));
 }
 
 export function beginTransformerInteraction(

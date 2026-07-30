@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { allElementFixtures, fixtureLine, fixtureRect } from "../test/fixtures";
+import { allElementFixtures, fixtureLine, fixtureRect, fixtureText } from "../test/fixtures";
 import { beginTransformerInteraction } from "./EditorCanvas";
-import { CanvasPointerController, duplicateElementWithinBounds, resizeElementWithinBounds } from "./SelectionController";
+import {
+  CanvasPointerController,
+  duplicateElementWithinBounds,
+  moveElementsWithinBounds,
+  resizeElementWithinBounds,
+  SelectionController,
+} from "./SelectionController";
 import { createHistoryStore } from "../model/history";
 import { findElement } from "../model/reducer";
 
@@ -121,5 +127,61 @@ describe("CanvasPointerController", () => {
     expect(transformer.stopTransform).toHaveBeenCalledOnce();
     expect(node.scaleX).toHaveBeenCalledOnce();
     expect(node.scaleY).toHaveBeenCalledOnce();
+  });
+});
+
+describe("SelectionController", () => {
+  it("shift-click toggles membership without losing the first selection", () => {
+    const selection = new SelectionController();
+
+    selection.replace("rect-1");
+    selection.toggle("text-1");
+
+    expect(selection.selectedIds).toEqual(["rect-1", "text-1"]);
+    selection.toggle("rect-1");
+    expect(selection.selectedIds).toEqual(["text-1"]);
+  });
+
+  it("rejects empty ids for replacement and toggling", () => {
+    const selection = new SelectionController();
+
+    expect(() => selection.replace("")).toThrow("Cannot select an empty element id");
+    expect(() => selection.toggle("")).toThrow("Cannot select an empty element id");
+  });
+});
+
+describe("moveElementsWithinBounds", () => {
+  it("clamps one shared delta so every selected element stays inside the source", () => {
+    const rectangle = { ...fixtureRect(), x: 0, y: 0, width: 20, height: 20 };
+    const text = { ...fixtureText(), x: 70, y: 60, width: 30, height: 40 };
+
+    const moved = moveElementsWithinBounds(
+      [rectangle, text],
+      { x: 25, y: 30 },
+      { sourceWidth: 100, sourceHeight: 100 },
+    );
+
+    expect(moved.map(({ x, y }) => ({ x, y }))).toEqual([
+      { x: 0, y: 0 },
+      { x: 70, y: 60 },
+    ]);
+  });
+
+  it("moves path points by the same bounded delta as their elements", () => {
+    const line = { ...fixtureLine(), x: 10, y: 20, width: 40, height: 30, points: [{ x: 10, y: 20 }, { x: 50, y: 50 }] as [{ x: number; y: number }, { x: number; y: number }] };
+    const rectangle = { ...fixtureRect(), x: 50, y: 40, width: 20, height: 20 };
+
+    const moved = moveElementsWithinBounds(
+      [line, rectangle],
+      { x: 10, y: 12 },
+      { sourceWidth: 100, sourceHeight: 100 },
+    );
+
+    expect(moved[0]).toMatchObject({
+      x: 20,
+      y: 32,
+      points: [{ x: 20, y: 32 }, { x: 60, y: 62 }],
+    });
+    expect(moved[1]).toMatchObject({ x: 60, y: 52 });
   });
 });

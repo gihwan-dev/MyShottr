@@ -2,21 +2,26 @@ import type { EditorElement, Point } from "../model/elements";
 import type { SourceBounds } from "./CanvasViewport";
 
 export class SelectionController {
-  private selectedId: string | undefined;
+  #selectedIds: string[] = [];
 
-  public select(id: string): void {
-    if (id.length === 0) {
-      throw new Error("Cannot select an empty element id");
-    }
-    this.selectedId = id;
+  public get selectedIds(): readonly string[] {
+    return this.#selectedIds;
+  }
+
+  public replace(id: string): void {
+    assertElementId(id);
+    this.#selectedIds = [id];
+  }
+
+  public toggle(id: string): void {
+    assertElementId(id);
+    this.#selectedIds = this.#selectedIds.includes(id)
+      ? this.#selectedIds.filter((candidate) => candidate !== id)
+      : [...this.#selectedIds, id];
   }
 
   public clear(): void {
-    this.selectedId = undefined;
-  }
-
-  public get selectedElementId(): string | undefined {
-    return this.selectedId;
+    this.#selectedIds = [];
   }
 }
 
@@ -62,6 +67,41 @@ export function moveElementWithinBounds(
     default:
       return { ...element, x, y };
   }
+}
+
+export function moveElementsWithinBounds(
+  elements: EditorElement[],
+  delta: Point,
+  bounds: SourceBounds,
+): EditorElement[] {
+  assertSourceBounds(bounds);
+  assertFinite(delta.x, "delta x");
+  assertFinite(delta.y, "delta y");
+  if (elements.length === 0) {
+    throw new Error("Cannot move an empty element selection");
+  }
+
+  const minimumDeltaX = Math.max(...elements.map((element) => -element.x));
+  const maximumDeltaX = Math.min(
+    ...elements.map((element) => bounds.sourceWidth - element.x - element.width),
+  );
+  const minimumDeltaY = Math.max(...elements.map((element) => -element.y));
+  const maximumDeltaY = Math.min(
+    ...elements.map((element) => bounds.sourceHeight - element.y - element.height),
+  );
+  if (minimumDeltaX > maximumDeltaX || minimumDeltaY > maximumDeltaY) {
+    throw new Error("Selected elements cannot fit inside the source bounds");
+  }
+
+  const boundedDelta = {
+    x: Math.min(Math.max(delta.x, minimumDeltaX), maximumDeltaX),
+    y: Math.min(Math.max(delta.y, minimumDeltaY), maximumDeltaY),
+  };
+  return elements.map((element) => moveElementWithinBounds(
+    element,
+    { x: element.x + boundedDelta.x, y: element.y + boundedDelta.y },
+    bounds,
+  ));
 }
 
 export function duplicateElementWithinBounds(
@@ -146,6 +186,12 @@ function assertSourceBounds(bounds: SourceBounds): void {
 function assertFinite(value: number, name: string): void {
   if (!Number.isFinite(value)) {
     throw new Error(`${name} must be finite`);
+  }
+}
+
+function assertElementId(id: string): void {
+  if (id.length === 0) {
+    throw new Error("Cannot select an empty element id");
   }
 }
 

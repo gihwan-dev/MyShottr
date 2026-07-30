@@ -70,6 +70,13 @@ describe("createElement", () => {
       .toBe("blur");
   });
 
+  it("maps Meta brackets to one-step ordering commands", () => {
+    expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "]", metaKey: true })))
+      .toBe("bringForward");
+    expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "[", metaKey: true })))
+      .toBe("sendBackward");
+  });
+
   it("uses the caller-derived number and z-index for a number marker", () => {
     const element = createElement("numberMarker", creationGesture("numberMarker"), context);
 

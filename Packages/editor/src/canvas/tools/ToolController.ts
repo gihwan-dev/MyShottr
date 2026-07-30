@@ -13,14 +13,25 @@ export const shortcuts = {
   numberMarker: "n",
   delete: ["Backspace", "Delete"],
   duplicate: "Meta+d",
+  bringForward: "Meta+]",
+  sendBackward: "Meta+[",
   undo: "Meta+z",
   redo: ["Meta+Shift+z", "Meta+y"],
 } as const;
 
-export type KeyboardCommand = EditorTool | "delete" | "duplicate" | "undo" | "redo";
+export type KeyboardCommand =
+  | EditorTool
+  | "delete"
+  | "duplicate"
+  | "bringForward"
+  | "sendBackward"
+  | "undo"
+  | "redo";
 
 export function keyboardCommandFor(event: KeyboardEvent): KeyboardCommand | undefined {
   if (event.metaKey) {
+    if (event.key === "]") return "bringForward";
+    if (event.key === "[") return "sendBackward";
     if (event.key.toLowerCase() === "d") return "duplicate";
     if (event.key.toLowerCase() === "z" && event.shiftKey) return "redo";
     if (event.key.toLowerCase() === "z") return "undo";

@@ -5,13 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, EditorApp } from "./App";
 import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
 import type { EditorCommand, EditorDocument, PaletteColor } from "./model/elements";
-import { fixtureDocument, fixtureText } from "./test/fixtures";
+import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "./test/fixtures";
 
 vi.mock("./canvas/EditorCanvas", () => ({
   EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCancelTransaction, onEditText, rectangleFillColor, textEditorOverlay }: {
     document: EditorDocument;
     onCommand: (command: EditorCommand) => void;
-    onSelect: (id: string | undefined) => void;
+    onSelect: (id: string | undefined, toggle?: boolean) => void;
     onBeginTransaction: (label: string) => void;
     onCancelTransaction: () => void;
     onEditText: (id: string) => void;
@@ -20,6 +20,7 @@ vi.mock("./canvas/EditorCanvas", () => ({
   }) => (
     <>
       <button type="button" onClick={() => onSelect("rect-1")}>Select rect-1</button>
+      <button type="button" onClick={() => onSelect("text-1", true)}>Shift-select text-1</button>
       <button type="button" onClick={() => onEditText("text-1")}>Edit text-1</button>
       <button
         type="button"
@@ -147,6 +148,103 @@ describe("EditorApp", () => {
     fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
 
     expect(changes.at(-1)?.elements[0]).toMatchObject({ strokeColor: "#FF4D4F" });
+  });
+
+  it("deletes every selected element in one command", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureRect(), fixtureText()] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    fireEvent.keyDown(window, { key: "Delete" });
+
+    expect(changes.at(-1)?.elements).toEqual([]);
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    expect(changes.at(-1)?.elements.map((element) => element.id)).toEqual(["rect-1", "text-1"]);
+  });
+
+  it("duplicates every selected element atomically with unique identities", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureRect(), fixtureText()] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    fireEvent.keyDown(window, { key: "d", metaKey: true });
+
+    const duplicated = changes.at(-1)!;
+    expect(duplicated.elements).toHaveLength(4);
+    expect(new Set(duplicated.elements.map((element) => element.id)).size).toBe(4);
+    expect(duplicated.elements.slice(2).map((element) => element.seed)).toEqual([104, 105]);
+    expect(duplicated.elements.slice(2).map((element) => element.zIndex)).toEqual([4, 5]);
+    expect(duplicated.elements.slice(2).map(({ x, y }) => ({ x, y }))).toEqual([
+      { x: 12, y: 12 },
+      { x: 52, y: 62 },
+    ]);
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    expect(changes.at(-1)?.elements).toHaveLength(2);
+  });
+
+  it("uses one bounded duplicate offset for the whole selection", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({
+        sourcePixelWidth: 100,
+        sourcePixelHeight: 100,
+        elements: [
+          { ...fixtureRect(), width: 20, height: 20 },
+          { ...fixtureText(), x: 70, y: 70, width: 30, height: 30, zIndex: 1 },
+        ],
+      })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    fireEvent.keyDown(window, { key: "d", metaKey: true });
+
+    expect(changes.at(-1)?.elements.slice(2).map(({ x, y }) => ({ x, y }))).toEqual([
+      { x: 0, y: 0 },
+      { x: 70, y: 70 },
+    ]);
+  });
+
+  it("reorders every selected element from shortcuts and palette controls", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({
+        elements: [fixtureRect(), { ...fixtureText(), zIndex: 1 }, { ...fixtureLine(), zIndex: 2 }],
+      })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    fireEvent.keyDown(window, { key: "]", metaKey: true });
+
+    expect([...changes.at(-1)!.elements].sort((left, right) => left.zIndex - right.zIndex).map((element) => element.id))
+      .toEqual(["line-1", "rect-1", "text-1"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Send Backward" }));
+    expect([...changes.at(-1)!.elements].sort((left, right) => left.zIndex - right.zIndex).map((element) => element.id))
+      .toEqual(["rect-1", "text-1", "line-1"]);
   });
 
   it("publishes selected tools and defaults as preferences without changing the document", () => {

@@ -13,6 +13,7 @@ export function ContextStylePalette({
   selectedElements,
   onDefaultsChange,
   onElementsChange,
+  onReorder,
   fillColor,
   onFillChange,
 }: {
@@ -21,6 +22,7 @@ export function ContextStylePalette({
   selectedElements: EditorElement[];
   onDefaultsChange: (defaults: EditorDefaults) => void;
   onElementsChange: (elements: EditorElement[]) => void;
+  onReorder: (direction: "forward" | "backward") => void;
   fillColor?: PaletteColor | null;
   onFillChange?: (color: PaletteColor | null) => void;
 }) {
@@ -58,6 +60,12 @@ export function ContextStylePalette({
 
   return (
     <section className="context-style-palette" aria-label={`${isSelection ? "selection" : tool} style controls`}>
+      {isSelection && (
+        <div className="context-order-controls">
+          <button type="button" onClick={() => onReorder("forward")}>Bring Forward</button>
+          <button type="button" onClick={() => onReorder("backward")}>Send Backward</button>
+        </div>
+      )}
       {showColor && (
         <label>
           Color
