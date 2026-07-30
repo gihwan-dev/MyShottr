@@ -93,7 +93,7 @@ struct HostRunner {
         }
 
         do {
-            try activator.activateContainingApp()
+            try activator.activateContainingApp(captureID: captureID)
         } catch {
             return failure(.stagingFailed)
         }

@@ -191,14 +191,16 @@ final class StagingSpy: HostCaptureStaging {
 final class ActivationSpy: AppActivating {
     let events: EventRecorder?
     private(set) var activationCount = 0
+    private(set) var captureIDs: [UUID] = []
 
     init(events: EventRecorder? = nil) {
         self.events = events
     }
 
-    func activateContainingApp() throws {
+    func activateContainingApp(captureID: UUID) throws {
         events?.values.append("activate")
         activationCount += 1
+        captureIDs.append(captureID)
     }
 }
 

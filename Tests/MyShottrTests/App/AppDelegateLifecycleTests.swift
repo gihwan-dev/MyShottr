@@ -22,6 +22,8 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 XCTAssertEqual(openedURL, projectURL)
                 return window
             },
+            nativeMessagingHostInstaller: {},
+            chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
             hotKeyAPI: makeNoOpHotKeyAPI()
         )
 
@@ -42,6 +44,8 @@ final class AppDelegateLifecycleTests: XCTestCase {
         let application = SpyApplicationLifecycle()
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
+            nativeMessagingHostInstaller: {},
+            chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
             hotKeyAPI: makeNoOpHotKeyAPI()
         )
 
@@ -54,6 +58,62 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(delegate.activeDocumentWindowCount, 0)
         XCTAssertEqual(application.activationPolicies, [.accessory])
         XCTAssertEqual(application.activationCount, 0)
+    }
+
+    func testLaunchInstallsHostThenScansPendingChromeCaptures() {
+        let application = SpyApplicationLifecycle()
+        let window = SpyEditorWindowController()
+        let inbox = StubPendingCaptureInbox(
+            pending: [
+                StagedCapture(
+                    id: ChromeFixtures.captureID,
+                    pngURL: URL(
+                        fileURLWithPath: "/inbox/\(ChromeFixtures.captureID.uuidString).png"
+                    )
+                ),
+            ]
+        )
+        var events: [String] = []
+        let delegate = AppDelegate(
+            applicationLifecycle: application.lifecycle,
+            documentWindowFactory: { project, projectURL in
+                events.append("window")
+                XCTAssertEqual(
+                    project.manifest.documentId,
+                    ChromeFixtures.captureID
+                )
+                XCTAssertNil(projectURL)
+                return window
+            },
+            nativeMessagingHostInstaller: {
+                events.append("install")
+            },
+            chromeCaptureCoordinatorFactory: {
+                projectFactory,
+                windows in
+                events.append("coordinator")
+                return CaptureInboxCoordinator(
+                    inbox: inbox,
+                    projectFactory: projectFactory,
+                    windows: windows,
+                    reportError: { XCTFail("Unexpected Chrome import error: \($0)") }
+                )
+            },
+            hotKeyAPI: makeNoOpHotKeyAPI()
+        )
+
+        delegate.applicationDidFinishLaunching(
+            Notification(
+                name: NSApplication.didFinishLaunchingNotification
+            )
+        )
+
+        XCTAssertEqual(events, ["install", "coordinator", "window"])
+        XCTAssertEqual(inbox.consumedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(delegate.activeDocumentWindowCount, 1)
+        XCTAssertEqual(application.activationPolicies, [.accessory, .regular])
+        XCTAssertEqual(application.activationCount, 1)
+        XCTAssertEqual(window.presentationCount, 1)
     }
 
     func testPresentingDocumentRetainsWindowAndActivatesRegularApp() {
@@ -133,6 +193,19 @@ private func makeNoOpHotKeyAPI() -> GlobalHotKeyAPI {
         },
         unregisterEventHotKey: { _ in noErr },
         removeEventHandler: { _ in noErr }
+    )
+}
+
+@MainActor
+private func makeEmptyChromeCoordinator(
+    projectFactory: any NewProjectCreating,
+    windows: any DocumentWindowPresenting
+) throws -> CaptureInboxCoordinator {
+    CaptureInboxCoordinator(
+        inbox: StubPendingCaptureInbox(),
+        projectFactory: projectFactory,
+        windows: windows,
+        reportError: { XCTFail("Unexpected Chrome import error: \($0)") }
     )
 }
 

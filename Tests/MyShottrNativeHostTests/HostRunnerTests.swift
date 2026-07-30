@@ -23,6 +23,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         )
         XCTAssertEqual(staging.stagedData, [HostFixtures.validPNG])
         XCTAssertEqual(events.values, ["stage", "activate"])
+        XCTAssertEqual(activator.captureIDs, [captureID])
     }
 
     func testRejectsUnsupportedProtocolVersionWithoutStaging() throws {
@@ -216,17 +217,26 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         try Data("plist".utf8).write(to: contentsURL.appendingPathComponent("Info.plist"))
         let executableURL = helpersURL.appendingPathComponent("MyShottrNativeHost")
         var openedURL: URL?
+        var notifiedCaptureID: UUID?
+        var events: [String] = []
         let activator = AppActivator(
             executableURL: executableURL,
             openApplication: {
+                events.append("open")
                 openedURL = $0
                 return true
+            },
+            postCaptureReady: {
+                events.append("notify")
+                notifiedCaptureID = $0
             }
         )
 
-        try activator.activateContainingApp()
+        try activator.activateContainingApp(captureID: captureID)
 
         XCTAssertEqual(openedURL, appURL)
+        XCTAssertEqual(notifiedCaptureID, captureID)
+        XCTAssertEqual(events, ["open", "notify"])
     }
 
     private func assertRejected(

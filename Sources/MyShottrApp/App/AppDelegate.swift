@@ -28,13 +28,23 @@ final class AppDelegate:
         _ project: MyShottrProject,
         _ projectURL: URL?
     ) throws -> any EditorWindowControlling
+    typealias NativeMessagingHostInstaller = () throws -> Void
+    typealias ChromeCaptureCoordinatorFactory = (
+        _ projectFactory: any NewProjectCreating,
+        _ windows: any DocumentWindowPresenting
+    ) throws -> CaptureInboxCoordinator
 
     private let dependencies: AppDependencies
     private let applicationLifecycle: ApplicationLifecycle
     private let documentWindowFactory: DocumentWindowFactory
+    private let nativeMessagingHostInstaller:
+        NativeMessagingHostInstaller
+    private let chromeCaptureCoordinatorFactory:
+        ChromeCaptureCoordinatorFactory
     private let hotKeyAPI: GlobalHotKeyAPI
     private var documentWindows: [any EditorWindowControlling] = []
     private var captureCoordinator: RegionCaptureCoordinator?
+    private var chromeCaptureCoordinator: CaptureInboxCoordinator?
     private var menuBarController: MenuBarController?
     private var hotKeyRegistrar: GlobalHotKeyRegistrar?
 
@@ -68,11 +78,29 @@ final class AppDelegate:
                 projectURL: projectURL
             )
         },
+        nativeMessagingHostInstaller:
+            @escaping NativeMessagingHostInstaller = {
+                try NativeMessagingRegistrar().install()
+            },
+        chromeCaptureCoordinatorFactory:
+            @escaping ChromeCaptureCoordinatorFactory = {
+                projectFactory,
+                windows in
+                CaptureInboxCoordinator(
+                    inbox: try PendingCaptureInbox(),
+                    projectFactory: projectFactory,
+                    windows: windows
+                )
+            },
         hotKeyAPI: GlobalHotKeyAPI = .live
     ) {
         self.dependencies = dependencies
         self.applicationLifecycle = applicationLifecycle
         self.documentWindowFactory = documentWindowFactory
+        self.nativeMessagingHostInstaller =
+            nativeMessagingHostInstaller
+        self.chromeCaptureCoordinatorFactory =
+            chromeCaptureCoordinatorFactory
         self.hotKeyAPI = hotKeyAPI
         super.init()
     }
@@ -85,6 +113,18 @@ final class AppDelegate:
             windows: self
         )
         captureCoordinator = coordinator
+
+        do {
+            try nativeMessagingHostInstaller()
+            let chromeCoordinator = try chromeCaptureCoordinatorFactory(
+                dependencies.projectFactory,
+                self
+            )
+            chromeCaptureCoordinator = chromeCoordinator
+            try chromeCoordinator.start()
+        } catch {
+            NSAlert(error: error).runModal()
+        }
 
         do {
             menuBarController = try MenuBarController(
