@@ -18,6 +18,8 @@
 - Keep opaque redaction because blur is not secure redaction.
 - Existing format-1 pre-release projects migrate deterministically; unsupported newer versions fail explicitly.
 - Blur reads source pixels only, renders below vector annotations, and never mutates `original.png`.
+- Blur regions are axis-aligned, movable, and resizable in v1; the
+  blur-specific public design overrides the older common rotation rule.
 - Quick Ink uses coral, cream, and black; screenshot pixels remain unfiltered outside explicit blur regions.
 - Use TDD and commit after every task.
 
@@ -1022,7 +1024,429 @@ git add Packages/editor/src Sources/MyShottrApp/Documents/DocumentSession.swift
 git commit -m "feat: add non-destructive blur annotations"
 ```
 
-### Task 5: Keyboard Editing and Explicit Native Output Actions
+### Task 5: Editable Text and Contextual Element Styles
+
+**Files:**
+- Create: `Packages/editor/src/components/TextEditorOverlay.tsx`
+- Test: `Packages/editor/src/components/TextEditorOverlay.test.tsx`
+- Modify: `Packages/editor/src/App.tsx`
+- Modify: `Packages/editor/src/App.test.tsx`
+- Modify: `Packages/editor/src/canvas/EditorCanvas.tsx`
+- Modify: `Packages/editor/src/canvas/renderElement.tsx`
+- Modify: `Packages/editor/src/components/ContextStylePalette.tsx`
+- Modify: `Packages/editor/src/model/elements.ts`
+- Modify: `Packages/editor/src/model/reducer.ts`
+- Modify: `Packages/editor/src/model/history.test.ts`
+
+**Interfaces:**
+- Consumes: selected elements, source-to-screen canvas transform, existing
+  update commands, and editor defaults.
+- Produces: double-click text editing, `updateMany`, and style changes that
+  modify selected elements rather than only future defaults.
+
+- [ ] **Step 1: Write failing text-edit and selected-style tests**
+
+Add:
+
+```ts
+it("edits existing text and commits one history command", () => {
+  renderEditor(fixtureDocument({ elements: [fixtureText()] }));
+  fireEvent.doubleClick(screen.getByTestId("element-text-1"));
+  const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+  fireEvent.change(editor, { target: { value: "Ship this" } });
+  fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
+
+  expect(latestDocument().elements[0]).toMatchObject({
+    type: "text",
+    text: "Ship this",
+  });
+  fireEvent.keyDown(window, { key: "z", metaKey: true });
+  expect(latestDocument().elements[0]).toMatchObject({
+    type: "text",
+    text: "Annotate this",
+  });
+});
+
+it("escapes text editing without changing the document", () => {
+  renderEditor(fixtureDocument({ elements: [fixtureText()] }));
+  fireEvent.doubleClick(screen.getByTestId("element-text-1"));
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Edit annotation text" }),
+    { target: { value: "Discard me" } },
+  );
+  fireEvent.keyDown(
+    screen.getByRole("textbox", { name: "Edit annotation text" }),
+    { key: "Escape" },
+  );
+  expect(latestDocument().elements[0]).toMatchObject({
+    text: "Annotate this",
+  });
+});
+
+it("applies a color change to the selected rectangle", () => {
+  renderEditor();
+  selectFixtureRectangle();
+  fireEvent.change(screen.getByLabelText("Color"), {
+    target: { value: "#FF4D4F" },
+  });
+  expect(latestDocument().elements[0]).toMatchObject({
+    strokeColor: "#FF4D4F",
+  });
+});
+```
+
+Add reducer/history coverage:
+
+```ts
+it("applies updateMany as one undoable command", () => {
+  const history = createHistoryStore(fixtureDocument({
+    elements: [fixtureRect(), fixtureText()],
+  }));
+  history.dispatch({
+    type: "updateMany",
+    elements: [
+      { ...fixtureRect(), opacity: 0.5 },
+      { ...fixtureText(), opacity: 0.5 },
+    ],
+  });
+  expect(history.undo()).toBe(true);
+  expect(history.document.elements.map((element) => element.opacity))
+    .toEqual([1, 1]);
+});
+```
+
+- [ ] **Step 2: Run focused tests and verify failure**
+
+Run:
+
+```bash
+pnpm --filter @myshottr/editor test -- \
+  TextEditorOverlay.test.tsx App.test.tsx history.test.ts
+```
+
+Expected: missing text overlay and `updateMany` failures.
+
+- [ ] **Step 3: Add an atomic multi-element update command**
+
+Extend:
+
+```ts
+export type EditorCommand =
+  | { type: "create"; element: EditorElement }
+  | { type: "update"; element: EditorElement }
+  | { type: "updateMany"; elements: EditorElement[] }
+  | { type: "delete"; ids: string[] }
+  | { type: "reorder"; ids: string[]; direction: "forward" | "backward" };
+```
+
+`updateMany` rejects duplicate IDs, requires every ID to exist, replaces each
+element in place, and normalizes no z-index. The history store records the
+whole command as one undo entry.
+
+- [ ] **Step 4: Implement the text editor overlay**
+
+Create:
+
+```tsx
+import { useEffect, useRef, useState } from "react";
+import type { TextElement } from "../model/elements";
+
+export function TextEditorOverlay({
+  element,
+  zoom,
+  pan,
+  onCommit,
+  onCancel,
+}: {
+  element: TextElement;
+  zoom: number;
+  pan: { x: number; y: number };
+  onCommit: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(element.text);
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+
+  return (
+    <textarea
+      ref={ref}
+      aria-label="Edit annotation text"
+      value={value}
+      style={{
+        position: "absolute",
+        left: pan.x + element.x * zoom,
+        top: pan.y + element.y * zoom,
+        width: Math.max(48, element.width * zoom),
+        minHeight: Math.max(32, element.height * zoom),
+        fontSize: element.fontSize * zoom,
+        color: element.color,
+        transform: `rotate(${element.rotation}deg)`,
+        transformOrigin: "top left",
+      }}
+      onChange={(event) => setValue(event.target.value)}
+      onBlur={() => onCommit(value)}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onCancel();
+        } else if (event.key === "Enter" && event.metaKey) {
+          event.preventDefault();
+          onCommit(value);
+        }
+      }}
+    />
+  );
+}
+```
+
+`renderElement` adds `data-testid="element-\(id)"` and an `onDoubleClick`
+handler. `EditorCanvas` reports the text element ID to `EditorApp`, which
+renders one overlay. Commit dispatches one `update` with trimmed text and an
+auto-sized width/height measured with the same system font. Empty trimmed text
+deletes the element. Escape closes the overlay without dispatching.
+
+- [ ] **Step 5: Make contextual controls edit the selection**
+
+Change `ContextStylePalette` to accept:
+
+```ts
+{
+  tool: EditorTool;
+  defaults: EditorDefaults;
+  selectedElements: EditorElement[];
+  onDefaultsChange: (defaults: EditorDefaults) => void;
+  onElementsChange: (elements: EditorElement[]) => void;
+}
+```
+
+When `selectedElements` is empty, controls continue to change creation
+defaults. When selection exists, derive visible controls from the selected
+types and dispatch `updateMany`:
+
+```ts
+function recolor(element: EditorElement, color: PaletteColor): EditorElement {
+  switch (element.type) {
+    case "rectangle":
+    case "arrow":
+    case "line":
+      return { ...element, strokeColor: color };
+    case "text":
+    case "freehand":
+    case "highlighter":
+    case "numberMarker":
+      return { ...element, color };
+    case "blur":
+    case "redaction":
+      return element;
+  }
+}
+```
+
+Stroke width applies only to rectangle, arrow, line, and freehand. Roughness
+applies only to rectangle, arrow, and line. Text size applies only to text.
+Opacity applies to every selected type except blur and redaction. Do not alter
+unsupported properties on heterogeneous selections.
+
+- [ ] **Step 6: Run text and contextual-style tests**
+
+Run:
+
+```bash
+pnpm --filter @myshottr/editor test
+pnpm --filter @myshottr/editor typecheck
+pnpm --filter @myshottr/editor build
+```
+
+Expected: all tests pass, existing text persists, and selected styles are
+undoable.
+
+- [ ] **Step 7: Commit editable text and selected styles**
+
+```bash
+git add Packages/editor/src
+git commit -m "feat: edit text and selected annotation styles"
+```
+
+### Task 6: Multi-Selection, Group Transforms, and Z-Order
+
+**Files:**
+- Modify: `Packages/editor/src/App.tsx`
+- Modify: `Packages/editor/src/App.test.tsx`
+- Modify: `Packages/editor/src/canvas/EditorCanvas.tsx`
+- Modify: `Packages/editor/src/canvas/EditorCanvas.test.tsx`
+- Modify: `Packages/editor/src/canvas/SelectionController.ts`
+- Modify: `Packages/editor/src/canvas/SelectionController.test.ts`
+- Modify: `Packages/editor/src/canvas/tools/ToolController.ts`
+- Modify: `Packages/editor/src/model/reducer.ts`
+- Modify: `Packages/editor/src/model/history.test.ts`
+- Modify: `Packages/editor/src/components/ContextStylePalette.tsx`
+
+**Interfaces:**
+- Consumes: `updateMany`, registered Konva groups, shift-click input, and
+  existing reorder commands.
+- Produces: ordered `selectedIds`, group movement/transform, multi-delete,
+  multi-duplicate, and forward/backward ordering controls and shortcuts.
+
+- [ ] **Step 1: Write failing multi-selection and ordering tests**
+
+Add:
+
+```ts
+it("shift-click toggles membership without losing the first selection", () => {
+  const selection = new SelectionController();
+  selection.replace("rect-1");
+  selection.toggle("text-1");
+  expect(selection.selectedIds).toEqual(["rect-1", "text-1"]);
+  selection.toggle("rect-1");
+  expect(selection.selectedIds).toEqual(["text-1"]);
+});
+
+it("moves a selected pair by one bounded delta and undoes once", () => {
+  renderEditor(fixtureDocument({
+    elements: [fixtureRect(), fixtureText()],
+  }));
+  selectWithShift("rect-1", "text-1");
+  dragElement("rect-1", { x: 20, y: 12 });
+  expect(positions()).toEqual([
+    { x: 20, y: 12 },
+    { x: 60, y: 62 },
+  ]);
+  fireEvent.keyDown(window, { key: "z", metaKey: true });
+  expect(positions()).toEqual([
+    { x: 0, y: 0 },
+    { x: 40, y: 50 },
+  ]);
+});
+
+it("moves selected elements forward without duplicate z-indices", () => {
+  const next = editorReducer(documentWithThreeElements(), {
+    type: "reorder",
+    ids: ["rect-1", "text-1"],
+    direction: "forward",
+  });
+  expect(new Set(next.elements.map((element) => element.zIndex)).size)
+    .toBe(next.elements.length);
+});
+```
+
+Test `Meta+]` maps to `bringForward`, `Meta+[` maps to `sendBackward`, delete
+removes all selected IDs, and duplicate creates the same number of new IDs.
+
+- [ ] **Step 2: Run focused tests and verify failure**
+
+Run:
+
+```bash
+pnpm --filter @myshottr/editor test -- \
+  SelectionController.test.ts EditorCanvas.test.tsx App.test.tsx history.test.ts
+```
+
+Expected: the single-selection controller and missing order shortcuts fail.
+
+- [ ] **Step 3: Implement ordered multi-selection**
+
+Replace the single selected ID with:
+
+```ts
+export class SelectionController {
+  #selectedIds: string[] = [];
+
+  get selectedIds(): readonly string[] {
+    return this.#selectedIds;
+  }
+
+  replace(id: string): void {
+    this.#selectedIds = [id];
+  }
+
+  toggle(id: string): void {
+    this.#selectedIds = this.#selectedIds.includes(id)
+      ? this.#selectedIds.filter((candidate) => candidate !== id)
+      : [...this.#selectedIds, id];
+  }
+
+  clear(): void {
+    this.#selectedIds = [];
+  }
+}
+```
+
+`EditorApp` stores `selectedIds: string[]`. A normal click replaces selection;
+Shift-click toggles membership; clicking the empty stage clears it.
+
+- [ ] **Step 4: Implement group move and transform**
+
+Attach the Transformer to all registered selected groups:
+
+```ts
+const selectedNodes = selectedIds.flatMap((id) => {
+  const node = nodes.current.get(id);
+  return node ? [node] : [];
+});
+transformer.current?.nodes(selectedNodes);
+```
+
+At interaction start, snapshot every selected element. Dragging any selected
+node computes one source-coordinate delta and applies
+`moveElementsWithinBounds(snapshot, delta, bounds)`. Clamp the shared delta so
+no selected element leaves the source image. Dispatch `updateMany` inside one
+history transaction.
+
+At group transform end, read each selected Konva group's final position,
+scale, and rotation, call the existing bounded resize helper for each element,
+reset node scale to `1`, and dispatch one `updateMany`. If a blur is selected
+with other elements, disable rotation for the whole Transformer.
+
+- [ ] **Step 5: Implement multi-delete, duplicate, and z-order**
+
+Delete dispatches all selected IDs. Duplicate maps every selected element
+through the same bounded 12-pixel offset, assigns unique IDs, consecutive
+seeds, and consecutive z-indices, dispatches one `updateMany`-compatible batch
+creation command:
+
+```ts
+| { type: "createMany"; elements: EditorElement[] }
+```
+
+Add `createMany` to reducer and history as one undo entry.
+
+Extend `KeyboardCommand`:
+
+```ts
+| "bringForward"
+| "sendBackward"
+```
+
+Map `Meta+]` and `Meta+[` and dispatch the existing reorder command with every
+selected ID. Add visible Bring Forward and Send Backward buttons to the
+contextual palette when selection exists.
+
+- [ ] **Step 6: Run multi-selection and full editor tests**
+
+Run:
+
+```bash
+pnpm --filter @myshottr/editor test
+pnpm --filter @myshottr/editor typecheck
+pnpm --filter @myshottr/editor build
+```
+
+Expected: all selection, group transform, ordering, history, and prior editor
+tests pass.
+
+- [ ] **Step 7: Commit multi-selection and ordering**
+
+```bash
+git add Packages/editor/src
+git commit -m "feat: add multi-selection and annotation ordering"
+```
+
+### Task 7: Keyboard Editing and Explicit Native Output Actions
 
 **Files:**
 - Modify: `Packages/editor/src/canvas/tools/ToolController.ts`
@@ -1104,10 +1528,10 @@ export type KeyboardCommand =
 ```
 
 Map `Meta+C` to `copy` and `Meta+V` to `paste` before unmodified tool keys.
-`EditorApp` stores a cloned selected element in a ref on copy. Paste calls the
-same bounded offset logic as duplicate, assigns a new UUID, next seed, and next
-z-index, selects the new element, and leaves the operating-system clipboard
-unchanged.
+`EditorApp` stores cloned elements for every `selectedIds` entry in one ref on
+copy. Paste calls the same bounded group-offset logic as duplicate, assigns new
+UUIDs, consecutive seeds and z-indices, dispatches `createMany`, selects the
+new elements, and leaves the operating-system clipboard unchanged.
 
 - [ ] **Step 4: Add native menu commands and explicit labels**
 
@@ -1182,7 +1606,7 @@ git add Packages/editor/src Sources/MyShottrApp/App/MyShottrApp.swift \
 git commit -m "feat: complete editor keyboard workflow"
 ```
 
-### Task 6: Quick Ink Interface and Production Icon Assets
+### Task 8: Quick Ink Interface and Production Icon Assets
 
 **Files:**
 - Create: `Packages/editor/src/components/ToolIcon.tsx`
