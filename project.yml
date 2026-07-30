@@ -12,6 +12,8 @@ targets:
   MyShottr:
     type: application
     platform: macOS
+    dependencies:
+      - target: MyShottrNativeHost
     sources:
       - Sources/MyShottrApp
       - path: Resources/Assets.xcassets
@@ -50,6 +52,16 @@ targets:
       - name: Build Local Editor
         script: Scripts/build-editor.sh
         basedOnDependencyAnalysis: false
+    postBuildScripts:
+      - name: Embed Native Messaging Host
+        script: |
+          set -euo pipefail
+          DESTINATION="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
+          mkdir -p "${DESTINATION}"
+          cp "${BUILT_PRODUCTS_DIR}/MyShottrNativeHost" \
+            "${DESTINATION}/MyShottrNativeHost"
+          chmod 0755 "${DESTINATION}/MyShottrNativeHost"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.myshottr.app
@@ -65,6 +77,24 @@ targets:
         buildPhase: resources
     dependencies:
       - target: MyShottr
+  MyShottrNativeHost:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/MyShottrNativeHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.myshottr.native-host
+  MyShottrNativeHostTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/MyShottrNativeHostTests
+      - path: Sources/MyShottrNativeHost
+        excludes:
+          - main.swift
+    dependencies:
+      - target: MyShottrNativeHost
 schemes:
   MyShottr:
     build:
@@ -74,3 +104,11 @@ schemes:
     test:
       targets:
         - MyShottrTests
+  MyShottrNativeHost:
+    build:
+      targets:
+        MyShottrNativeHost: all
+        MyShottrNativeHostTests: [test]
+    test:
+      targets:
+        - MyShottrNativeHostTests

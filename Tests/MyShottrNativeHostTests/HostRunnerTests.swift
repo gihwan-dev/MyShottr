@@ -1,0 +1,211 @@
+import Foundation
+import XCTest
+
+final class HostRunnerTests: TemporaryDirectoryTestCase {
+    private let captureID = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
+
+    func testStagesValidatedPNGBeforeActivatingApp() throws {
+        let events = EventRecorder()
+        let staging = StagingSpy(result: .success(captureID), events: events)
+        let activator = ActivationSpy(events: events)
+        let runner = HostRunner(staging: staging, activator: activator)
+
+        let output = try HostFixtures.run(
+            runner,
+            inputData: HostFixtures.framed(try HostFixtures.protocolMessage()),
+            in: temporaryDirectory
+        )
+
+        XCTAssertEqual(
+            try HostFixtures.decodedReply(from: output),
+            NativeHostReply(ok: true, captureId: captureID, code: nil)
+        )
+        XCTAssertEqual(staging.stagedData, [HostFixtures.validPNG])
+        XCTAssertEqual(events.values, ["stage", "activate"])
+    }
+
+    func testRejectsUnsupportedProtocolVersionWithoutStaging() throws {
+        try assertRejected(
+            message: HostFixtures.protocolMessage(protocolVersion: 2),
+            code: .invalidMessage
+        )
+    }
+
+    func testRejectsUnexpectedMessageTypeWithoutStaging() throws {
+        try assertRejected(
+            message: HostFixtures.protocolMessage(type: "ping"),
+            code: .invalidMessage
+        )
+    }
+
+    func testRejectsFullPageBeforeDecodingImageData() throws {
+        try assertRejected(
+            message: HostFixtures.protocolMessage(
+                captureMode: "fullPage",
+                dataBase64: "not valid base64"
+            ),
+            code: .unsupportedCaptureMode
+        )
+    }
+
+    func testRejectsNonPNGMIMEWithoutStaging() throws {
+        try assertRejected(
+            message: HostFixtures.protocolMessage(mimeType: "image/jpeg"),
+            code: .invalidImage
+        )
+    }
+
+    func testRejectsMalformedBase64WithoutStaging() throws {
+        try assertRejected(
+            message: HostFixtures.protocolMessage(dataBase64: "%%%="),
+            code: .invalidImage
+        )
+    }
+
+    func testRejectsNoncanonicalBase64WithoutStaging() throws {
+        let noncanonicalPNG = String(HostFixtures.validPNGBase64.dropLast(2)) + "J="
+
+        try assertRejected(
+            message: HostFixtures.protocolMessage(dataBase64: noncanonicalPNG),
+            code: .invalidImage
+        )
+    }
+
+    func testRejectsDecodedImageAboveFortyFiveMiBWithoutStaging() throws {
+        let decodedByteCount = 45 * 1024 * 1024 + 1
+        let base64CharacterCount = ((decodedByteCount + 2) / 3) * 4
+        var oversizedBase64 = String(repeating: "A", count: base64CharacterCount)
+        let paddingCount = (3 - decodedByteCount % 3) % 3
+        if paddingCount > 0 {
+            oversizedBase64.replaceSubrange(
+                oversizedBase64.index(oversizedBase64.endIndex, offsetBy: -paddingCount)...,
+                with: String(repeating: "=", count: paddingCount)
+            )
+        }
+
+        try assertRejected(
+            message: HostFixtures.protocolMessage(dataBase64: oversizedBase64),
+            code: .imageTooLarge
+        )
+    }
+
+    func testRejectsImageWhoseImageIOTypeIsNotPNGWithoutStaging() throws {
+        try assertRejected(
+            message: HostFixtures.protocolMessage(
+                dataBase64: HostFixtures.validGIFBase64
+            ),
+            code: .invalidImage
+        )
+    }
+
+    func testRejectsUnexpectedMetadataFieldsWithoutStaging() throws {
+        try assertRejected(
+            message: HostFixtures.protocolMessage(
+                extraFields: [
+                    "url": "https://example.com",
+                    "title": "Example",
+                    "history": ["previous"],
+                ]
+            ),
+            code: .invalidMessage
+        )
+    }
+
+    func testReturnsBoundedInvalidMessageReplyForMalformedJSON() throws {
+        try assertRejected(
+            message: Data("not-json".utf8),
+            code: .invalidMessage
+        )
+    }
+
+    func testDoesNotActivateAppWhenStagingFails() throws {
+        let staging = StagingSpy(result: .failure(HostTestError.staging))
+        let activator = ActivationSpy()
+        let runner = HostRunner(staging: staging, activator: activator)
+
+        let output = try HostFixtures.run(
+            runner,
+            inputData: HostFixtures.framed(try HostFixtures.protocolMessage()),
+            in: temporaryDirectory
+        )
+
+        XCTAssertEqual(
+            try HostFixtures.decodedReply(from: output),
+            NativeHostReply(ok: false, captureId: nil, code: .stagingFailed)
+        )
+        XCTAssertEqual(staging.stagedData, [HostFixtures.validPNG])
+        XCTAssertEqual(activator.activationCount, 0)
+    }
+
+    func testProcessesOnlyFirstFramedMessage() throws {
+        let staging = StagingSpy(result: .success(captureID))
+        let activator = ActivationSpy()
+        let runner = HostRunner(staging: staging, activator: activator)
+        let first = HostFixtures.framed(try HostFixtures.protocolMessage())
+        let second = HostFixtures.framed(try HostFixtures.protocolMessage())
+
+        let output = try HostFixtures.run(
+            runner,
+            inputData: first + second,
+            in: temporaryDirectory
+        )
+
+        XCTAssertEqual(
+            try HostFixtures.decodedReply(from: output),
+            NativeHostReply(ok: true, captureId: captureID, code: nil)
+        )
+        XCTAssertEqual(staging.stagedData.count, 1)
+        XCTAssertEqual(activator.activationCount, 1)
+    }
+
+    func testAppActivatorFindsAndOpensContainingApplication() throws {
+        let appURL = temporaryDirectory.appendingPathComponent("MyShottr.app", isDirectory: true)
+        let contentsURL = appURL.appendingPathComponent("Contents", isDirectory: true)
+        let helpersURL = contentsURL.appendingPathComponent("Helpers", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: helpersURL,
+            withIntermediateDirectories: true
+        )
+        try Data("plist".utf8).write(to: contentsURL.appendingPathComponent("Info.plist"))
+        let executableURL = helpersURL.appendingPathComponent("MyShottrNativeHost")
+        var openedURL: URL?
+        let activator = AppActivator(
+            executableURL: executableURL,
+            openApplication: {
+                openedURL = $0
+                return true
+            }
+        )
+
+        try activator.activateContainingApp()
+
+        XCTAssertEqual(openedURL, appURL)
+    }
+
+    private func assertRejected(
+        message: Data,
+        code: NativeHostErrorCode,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let staging = StagingSpy(result: .success(captureID))
+        let activator = ActivationSpy()
+        let runner = HostRunner(staging: staging, activator: activator)
+
+        let output = try HostFixtures.run(
+            runner,
+            inputData: HostFixtures.framed(message),
+            in: temporaryDirectory
+        )
+
+        XCTAssertLessThan(output.count - 4, 1024 * 1024, file: file, line: line)
+        XCTAssertEqual(
+            try HostFixtures.decodedReply(from: output),
+            NativeHostReply(ok: false, captureId: nil, code: code),
+            file: file,
+            line: line
+        )
+        XCTAssertTrue(staging.stagedData.isEmpty, file: file, line: line)
+        XCTAssertEqual(activator.activationCount, 0, file: file, line: line)
+    }
+}
