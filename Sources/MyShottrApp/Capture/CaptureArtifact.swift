@@ -1,6 +1,6 @@
 import Foundation
 
-struct CaptureArtifact: Sendable {
+struct CaptureArtifact: Equatable, Sendable {
     let id: UUID
     let sourceKind: CaptureSourceKind
     let pngData: Data

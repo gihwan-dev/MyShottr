@@ -28,7 +28,7 @@ struct EditorPreferences: Codable, Equatable, Sendable {
     }
 }
 
-protocol EditorPreferencesStoring {
+protocol EditorPreferencesStoring: Sendable {
     func load() -> EditorPreferences
     func save(_ preferences: EditorPreferences) throws
 }
@@ -37,7 +37,7 @@ enum EditorPreferencesStoreError: Error, Equatable {
     case invalidPreferences
 }
 
-struct UserDefaultsEditorPreferencesStore: EditorPreferencesStoring {
+struct UserDefaultsEditorPreferencesStore: EditorPreferencesStoring, @unchecked Sendable {
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {

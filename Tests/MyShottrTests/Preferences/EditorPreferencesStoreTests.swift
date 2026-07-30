@@ -26,6 +26,26 @@ final class EditorPreferencesStoreTests: XCTestCase {
         XCTAssertEqual(store.load(), .approvedDefaults)
     }
 
+    func testAbsentStoredPreferencesReturnApprovedDefaults() {
+        XCTAssertNil(defaults.data(forKey: EditorPreferences.storageKey))
+
+        XCTAssertEqual(store.load(), .approvedDefaults)
+    }
+
+    func testWellFormedButSemanticallyInvalidStoredPreferencesReturnApprovedDefaults() throws {
+        let invalid = EditorPreferences(
+            tool: "unknown",
+            color: "#1677FF",
+            strokeWidth: 4,
+            textSize: 24,
+            roughness: 1,
+            opacity: 1
+        )
+        defaults.set(try JSONEncoder().encode(invalid), forKey: EditorPreferences.storageKey)
+
+        XCTAssertEqual(store.load(), .approvedDefaults)
+    }
+
     func testSavingInvalidPreferencesIsRejected() {
         let invalid = EditorPreferences(
             tool: "unknown",

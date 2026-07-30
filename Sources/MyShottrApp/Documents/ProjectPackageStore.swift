@@ -53,6 +53,8 @@ struct ProjectPackageStore: ProjectPackageStoring {
         let annotationJSON: Data
         do {
             annotationJSON = try EditorDocumentMigrator.migrate(storedAnnotationJSON)
+        } catch EditorDocumentMigrationError.unsupportedVersion(let version) {
+            throw ProjectPackageError.unsupportedAnnotationSchemaVersion(version)
         } catch {
             throw ProjectPackageError.invalidAnnotationJSON
         }
@@ -73,13 +75,7 @@ struct ProjectPackageStore: ProjectPackageStoring {
     }
 
     func save(_ project: MyShottrProject, to url: URL) throws {
-        let annotationJSON: Data
-        do {
-            annotationJSON = try EditorDocumentMigrator.migrate(project.annotationJSON)
-        } catch {
-            throw ProjectPackageError.invalidAnnotationJSON
-        }
-        try validateAnnotationJSON(annotationJSON)
+        try validateAnnotationJSON(project.annotationJSON)
 
         let fileManager = FileManager.default
         let temporaryDirectory = url.deletingLastPathComponent().appendingPathComponent(
@@ -96,7 +92,7 @@ struct ProjectPackageStore: ProjectPackageStoring {
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(project.manifest).write(to: temporaryDirectory.appendingPathComponent("manifest.json"))
         try project.originalPNG.write(to: temporaryDirectory.appendingPathComponent("original.png"))
-        try annotationJSON.write(to: temporaryDirectory.appendingPathComponent("document.json"))
+        try project.annotationJSON.write(to: temporaryDirectory.appendingPathComponent("document.json"))
 
         _ = try load(from: temporaryDirectory)
 

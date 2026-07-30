@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { TextElement } from "../model/elements";
+import { TEXT_LINE_HEIGHT } from "../canvas/renderingConstants";
 
 export function TextEditorOverlay({
   element,
@@ -46,6 +47,7 @@ export function TextEditorOverlay({
         width: Math.max(48, element.width * zoom),
         minHeight: Math.max(32, element.height * zoom),
         fontSize: element.fontSize * zoom,
+        lineHeight: TEXT_LINE_HEIGHT,
         color: element.color,
         transform: `rotate(${element.rotation}deg)`,
         transformOrigin: "top left",

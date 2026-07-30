@@ -257,6 +257,11 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                 }
               },
               onTransformStart: (id, node) => {
+                const activeInteraction = activeAnnotationInteraction.current;
+                if (activeInteraction?.kind === "transform") return;
+                if (activeInteraction) {
+                  throw new Error("Cannot transform during an active move");
+                }
                 const elementToTransform = selectedElements.find((candidate) => candidate.id === id);
                 if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
                 if (!beginTransformerInteraction(pointerController.current, transformer.current, node, elementToTransform)) {

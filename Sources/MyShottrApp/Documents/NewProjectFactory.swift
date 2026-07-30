@@ -1,6 +1,6 @@
 import Foundation
 
-protocol NewProjectCreating {
+protocol NewProjectCreating: Sendable {
     func make(artifact: CaptureArtifact, now: Date) throws -> MyShottrProject
 }
 

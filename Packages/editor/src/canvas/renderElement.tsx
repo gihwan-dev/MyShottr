@@ -3,7 +3,7 @@ import type Konva from "konva";
 import { Circle, Group, Image as KonvaImage, Line, Path, Rect, Text } from "react-konva";
 import type { EditorElement } from "../model/elements";
 import { roughPathsFor } from "./roughRenderer";
-import { KONVA_DEFAULT_FONT_FAMILY, NUMBER_MARKER_FONT_SIZE } from "./renderingConstants";
+import { KONVA_DEFAULT_FONT_FAMILY, NUMBER_MARKER_FONT_SIZE, TEXT_LINE_HEIGHT } from "./renderingConstants";
 
 export type ElementInteractionHandlers = {
   selected: boolean;
@@ -62,7 +62,7 @@ export function renderElement(
         </Group>
       );
     case "text":
-      return <Group key={element.id} {...groupProps}><Text text={element.text} fill={element.color} fontFamily={KONVA_DEFAULT_FONT_FAMILY} fontSize={element.fontSize} width={element.width} height={element.height} /></Group>;
+      return <Group key={element.id} {...groupProps}><Text text={element.text} fill={element.color} fontFamily={KONVA_DEFAULT_FONT_FAMILY} fontSize={element.fontSize} lineHeight={TEXT_LINE_HEIGHT} width={element.width} height={element.height} /></Group>;
     case "freehand":
       return <Group key={element.id} {...groupProps}><Line points={relativePoints(element.points, element.x, element.y)} stroke={element.color} strokeWidth={element.strokeWidth} lineCap="round" lineJoin="round" /></Group>;
     case "highlighter":

@@ -163,6 +163,37 @@ describe("renderDocumentToBlob", () => {
     expect(fonts).toContain("12px Arial");
   });
 
+  it("exports each multiline text line at the measured 1.2 line height", async () => {
+    const canvas = document.createElement("canvas");
+    const context = canvasContext();
+    vi.spyOn(document, "createElement").mockReturnValue(canvas);
+    vi.spyOn(canvas, "getContext").mockReturnValue(context);
+    vi.spyOn(canvas, "toBlob").mockImplementation((callback) => callback(new Blob(["png"], { type: "image/png" })));
+    vi.stubGlobal("Image", loadedImage(1440, 900));
+    const text = {
+      id: "text-multiline",
+      type: "text" as const,
+      x: 40,
+      y: 50,
+      width: 180,
+      height: 58,
+      rotation: 0,
+      opacity: 1 as const,
+      zIndex: 0,
+      seed: 11,
+      text: "First line\nSecond line",
+      color: "#000000" as const,
+      fontSize: 24 as const,
+    };
+
+    await renderDocumentToBlob(fixtureDocument({ elements: [text] }), "source.png");
+
+    expect(context.fillText).toHaveBeenNthCalledWith(1, "First line", 0, 0, 180);
+    expect(context.fillText).toHaveBeenNthCalledWith(2, "Second line", 0, expect.any(Number), 180);
+    expect(vi.mocked(context.fillText).mock.calls[1][2]).toBeCloseTo(28.8);
+    expect(context.fillText).toHaveBeenCalledTimes(2);
+  });
+
   it("draws blur before vector annotations during export", async () => {
     const outputCanvas = document.createElement("canvas");
     const drawOperations: string[] = [];

@@ -34,7 +34,7 @@ export type KeyboardCommand =
 
 export function keyboardCommandFor(event: KeyboardEvent): KeyboardCommand | undefined {
   if (event.metaKey) {
-    if (event.key.toLowerCase() === "c") return "copy";
+    if (event.key.toLowerCase() === "c" && !event.shiftKey && !event.ctrlKey && !event.altKey) return "copy";
     if (event.key.toLowerCase() === "v") return "paste";
     if (event.key === "]") return "bringForward";
     if (event.key === "[") return "sendBackward";

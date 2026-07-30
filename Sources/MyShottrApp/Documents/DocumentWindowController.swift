@@ -193,8 +193,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         return toolbar
     }
 
-    private func present(_ error: Error) {
-        NSAlert(error: error).beginSheetModal(for: window ?? NSWindow())
+    @discardableResult
+    func present(_ error: Error) -> Bool {
+        guard let window else { return false }
+        NSAlert(error: error).beginSheetModal(for: window)
+        return true
     }
 }
 

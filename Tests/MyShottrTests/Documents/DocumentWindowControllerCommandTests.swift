@@ -19,4 +19,14 @@ final class DocumentWindowControllerCommandTests: XCTestCase {
         XCTAssertFalse(controller.saveProjectAction(nil))
         XCTAssertFalse(controller.exportComposite(nil))
     }
+
+    func testErrorPresentationTerminatesWhenTheDocumentWindowIsUnavailable() throws {
+        let controller = try DocumentWindowController(
+            project: ProjectFixtures.project(text: "Missing error window"),
+            projectURL: nil
+        )
+        controller.window = nil
+
+        XCTAssertFalse(controller.present(NSError(domain: "MyShottrTests", code: 1)))
+    }
 }

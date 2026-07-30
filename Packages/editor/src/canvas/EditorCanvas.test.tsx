@@ -60,10 +60,17 @@ vi.mock("react-konva", async () => {
       "data-testid": props["data-testid"],
       onDoubleClick: onDblClick,
       onClick,
+      onAuxClick: () => onTransformStart?.({ currentTarget: node }),
+      onContextMenu: (event: React.MouseEvent) => {
+        event.preventDefault();
+        onTransformEnd?.({ currentTarget: node });
+      },
     }, props.children);
     if (!onDragStart) return React.createElement("div", null, props.children);
     return React.createElement("div", {
-      "data-testid": "annotation-node",
+      "data-testid": props["data-testid"] === "element-text-1"
+        ? props["data-testid"]
+        : "annotation-node",
       draggable: true,
       onDragStart: () => onDragStart({ currentTarget: node }),
       onDrag: () => {
@@ -411,6 +418,47 @@ describe("EditorCanvas gesture terminals", () => {
       ]),
     });
     expect(onCommitTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("deduplicates per-node transform events into one transaction and one undo entry", () => {
+    const initial = fixtureDocument({ elements: [fixtureDocument().elements[0], fixtureText()] });
+    const history = createHistoryStore(initial);
+    const onBeginTransaction = vi.fn((label: string) => history.beginTransaction(label));
+    const onCommitTransaction = vi.fn(() => history.commitTransaction());
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        zoom={1}
+        pan={{ x: 0, y: 0 }}
+        rectangleFillColor={null}
+        selectedIds={["rect-1", "text-1"]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={(command) => history.dispatch(command)}
+        onBeginTransaction={onBeginTransaction}
+        onCommitTransaction={onCommitTransaction}
+        onCancelTransaction={() => history.cancelTransaction()}
+        onPanChange={() => {}}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const annotations = [
+      screen.getByTestId("annotation-node"),
+      screen.getByTestId("element-text-1"),
+    ];
+
+    fireEvent.mouseDown(screen.getByTestId("stage"));
+    fireEvent.doubleClick(annotations[0]);
+    fireEvent(annotations[1], new MouseEvent("auxclick", { bubbles: true }));
+    annotations.forEach((annotation) => fireEvent.contextMenu(annotation));
+
+    expect(onBeginTransaction).toHaveBeenCalledOnce();
+    expect(onCommitTransaction).toHaveBeenCalledOnce();
+    expect(history.undo()).toBe(true);
+    expect(history.document.elements).toEqual(initial.elements);
+    expect(history.undo()).toBe(false);
   });
 
   it("cancels an active transform on pointercancel and leaves history usable", () => {

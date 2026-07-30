@@ -1,6 +1,6 @@
 import type { EditorDocument, EditorElement, Point } from "../model/elements";
 import { roughPathsFor } from "../canvas/roughRenderer";
-import { KONVA_DEFAULT_FONT_FAMILY, NUMBER_MARKER_FONT_SIZE } from "../canvas/renderingConstants";
+import { KONVA_DEFAULT_FONT_FAMILY, NUMBER_MARKER_FONT_SIZE, TEXT_LINE_HEIGHT } from "../canvas/renderingConstants";
 import { BLUR_RADIUS_PX, createBlurredSourceCanvas } from "../canvas/blurSource";
 
 export async function renderDocumentToBlob(document: EditorDocument, sourceImageURL: string): Promise<Blob> {
@@ -79,7 +79,9 @@ function drawElement(context: CanvasRenderingContext2D, element: EditorElement):
       context.fillStyle = element.color;
       context.font = `${element.fontSize}px ${KONVA_DEFAULT_FONT_FAMILY}`;
       context.textBaseline = "top";
-      context.fillText(element.text, 0, 0, element.width);
+      element.text.split("\n").forEach((line, index) => {
+        context.fillText(line, 0, index * element.fontSize * TEXT_LINE_HEIGHT, element.width);
+      });
       break;
     case "freehand":
     case "highlighter":

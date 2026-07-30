@@ -13,7 +13,7 @@ import { sendComposite } from "./export/sendComposite";
 import { createHistoryStore, type HistoryStore } from "./model/history";
 import { findElement } from "./model/reducer";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, PaletteColor, Point, TextElement } from "./model/elements";
-import { KONVA_DEFAULT_FONT_FAMILY } from "./canvas/renderingConstants";
+import { KONVA_DEFAULT_FONT_FAMILY, TEXT_LINE_HEIGHT } from "./canvas/renderingConstants";
 import "./styles.css";
 
 export type EditorAppProps = {
@@ -216,7 +216,7 @@ function measureTextBounds(text: string, fontSize: TextElement["fontSize"]): Pic
   const lines = text.split("\n");
   return {
     width: Math.max(1, ...lines.map((line) => Math.ceil(context.measureText(line).width))),
-    height: Math.ceil(lines.length * fontSize * 1.2),
+    height: Math.ceil(lines.length * fontSize * TEXT_LINE_HEIGHT),
   };
 }
 

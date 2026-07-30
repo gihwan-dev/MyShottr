@@ -77,6 +77,19 @@ describe("createElement", () => {
       .toBe("sendBackward");
   });
 
+  it("maps exact unshifted Command-C to annotation copy", () => {
+    expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "c", metaKey: true })))
+      .toBe("copy");
+  });
+
+  it("leaves Command-Shift-C unmapped for native Copy Image routing", () => {
+    expect(keyboardCommandFor(new KeyboardEvent("keydown", {
+      key: "c",
+      metaKey: true,
+      shiftKey: true,
+    }))).toBeUndefined();
+  });
+
   it("uses the caller-derived number and z-index for a number marker", () => {
     const element = createElement("numberMarker", creationGesture("numberMarker"), context);
 
