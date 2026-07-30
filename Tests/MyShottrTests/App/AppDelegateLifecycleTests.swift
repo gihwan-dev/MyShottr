@@ -5,6 +5,42 @@ import XCTest
 
 @MainActor
 final class AppDelegateLifecycleTests: XCTestCase {
+    func testConcurrentCloseAndQuitShareOneWindowResolution()
+        async
+    {
+        let gate = DocumentTerminationResolutionGate()
+        var promptCount = 0
+        var promptContinuation:
+            CheckedContinuation<Bool, Never>?
+        let closeCaller = Task { @MainActor in
+            await gate.resolve {
+                promptCount += 1
+                return await withCheckedContinuation {
+                    promptContinuation = $0
+                }
+            }
+        }
+        await Task.yield()
+        let quitCaller = Task { @MainActor in
+            await gate.resolve {
+                XCTFail(
+                    "Concurrent quit must await the close prompt"
+                )
+                return false
+            }
+        }
+        await Task.yield()
+
+        XCTAssertEqual(promptCount, 1)
+        promptContinuation?.resume(returning: true)
+
+        let closeResult = await closeCaller.value
+        let quitResult = await quitCaller.value
+        XCTAssertTrue(closeResult)
+        XCTAssertTrue(quitResult)
+        XCTAssertEqual(promptCount, 1)
+    }
+
     func testColdFileOpenBeforeDidFinishKeepsDocumentAndRegularPolicy() {
         let project = ProjectFixtures.project(text: "Cold Open")
         let projectURL = URL(
@@ -589,6 +625,224 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(terminationState.cleanExitCount, 1)
     }
 
+    func testNewModifiedWindowDuringPromptIsFlushedAndResolved()
+        async throws
+    {
+        let firstWindow = SpyEditorWindowController()
+        firstWindow.hasModifiedDocument = true
+        firstWindow.modificationRevision = 1
+        firstWindow.pauseResolution = true
+        let firstPrompt = expectation(
+            description: "first prompt"
+        )
+        firstWindow.onResolve = { count in
+            if count == 1 {
+                firstPrompt.fulfill()
+            }
+        }
+        let secondWindow = SpyEditorWindowController()
+        secondWindow.representedDocumentID =
+            RecoveryFixtures.secondDocumentID
+        secondWindow.hasModifiedDocument = true
+        secondWindow.modificationRevision = 1
+        secondWindow.pauseResolution = true
+        let secondPrompt = expectation(
+            description: "new window prompt"
+        )
+        secondWindow.onResolve = { count in
+            if count == 1 {
+                secondPrompt.fulfill()
+            }
+        }
+        var windows = [firstWindow, secondWindow]
+        var replies: [Bool] = []
+        let reply = expectation(
+            description: "termination reply"
+        )
+        let delegate = AppDelegate(
+            documentWindowFactory: {
+                _, _, _ in windows.removeFirst()
+            },
+            terminationReply: {
+                replies.append($0)
+                reply.fulfill()
+            }
+        )
+        try delegate.present(
+            project: ProjectFixtures.project(text: "first")
+        )
+
+        XCTAssertEqual(
+            delegate.applicationShouldTerminate(
+                NSApplication.shared
+            ),
+            .terminateLater
+        )
+        await fulfillment(of: [firstPrompt], timeout: 1)
+        try delegate.present(
+            project: RecoveryFixtures.project(
+                text: "new",
+                documentID: RecoveryFixtures.secondDocumentID
+            )
+        )
+        firstWindow.resumeResolution()
+
+        await fulfillment(of: [secondPrompt], timeout: 1)
+        XCTAssertTrue(replies.isEmpty)
+        XCTAssertEqual(secondWindow.flushCount, 1)
+        secondWindow.resumeResolution()
+        await fulfillment(of: [reply], timeout: 1)
+
+        XCTAssertEqual(replies, [true])
+        XCTAssertEqual(firstWindow.resolveCount, 1)
+        XCTAssertEqual(secondWindow.resolveCount, 1)
+    }
+
+    func testWindowModifiedDuringOtherPromptIsFlushedAndResolved()
+        async throws
+    {
+        let firstWindow = SpyEditorWindowController()
+        firstWindow.hasModifiedDocument = true
+        firstWindow.modificationRevision = 1
+        firstWindow.pauseResolution = true
+        let firstPrompt = expectation(
+            description: "first prompt"
+        )
+        firstWindow.onResolve = { count in
+            if count == 1 {
+                firstPrompt.fulfill()
+            }
+        }
+        let secondWindow = SpyEditorWindowController()
+        secondWindow.representedDocumentID =
+            RecoveryFixtures.secondDocumentID
+        secondWindow.pauseResolution = true
+        let secondPrompt = expectation(
+            description: "newly modified prompt"
+        )
+        secondWindow.onResolve = { count in
+            if count == 1 {
+                secondPrompt.fulfill()
+            }
+        }
+        var windows = [firstWindow, secondWindow]
+        var replies: [Bool] = []
+        let reply = expectation(
+            description: "termination reply"
+        )
+        let delegate = AppDelegate(
+            documentWindowFactory: {
+                _, _, _ in windows.removeFirst()
+            },
+            terminationReply: {
+                replies.append($0)
+                reply.fulfill()
+            }
+        )
+        try delegate.present(
+            project: ProjectFixtures.project(text: "first")
+        )
+        try delegate.present(
+            project: RecoveryFixtures.project(
+                text: "second",
+                documentID: RecoveryFixtures.secondDocumentID
+            )
+        )
+
+        XCTAssertEqual(
+            delegate.applicationShouldTerminate(
+                NSApplication.shared
+            ),
+            .terminateLater
+        )
+        await fulfillment(of: [firstPrompt], timeout: 1)
+        secondWindow.recordModification()
+        firstWindow.resumeResolution()
+
+        await fulfillment(of: [secondPrompt], timeout: 1)
+        XCTAssertTrue(replies.isEmpty)
+        XCTAssertEqual(secondWindow.flushCount, 1)
+        secondWindow.resumeResolution()
+        await fulfillment(of: [reply], timeout: 1)
+
+        XCTAssertEqual(replies, [true])
+        XCTAssertEqual(secondWindow.resolveCount, 1)
+    }
+
+    func testPreviouslyResolvedWindowEditedAgainIsResolvedAgain()
+        async throws
+    {
+        let firstWindow = SpyEditorWindowController()
+        firstWindow.hasModifiedDocument = true
+        firstWindow.modificationRevision = 1
+        let firstResolvedAgain = expectation(
+            description: "first window resolved again"
+        )
+        firstWindow.onResolve = { count in
+            if count == 2 {
+                firstResolvedAgain.fulfill()
+            }
+        }
+        let secondWindow = SpyEditorWindowController()
+        secondWindow.representedDocumentID =
+            RecoveryFixtures.secondDocumentID
+        secondWindow.hasModifiedDocument = true
+        secondWindow.modificationRevision = 1
+        secondWindow.pauseResolution = true
+        let secondPrompt = expectation(
+            description: "second prompt"
+        )
+        secondWindow.onResolve = { count in
+            if count == 1 {
+                secondPrompt.fulfill()
+            }
+        }
+        var windows = [firstWindow, secondWindow]
+        var replies: [Bool] = []
+        let reply = expectation(
+            description: "termination reply"
+        )
+        let delegate = AppDelegate(
+            documentWindowFactory: {
+                _, _, _ in windows.removeFirst()
+            },
+            terminationReply: {
+                replies.append($0)
+                reply.fulfill()
+            }
+        )
+        try delegate.present(
+            project: ProjectFixtures.project(text: "first")
+        )
+        try delegate.present(
+            project: RecoveryFixtures.project(
+                text: "second",
+                documentID: RecoveryFixtures.secondDocumentID
+            )
+        )
+
+        XCTAssertEqual(
+            delegate.applicationShouldTerminate(
+                NSApplication.shared
+            ),
+            .terminateLater
+        )
+        await fulfillment(of: [secondPrompt], timeout: 1)
+        firstWindow.recordModification()
+        secondWindow.resumeResolution()
+
+        await fulfillment(
+            of: [firstResolvedAgain],
+            timeout: 1
+        )
+        await fulfillment(of: [reply], timeout: 1)
+
+        XCTAssertEqual(replies, [true])
+        XCTAssertEqual(firstWindow.flushCount, 2)
+        XCTAssertEqual(firstWindow.resolveCount, 2)
+        XCTAssertEqual(secondWindow.resolveCount, 1)
+    }
+
     func testLaterCancelDoesNotFinalizeEarlierWindow()
         async throws
     {
@@ -636,6 +890,71 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(replies, [false])
         XCTAssertEqual(firstWindow.resolveCount, 1)
         XCTAssertEqual(secondWindow.resolveCount, 1)
+        XCTAssertEqual(firstWindow.finalizeCount, 0)
+        XCTAssertEqual(secondWindow.finalizeCount, 0)
+    }
+
+    func testBatchDiscardFailureRejectsTerminationWithoutCompletion()
+        async throws
+    {
+        let recoveryStore = SpyRecoveryStore()
+        recoveryStore.error = .discardStageFailed(
+            RecoveryFixtures.secondDocumentID
+        )
+        let firstWindow = SpyEditorWindowController()
+        firstWindow.hasModifiedDocument = true
+        firstWindow.modificationRevision = 1
+        firstWindow.pendingTerminationDiscardDocumentID =
+            ProjectFixtures.documentID
+        let secondWindow = SpyEditorWindowController()
+        secondWindow.representedDocumentID =
+            RecoveryFixtures.secondDocumentID
+        secondWindow.hasModifiedDocument = true
+        secondWindow.modificationRevision = 1
+        secondWindow.pendingTerminationDiscardDocumentID =
+            RecoveryFixtures.secondDocumentID
+        var windows = [firstWindow, secondWindow]
+        var replies: [Bool] = []
+        let reply = expectation(
+            description: "rejected termination"
+        )
+        let delegate = AppDelegate(
+            documentWindowFactory: {
+                _, _, _ in windows.removeFirst()
+            },
+            launchErrorReporter: { _ in },
+            recoveryStoreFactory: { recoveryStore },
+            terminationReply: {
+                replies.append($0)
+                reply.fulfill()
+            }
+        )
+        try delegate.present(
+            project: ProjectFixtures.project(text: "first")
+        )
+        try delegate.present(
+            project: RecoveryFixtures.project(
+                text: "second",
+                documentID: RecoveryFixtures.secondDocumentID
+            )
+        )
+
+        XCTAssertEqual(
+            delegate.applicationShouldTerminate(
+                NSApplication.shared
+            ),
+            .terminateLater
+        )
+        await fulfillment(of: [reply], timeout: 1)
+
+        XCTAssertEqual(replies, [false])
+        XCTAssertEqual(
+            recoveryStore.attemptedDiscardBatches,
+            [[
+                ProjectFixtures.documentID,
+                RecoveryFixtures.secondDocumentID,
+            ]]
+        )
         XCTAssertEqual(firstWindow.finalizeCount, 0)
         XCTAssertEqual(secondWindow.finalizeCount, 0)
     }
@@ -804,12 +1123,18 @@ private final class SpyEditorWindowController: EditorWindowControlling {
     var representedDocumentID = ProjectFixtures.documentID
     var representedProjectURL: URL?
     var hasModifiedDocument = false
+    var modificationRevision: UInt64 = 0
+    var pendingTerminationDiscardDocumentID: UUID?
     var resolutionResult = true
     var resolutionLabel = "approved"
     var eventPrefix = "window"
     var events: ((String) -> Void)?
     var pauseFlush = false
+    var pauseResolution = false
+    var onResolve: ((Int) -> Void)?
     private var flushContinuation:
+        CheckedContinuation<Void, Never>?
+    private var resolutionContinuation:
         CheckedContinuation<Void, Never>?
     private(set) var presentationCount = 0
     private(set) var focusCount = 0
@@ -841,6 +1166,12 @@ private final class SpyEditorWindowController: EditorWindowControlling {
     func resolvePendingChangesForTermination() async -> Bool {
         resolveCount += 1
         events?("\(eventPrefix)-resolve")
+        onResolve?(resolveCount)
+        if pauseResolution {
+            await withCheckedContinuation {
+                resolutionContinuation = $0
+            }
+        }
         return resolutionResult
     }
 
@@ -849,10 +1180,27 @@ private final class SpyEditorWindowController: EditorWindowControlling {
         events?("\(eventPrefix)-finalize")
     }
 
+    func completePendingTerminationAfterDiscardStaged() {
+        finalizeCount += 1
+        events?("\(eventPrefix)-finalize")
+        pendingTerminationDiscardDocumentID = nil
+    }
+
     func resumeFlush() {
         pauseFlush = false
         flushContinuation?.resume()
         flushContinuation = nil
+    }
+
+    func resumeResolution() {
+        pauseResolution = false
+        resolutionContinuation?.resume()
+        resolutionContinuation = nil
+    }
+
+    func recordModification() {
+        hasModifiedDocument = true
+        modificationRevision &+= 1
     }
 
     func close() {

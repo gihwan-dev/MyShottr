@@ -69,6 +69,8 @@ final class AppDelegate:
     private var sessionTerminationState: (
         any SessionTerminationTracking
     )?
+    private var terminationRecoveryStore:
+        (any RecoveryStoring)?
     private var recoveryCoordinator: RecoveryCoordinator?
     private var terminationResolutionState:
         TerminationResolutionState = .idle
@@ -248,10 +250,9 @@ final class AppDelegate:
             break
         }
 
-        let modifiedWindows = documentWindows.filter(
-            \.hasModifiedDocument
-        )
-        guard !modifiedWindows.isEmpty else {
+        guard documentWindows.contains(
+            where: \.hasModifiedDocument
+        ) else {
             terminationResolutionState = .approved
             return .terminateNow
         }
@@ -261,9 +262,7 @@ final class AppDelegate:
             guard let self else {
                 return
             }
-            let approved = await resolveTermination(
-                for: modifiedWindows
-            )
+            let approved = await resolveTermination()
             terminationResolutionState =
                 approved ? .approved : .idle
             terminationReply(approved)
@@ -371,10 +370,12 @@ final class AppDelegate:
             let previousSessionWasClean =
                 try terminationState.beginSession()
             sessionTerminationState = terminationState
+            let recoveryStore = try recoveryStoreFactory()
+            terminationRecoveryStore = recoveryStore
 
             let issueReporter = launchErrorReporter
             let coordinator = RecoveryCoordinator(
-                recoveryStore: try recoveryStoreFactory(),
+                recoveryStore: recoveryStore,
                 previousSessionWasClean:
                     previousSessionWasClean,
                 prompt: recoveryPrompt,
@@ -433,36 +434,146 @@ final class AppDelegate:
             .resolvingSymlinksInPath()
     }
 
-    private func resolveTermination(
-        for windows: [any EditorWindowControlling]
-    ) async -> Bool {
-        do {
-            for window in windows {
-                try await window
-                    .flushRecoveryForTermination()
-            }
-        } catch {
-            launchErrorReporter(error)
-            return false
-        }
+    private func resolveTermination() async -> Bool {
+        var resolvedRevisions:
+            [ObjectIdentifier: UInt64] = [:]
 
-        for window in windows {
-            guard await window
-                .resolvePendingChangesForTermination()
-            else {
+        while true {
+            let cycleWindows = documentWindows
+            let cycleIdentities = Set(
+                cycleWindows.map(windowIdentity)
+            )
+            resolvedRevisions = resolvedRevisions.filter {
+                cycleIdentities.contains($0.key)
+            }
+            let targets = cycleWindows.filter {
+                $0.hasModifiedDocument
+                    && resolvedRevisions[
+                        windowIdentity($0)
+                    ] != $0.modificationRevision
+            }
+
+            var flushedRevisions:
+                [ObjectIdentifier: UInt64] = [:]
+            var shouldRestart = false
+            do {
+                for window in targets {
+                    let identity = windowIdentity(window)
+                    let revision =
+                        window.modificationRevision
+                    try await window
+                        .flushRecoveryForTermination()
+                    guard documentWindows.contains(
+                        where: {
+                            windowIdentity($0) == identity
+                        }
+                    ),
+                    window.modificationRevision == revision
+                    else {
+                        shouldRestart = true
+                        break
+                    }
+                    flushedRevisions[identity] = revision
+                }
+            } catch {
+                launchErrorReporter(error)
                 return false
             }
-        }
-
-        do {
-            for window in windows {
-                try window.finalizePendingTermination()
+            if shouldRestart {
+                continue
             }
-        } catch {
-            launchErrorReporter(error)
-            return false
+            guard Set(
+                documentWindows.map(windowIdentity)
+            ) == cycleIdentities else {
+                continue
+            }
+
+            for window in targets {
+                let identity = windowIdentity(window)
+                guard let revision =
+                        flushedRevisions[identity],
+                      window.modificationRevision
+                        == revision
+                else {
+                    shouldRestart = true
+                    break
+                }
+                guard await window
+                    .resolvePendingChangesForTermination()
+                else {
+                    return false
+                }
+                guard documentWindows.contains(
+                    where: {
+                        windowIdentity($0) == identity
+                    }
+                ),
+                window.modificationRevision == revision
+                else {
+                    shouldRestart = true
+                    break
+                }
+                resolvedRevisions[identity] = revision
+            }
+            if shouldRestart {
+                continue
+            }
+
+            let liveWindows = documentWindows
+            guard Set(
+                liveWindows.map(windowIdentity)
+            ) == cycleIdentities else {
+                continue
+            }
+            guard !liveWindows.contains(
+                where: {
+                    $0.hasModifiedDocument
+                        && resolvedRevisions[
+                            windowIdentity($0)
+                        ] != $0.modificationRevision
+                }
+            ) else {
+                continue
+            }
+
+            do {
+                let discardDocumentIDs = liveWindows
+                    .compactMap(
+                        \.pendingTerminationDiscardDocumentID
+                    )
+                if !discardDocumentIDs.isEmpty {
+                    let recoveryStore:
+                        any RecoveryStoring
+                    if let terminationRecoveryStore {
+                        recoveryStore =
+                            terminationRecoveryStore
+                    } else {
+                        recoveryStore =
+                            try recoveryStoreFactory()
+                        terminationRecoveryStore =
+                            recoveryStore
+                    }
+                    try recoveryStore.stageDiscard(
+                        documentIds: discardDocumentIDs
+                    )
+                }
+            } catch {
+                launchErrorReporter(error)
+                return false
+            }
+
+            for window in liveWindows {
+                window
+                    .completePendingTerminationAfterDiscardStaged()
+            }
+            return true
         }
-        return true
+    }
+
+    private func windowIdentity(
+        _ window: any EditorWindowControlling
+    ) -> ObjectIdentifier {
+        ObjectIdentifier(window)
     }
 }
 

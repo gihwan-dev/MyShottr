@@ -39,6 +39,44 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         )
     }
 
+    func testModificationRevisionAdvancesForEveryEditorChangeSignal()
+        throws
+    {
+        let session = DocumentSession(
+            recoveryStore: SpyRecoveryStore(),
+            recoveryClock: ManualRecoveryClock()
+        )
+        try session.open(
+            project: ProjectFixtures.project(text: "initial")
+        )
+
+        XCTAssertEqual(session.modificationRevision, 0)
+
+        try session.markModified()
+        try session.markModified()
+
+        XCTAssertEqual(session.modificationRevision, 2)
+    }
+
+    func testApplyingChangedSnapshotAdvancesModificationRevision()
+        throws
+    {
+        let session = DocumentSession(
+            recoveryStore: SpyRecoveryStore(),
+            recoveryClock: ManualRecoveryClock()
+        )
+        try session.open(
+            project: ProjectFixtures.project(text: "initial")
+        )
+
+        try session.applySnapshot(
+            ProjectFixtures.project(text: "changed")
+                .annotationJSON
+        )
+
+        XCTAssertEqual(session.modificationRevision, 1)
+    }
+
     func testMarkModifiedInstallsProviderResultBeforeRecoveryWrite()
         async throws
     {
@@ -250,6 +288,49 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         XCTAssertFalse(session.isModified)
     }
 
+    func testEditDuringSaveKeepsRecoveryAndModifiedState()
+        throws
+    {
+        let recoveryStore = SpyRecoveryStore()
+        let session = DocumentSession(
+            recoveryStore: recoveryStore,
+            recoveryClock: ManualRecoveryClock()
+        )
+        try session.open(
+            project: ProjectFixtures.project(text: "initial")
+        )
+        try session.applySnapshot(
+            ProjectFixtures.project(text: "save snapshot")
+                .annotationJSON
+        )
+        let saveRevision = session.modificationRevision
+        let savedProject = try session.projectForSave()
+
+        let latestProject = ProjectFixtures.project(
+            text: "newer edit"
+        )
+        try session.applySnapshot(
+            latestProject.annotationJSON
+        )
+        try session.completeSave(
+            savedProject,
+            expectedModificationRevision: saveRevision
+        )
+
+        XCTAssertTrue(session.isModified)
+        XCTAssertEqual(
+            session.modificationRevision,
+            saveRevision + 1
+        )
+        XCTAssertTrue(
+            recoveryStore.removedDocumentIDs.isEmpty
+        )
+        XCTAssertEqual(
+            session.project?.annotationJSON,
+            latestProject.annotationJSON
+        )
+    }
+
     func testRecoveryRemovalFailureKeepsDocumentModified() throws {
         let recoveryStore = SpyRecoveryStore()
         let session = DocumentSession(
@@ -317,11 +398,19 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
     }
 
     func testRecoveredStagedDocumentCommitsAsModified() throws {
+        let recoveryStore = SpyRecoveryStore()
+        let recovered = ProjectFixtures.project(text: "recovered")
+        recoveryStore.projects = [
+            RecoveryFixtures.recovered(
+                text: "recovered",
+                documentID: recovered.manifest.documentId,
+                modifiedAt: RecoveryFixtures.fixedNow
+            ),
+        ]
         let session = DocumentSession(
-            recoveryStore: SpyRecoveryStore(),
+            recoveryStore: recoveryStore,
             recoveryClock: ManualRecoveryClock()
         )
-        let recovered = ProjectFixtures.project(text: "recovered")
         session.prepareForRecoveryRestore()
 
         try session.stage(project: recovered)
@@ -330,6 +419,68 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         )
 
         XCTAssertTrue(session.isModified)
+        XCTAssertTrue(recoveryStore.removedDocumentIDs.isEmpty)
+        XCTAssertEqual(recoveryStore.projects.count, 1)
+    }
+
+    func testRestoredDocumentRecoveryIsRemovedOnlyAfterSuccessfulSave()
+        throws
+    {
+        let recoveryStore = SpyRecoveryStore()
+        let recovered = RecoveryFixtures.recovered(
+            text: "recovered",
+            documentID: ProjectFixtures.documentID,
+            modifiedAt: RecoveryFixtures.fixedNow
+        )
+        recoveryStore.projects = [recovered]
+        let session = DocumentSession(
+            recoveryStore: recoveryStore,
+            recoveryClock: ManualRecoveryClock()
+        )
+        session.prepareForRecoveryRestore()
+        try session.stage(project: recovered.project)
+        try session.commitStaged(
+            annotationJSON: recovered.project.annotationJSON
+        )
+
+        XCTAssertTrue(recoveryStore.removedDocumentIDs.isEmpty)
+
+        try session.completeSave(session.projectForSave())
+
+        XCTAssertEqual(
+            recoveryStore.removedDocumentIDs,
+            [ProjectFixtures.documentID]
+        )
+    }
+
+    func testRestoredDocumentRecoveryIsRemovedOnlyAfterExplicitDiscard()
+        throws
+    {
+        let recoveryStore = SpyRecoveryStore()
+        let recovered = RecoveryFixtures.recovered(
+            text: "recovered",
+            documentID: ProjectFixtures.documentID,
+            modifiedAt: RecoveryFixtures.fixedNow
+        )
+        recoveryStore.projects = [recovered]
+        let session = DocumentSession(
+            recoveryStore: recoveryStore,
+            recoveryClock: ManualRecoveryClock()
+        )
+        session.prepareForRecoveryRestore()
+        try session.stage(project: recovered.project)
+        try session.commitStaged(
+            annotationJSON: recovered.project.annotationJSON
+        )
+
+        XCTAssertTrue(recoveryStore.removedDocumentIDs.isEmpty)
+
+        try session.discardRecovery()
+
+        XCTAssertEqual(
+            recoveryStore.removedDocumentIDs,
+            [ProjectFixtures.documentID]
+        )
     }
 
     func testFirstLaunchStartsUncleanSessionAtomically() throws {
@@ -476,13 +627,29 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         try cleanCoordinator.offerRecoveryIfNeeded()
 
         XCTAssertEqual(restored, [recovered])
+        XCTAssertTrue(store.removedDocumentIDs.isEmpty)
+        XCTAssertEqual(store.projects, [recovered])
+
+        let afterCrashPrompt = SpyRecoveryPrompt()
+        afterCrashPrompt.decision = .cancel
+        let afterCrashCoordinator = RecoveryCoordinator(
+            recoveryStore: store,
+            previousSessionWasClean: true,
+            prompt: afterCrashPrompt,
+            restore: { _ in
+                XCTFail("Crash relaunch cancellation must not restore")
+            }
+        )
+
+        try afterCrashCoordinator.offerRecoveryIfNeeded()
+
         XCTAssertEqual(
-            store.removedDocumentIDs,
-            [ProjectFixtures.documentID]
+            afterCrashPrompt.presentedProjects,
+            [[recovered]]
         )
     }
 
-    func testPartialRestoreRemovesSelectedAndCleanRelaunchOffersRest()
+    func testPartialRestoreKeepsEveryRecoveryForCrashRelaunch()
         throws
     {
         let first = RecoveryFixtures.recovered(
@@ -512,10 +679,7 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         try coordinator.offerRecoveryIfNeeded()
 
         XCTAssertEqual(restored, [second])
-        XCTAssertEqual(
-            store.removedDocumentIDs,
-            [second.documentId]
-        )
+        XCTAssertTrue(store.removedDocumentIDs.isEmpty)
 
         let nextPrompt = SpyRecoveryPrompt()
         nextPrompt.decision = .cancel
@@ -531,8 +695,57 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
 
         XCTAssertEqual(
             nextPrompt.presentedProjects,
-            [[first]]
+            [[first, second]]
         )
+    }
+
+    func testRestoreFailureLeavesRecoveryAvailableForCleanRelaunch()
+        throws
+    {
+        let recovered = RecoveryFixtures.recovered(
+            text: "load failure",
+            documentID: ProjectFixtures.documentID,
+            modifiedAt: RecoveryFixtures.fixedNow
+        )
+        let store = SpyRecoveryStore()
+        store.projects = [recovered]
+        let prompt = SpyRecoveryPrompt()
+        prompt.decision = .restore([
+            ProjectFixtures.documentID,
+        ])
+        let coordinator = RecoveryCoordinator(
+            recoveryStore: store,
+            previousSessionWasClean: false,
+            prompt: prompt,
+            restore: { _ in
+                throw RecoveryTestError.expected
+            }
+        )
+
+        XCTAssertThrowsError(
+            try coordinator.offerRecoveryIfNeeded()
+        ) {
+            XCTAssertEqual(
+                $0 as? RecoveryCoordinatorError,
+                .restoreFailed(ProjectFixtures.documentID)
+            )
+        }
+        XCTAssertTrue(store.removedDocumentIDs.isEmpty)
+        XCTAssertEqual(store.projects, [recovered])
+
+        let relaunchPrompt = SpyRecoveryPrompt()
+        relaunchPrompt.decision = .cancel
+        let relaunch = RecoveryCoordinator(
+            recoveryStore: store,
+            previousSessionWasClean: true,
+            prompt: relaunchPrompt,
+            restore: { _ in
+                XCTFail("Relaunch cancellation must not restore")
+            }
+        )
+        try relaunch.offerRecoveryIfNeeded()
+
+        XCTAssertEqual(relaunchPrompt.presentedProjects, [[recovered]])
     }
 
     func testDiscardAllExplicitlyRemovesEveryRecovery() throws {
@@ -564,6 +777,10 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(
             store.removedDocumentIDs,
             [first.documentId, second.documentId]
+        )
+        XCTAssertEqual(
+            store.stagedDiscardBatches,
+            [[first.documentId, second.documentId]]
         )
     }
 

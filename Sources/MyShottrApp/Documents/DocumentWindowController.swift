@@ -2,6 +2,27 @@ import AppKit
 import UniformTypeIdentifiers
 
 @MainActor
+final class DocumentTerminationResolutionGate {
+    private var inFlight: Task<Bool, Never>?
+
+    func resolve(
+        operation:
+            @escaping @MainActor () async -> Bool
+    ) async -> Bool {
+        if let inFlight {
+            return await inFlight.value
+        }
+        let task = Task { @MainActor in
+            await operation()
+        }
+        inFlight = task
+        let result = await task.value
+        inFlight = nil
+        return result
+    }
+}
+
+@MainActor
 final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     private let session: DocumentSession
     private let editorWebView: EditorWebView
@@ -10,6 +31,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private var projectURL: URL?
     private var closeAfterPrompt = false
     private var discardRecoveryOnApprovedTermination = false
+    private let terminationResolutionGate =
+        DocumentTerminationResolutionGate()
     var onClose: (() -> Void)?
 
     init(
@@ -105,6 +128,16 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     }
 
     func resolvePendingChangesForTermination() async -> Bool {
+        await terminationResolutionGate.resolve {
+            [weak self] in
+            guard let self else {
+                return false
+            }
+            return await presentPendingChangesResolution()
+        }
+    }
+
+    private func presentPendingChangesResolution() async -> Bool {
         discardRecoveryOnApprovedTermination = false
         guard session.isModified,
               let window
@@ -149,6 +182,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             return
         }
         try session.discardRecovery()
+        discardRecoveryOnApprovedTermination = false
+    }
+
+    func completePendingTerminationAfterDiscardStaged() {
         discardRecoveryOnApprovedTermination = false
     }
 
@@ -239,6 +276,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
     private func saveProject() async -> Bool {
         do {
+            let modificationRevision =
+                session.modificationRevision
             let annotationJSON =
                 try await editorWebView.requestAnnotationSnapshot()
             try session.install(annotationJSON: annotationJSON)
@@ -252,7 +291,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             }
             try projectStore.save(project, to: url)
             projectURL = url
-            try session.completeSave(project)
+            try session.completeSave(
+                project,
+                expectedModificationRevision:
+                    modificationRevision
+            )
             window?.title = url.deletingPathExtension().lastPathComponent
             return true
         } catch {
@@ -304,11 +347,13 @@ protocol EditorWindowControlling: AnyObject {
     var representedDocumentID: UUID { get }
     var representedProjectURL: URL? { get }
     var hasModifiedDocument: Bool { get }
+    var modificationRevision: UInt64 { get }
+    var pendingTerminationDiscardDocumentID: UUID? { get }
     func presentWindow() throws
     func focusWindow()
     func flushRecoveryForTermination() async throws
     func resolvePendingChangesForTermination() async -> Bool
-    func finalizePendingTermination() throws
+    func completePendingTerminationAfterDiscardStaged()
 }
 
 extension DocumentWindowController: EditorWindowControlling {
@@ -318,6 +363,16 @@ extension DocumentWindowController: EditorWindowControlling {
 
     var hasModifiedDocument: Bool {
         session.isModified
+    }
+
+    var modificationRevision: UInt64 {
+        session.modificationRevision
+    }
+
+    var pendingTerminationDiscardDocumentID: UUID? {
+        discardRecoveryOnApprovedTermination
+            ? representedDocumentID
+            : nil
     }
 
     func presentWindow() {

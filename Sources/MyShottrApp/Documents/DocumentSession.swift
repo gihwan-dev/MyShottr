@@ -71,6 +71,7 @@ final class DocumentSession {
         any RecoveryScheduledOperation
     )?
     private var restoreStagedProjectAsModified = false
+    private(set) var modificationRevision: UInt64 = 0
     private(set) var isModified = false {
         didSet { onModifiedStateChange?(isModified) }
     }
@@ -98,6 +99,7 @@ final class DocumentSession {
         self.project = project
         stagedProject = nil
         restoreStagedProjectAsModified = false
+        modificationRevision = 0
         isModified = false
     }
 
@@ -114,7 +116,12 @@ final class DocumentSession {
         stagedProject.annotationJSON = annotationJSON
         project = stagedProject
         self.stagedProject = nil
-        isModified = restoreStagedProjectAsModified
+        let restoredAsModified =
+            restoreStagedProjectAsModified
+        isModified = restoredAsModified
+        if restoredAsModified {
+            modificationRevision &+= 1
+        }
         restoreStagedProjectAsModified = false
     }
 
@@ -129,18 +136,25 @@ final class DocumentSession {
         project = nil
         stagedProject = nil
         restoreStagedProjectAsModified = false
+        modificationRevision = 0
         isModified = false
     }
 
     func markModified() throws {
         guard project != nil else { throw DocumentSessionError.noOpenDocument }
+        modificationRevision &+= 1
         isModified = true
         scheduleRecovery(requestLatestSnapshot: true)
     }
 
     func applySnapshot(_ annotationJSON: Data) throws {
         let wasModified = isModified
+        let changed = project?.annotationJSON
+            != annotationJSON
         try install(annotationJSON: annotationJSON)
+        if changed {
+            modificationRevision &+= 1
+        }
         if isModified || wasModified {
             scheduleRecovery(requestLatestSnapshot: false)
         }
@@ -161,11 +175,21 @@ final class DocumentSession {
         return project
     }
 
-    func completeSave(_ savedProject: MyShottrProject) throws {
+    func completeSave(
+        _ savedProject: MyShottrProject,
+        expectedModificationRevision: UInt64? = nil
+    ) throws {
         try validate(annotationJSON: savedProject.annotationJSON, for: savedProject.manifest)
+        if let expectedModificationRevision,
+           modificationRevision
+            != expectedModificationRevision
+        {
+            isModified = true
+            return
+        }
+        project = savedProject
         recoveryTask?.cancel()
         recoveryTask = nil
-        project = savedProject
         try recoveryStore?.remove(
             documentId: savedProject.manifest.documentId
         )

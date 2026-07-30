@@ -93,16 +93,11 @@ final class RecoveryCoordinator {
                         project.documentId
                     )
                 }
-                try recoveryStore.remove(
-                    documentId: project.documentId
-                )
             }
         case .discardAll:
-            for project in projects {
-                try recoveryStore.remove(
-                    documentId: project.documentId
-                )
-            }
+            try recoveryStore.stageDiscard(
+                documentIds: projects.map(\.documentId)
+            )
         case .cancel:
             break
         }

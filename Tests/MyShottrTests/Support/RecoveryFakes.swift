@@ -58,6 +58,8 @@ final class SpyRecoveryStore: RecoveryStoring, @unchecked Sendable {
 
     var writes: [Write] = []
     var removedDocumentIDs: [UUID] = []
+    var stagedDiscardBatches: [[UUID]] = []
+    var attemptedDiscardBatches: [[UUID]] = []
     var projects: [RecoveredProject] = []
     var issues: [RecoveryScanIssue] = []
     var error: RecoveryStoreError?
@@ -77,6 +79,16 @@ final class SpyRecoveryStore: RecoveryStoring, @unchecked Sendable {
         if let error { throw error }
         removedDocumentIDs.append(documentId)
         projects.removeAll { $0.documentId == documentId }
+    }
+
+    func stageDiscard(documentIds: [UUID]) throws {
+        attemptedDiscardBatches.append(documentIds)
+        if let error { throw error }
+        stagedDiscardBatches.append(documentIds)
+        removedDocumentIDs.append(contentsOf: documentIds)
+        projects.removeAll {
+            documentIds.contains($0.documentId)
+        }
     }
 
     func recoverableProjects() throws -> [RecoveredProject] {

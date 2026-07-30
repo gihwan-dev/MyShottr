@@ -63,6 +63,202 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
         )
     }
 
+    func testBatchDiscardBecomesCleanupOnlyAndIsNeverOffered()
+        throws
+    {
+        let firstID = ProjectFixtures.documentID
+        let secondID = RecoveryFixtures.secondDocumentID
+        let store = try RecoveryStore(root: temporaryDirectory)
+        try store.write(
+            RecoveryFixtures.project(
+                text: "first",
+                documentID: firstID
+            ),
+            documentId: firstID
+        )
+        try store.write(
+            RecoveryFixtures.project(
+                text: "second",
+                documentID: secondID
+            ),
+            documentId: secondID
+        )
+
+        try store.stageDiscard(
+            documentIds: [firstID, secondID]
+        )
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: recoveryURL(for: firstID).path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: recoveryURL(for: secondID).path
+            )
+        )
+        let relaunched = try RecoveryStore(
+            root: temporaryDirectory
+        )
+
+        XCTAssertTrue(
+            try relaunched.scanRecoverableProjects()
+                .projects.isEmpty
+        )
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(
+                at: temporaryDirectory,
+                includingPropertiesForKeys: nil
+            ).isEmpty
+        )
+    }
+
+    func testBatchDiscardFailureOnSecondMoveRollsBackEveryRecovery()
+        throws
+    {
+        let firstID = ProjectFixtures.documentID
+        let secondID = RecoveryFixtures.secondDocumentID
+        let moves = FailingRecoveryMoveFileSystem()
+        let store = try RecoveryStore(
+            root: temporaryDirectory,
+            fileSystem: moves.fileSystem
+        )
+        let first = RecoveryFixtures.project(
+            text: "first",
+            documentID: firstID
+        )
+        let second = RecoveryFixtures.project(
+            text: "second",
+            documentID: secondID
+        )
+        try store.write(first, documentId: firstID)
+        try store.write(second, documentId: secondID)
+
+        XCTAssertThrowsError(
+            try store.stageDiscard(
+                documentIds: [firstID, secondID]
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RecoveryStoreError,
+                .discardStageFailed(firstID)
+            )
+        }
+
+        let recovered = try store
+            .scanRecoverableProjects()
+            .projects
+        XCTAssertEqual(
+            Set(recovered.map(\.documentId)),
+            Set([firstID, secondID])
+        )
+        XCTAssertEqual(
+            recovered.first {
+                $0.documentId == firstID
+            }?.project,
+            first
+        )
+        XCTAssertEqual(
+            recovered.first {
+                $0.documentId == secondID
+            }?.project,
+            second
+        )
+        XCTAssertTrue(moves.didAttemptRollback)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(
+                at: temporaryDirectory,
+                includingPropertiesForKeys: nil
+            )
+            .map(\.lastPathComponent)
+            .sorted(),
+            [
+                "\(firstID.uuidString).myshottr",
+                "\(secondID.uuidString).myshottr",
+            ].sorted()
+        )
+    }
+
+    func testRelaunchRollsBackPendingDiscardTransaction()
+        throws
+    {
+        let documentID = ProjectFixtures.documentID
+        let initial = RecoveryFixtures.project(
+            text: "pending",
+            documentID: documentID
+        )
+        let store = try RecoveryStore(root: temporaryDirectory)
+        try store.write(initial, documentId: documentID)
+        let pending = discardTransactionURL(
+            state: "pending"
+        )
+        try FileManager.default.createDirectory(
+            at: pending,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.moveItem(
+            at: recoveryURL(for: documentID),
+            to: pending.appendingPathComponent(
+                "\(documentID.uuidString).myshottr",
+                isDirectory: true
+            )
+        )
+
+        let relaunched = try RecoveryStore(
+            root: temporaryDirectory
+        )
+
+        XCTAssertEqual(
+            try relaunched.scanRecoverableProjects()
+                .projects.map(\.project),
+            [initial]
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: pending.path)
+        )
+    }
+
+    func testRelaunchRejectsSymlinkDiscardTransaction()
+        throws
+    {
+        let external = temporaryDirectory
+            .deletingLastPathComponent()
+            .appendingPathComponent(
+                "external-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: external,
+            withIntermediateDirectories: false
+        )
+        defer {
+            try? FileManager.default.removeItem(at: external)
+        }
+        let pending = discardTransactionURL(
+            state: "pending"
+        )
+        try FileManager.default.createSymbolicLink(
+            at: pending,
+            withDestinationURL: external
+        )
+
+        XCTAssertThrowsError(
+            try RecoveryStore(root: temporaryDirectory)
+        ) {
+            XCTAssertEqual(
+                $0 as? RecoveryStoreError,
+                .invalidDiscardTransactionPath(
+                    pending.lastPathComponent
+                )
+            )
+        }
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: pending.path)
+        )
+    }
+
     func testRootIsNormalizedToOwnerOnlyPermissions() throws {
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o777],
@@ -413,4 +609,48 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
             isDirectory: true
         )
     }
+
+    private func discardTransactionURL(state: String) -> URL {
+        temporaryDirectory.appendingPathComponent(
+            ".discard-11111111-1111-4111-8111-111111111111.\(state)",
+            isDirectory: true
+        )
+    }
+}
+
+private final class FailingRecoveryMoveFileSystem:
+    @unchecked Sendable
+{
+    private var canonicalMoveCount = 0
+    private(set) var didAttemptRollback = false
+
+    var fileSystem: RecoveryStoreFileSystem {
+        let live = RecoveryStoreFileSystem.live
+        return RecoveryStoreFileSystem(
+            moveItem: { [self] source, destination in
+                if source.deletingLastPathComponent()
+                    .lastPathComponent
+                    .hasPrefix(".discard-") == false
+                {
+                    canonicalMoveCount += 1
+                    if canonicalMoveCount == 2 {
+                        throw RecoveryMoveTestError.expected
+                    }
+                }
+                if source.deletingLastPathComponent()
+                    .lastPathComponent
+                    .hasSuffix(".pending")
+                {
+                    didAttemptRollback = true
+                }
+                try live.moveItem(source, destination)
+            },
+            synchronizeDirectory:
+                live.synchronizeDirectory
+        )
+    }
+}
+
+private enum RecoveryMoveTestError: Error {
+    case expected
 }
