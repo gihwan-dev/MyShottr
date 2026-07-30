@@ -39,14 +39,17 @@ enum UserFacingErrorContext {
 
 enum MyShottrUserFacingError: Error {
     case capture(CaptureError)
+    case captureWorkflow(CaptureWorkflowError)
     case chromeNativeHost(ChromeNativeHostUserFacingError)
     case chromeRegistration(NativeMessagingRegistrarError)
     case inbox(PendingCaptureInboxError)
+    case chromeImport(ChromeCaptureImportError)
     case chromeImportUnavailable
     case editorBridge(EditorBridgeError)
     case editorProtocol(EditorBridgeEnvelopeError)
     case project(ProjectPackageError)
     case projectSave
+    case recoveryCleanupAfterSave
     case pngExport
     case clipboard(PNGClipboardWriterError)
     case compositeTransfer(CompositeTransferError)
@@ -68,11 +71,12 @@ enum MyShottrUserFacingError: Error {
             if let error = error as? CaptureError {
                 return .capture(error)
             }
-            return .capture(
-                .captureFailed(error.localizedDescription)
-            )
+            return .capture(.screenCaptureKitFailed)
 
         case .chromeImport:
+            if let error = error as? ChromeCaptureImportError {
+                return .chromeImport(error)
+            }
             if let error = error as? PendingCaptureInboxError {
                 return .inbox(error)
             }
@@ -83,9 +87,6 @@ enum MyShottrUserFacingError: Error {
                 case .imageTooLarge:
                     return .inbox(.imageTooLarge)
                 }
-            }
-            if error is CaptureInboxCoordinatorError {
-                return .chromeImportUnavailable
             }
             return .chromeImportUnavailable
 
@@ -108,6 +109,9 @@ enum MyShottrUserFacingError: Error {
             if let error = error as? CompositeTransferError {
                 return .compositeTransfer(error)
             }
+            if let error = error as? EditorBridgeEnvelopeError {
+                return .editorProtocol(error)
+            }
             if let error = error as? EditorBridgeError {
                 return .editorBridge(error)
             }
@@ -116,6 +120,9 @@ enum MyShottrUserFacingError: Error {
         case .clipboard:
             if let error = error as? CompositeTransferError {
                 return .compositeTransfer(error)
+            }
+            if let error = error as? EditorBridgeEnvelopeError {
+                return .editorProtocol(error)
             }
             if let error = error as? EditorBridgeError {
                 return .editorBridge(error)
@@ -167,12 +174,16 @@ enum MyShottrUserFacingError: Error {
         switch self {
         case .capture(let error):
             return Self.captureViewModel(error)
+        case .captureWorkflow(let error):
+            return Self.captureWorkflowViewModel(error)
         case .chromeNativeHost(let error):
             return Self.chromeHostViewModel(error)
         case .chromeRegistration(let error):
             return Self.chromeRegistrationViewModel(error)
         case .inbox(let error):
             return Self.inboxViewModel(error)
+        case .chromeImport(let error):
+            return Self.chromeImportViewModel(error)
         case .chromeImportUnavailable:
             return UserFacingErrorViewModel(
                 title: "Chrome Capture Could Not Be Opened",
@@ -194,6 +205,15 @@ enum MyShottrUserFacingError: Error {
                     "Your document is still open and marked as modified. "
                     + "The selected destination was not replaced.",
                 primaryAction: .dismiss
+            )
+        case .recoveryCleanupAfterSave:
+            return UserFacingErrorViewModel(
+                title: "Document Saved; Recovery Cleanup Failed",
+                message:
+                    "The document was saved to the selected destination, "
+                    + "but its local crash recovery entry could not be "
+                    + "removed.",
+                primaryAction: .retrySameOperation
             )
         case .pngExport:
             return UserFacingErrorViewModel(
@@ -229,11 +249,11 @@ enum MyShottrUserFacingError: Error {
             }
         case .recoveryStore(let error):
             return Self.recoveryStoreViewModel(error)
-        case .recoveryScanIssue(let issue):
+        case .recoveryScanIssue:
             return UserFacingErrorViewModel(
                 title: "Recovery Data Could Not Be Read",
                 message:
-                    "The recovery entry “\(issue.entryName)” is invalid. "
+                    "A local recovery entry is invalid. "
                     + "Other valid recovery entries remain available.",
                 primaryAction: .dismiss
             )
@@ -326,12 +346,12 @@ enum MyShottrUserFacingError: Error {
                     "Finish or cancel the current region selection first.",
                 primaryAction: .dismiss
             )
-        case .captureFailed(let detail):
+        case .screenCaptureKitFailed:
             return UserFacingErrorViewModel(
                 title: "Screen Capture Failed",
                 message:
                     "ScreenCaptureKit could not capture the selected area. "
-                    + detail,
+                    + "No document was created.",
                 primaryAction: .dismiss
             )
         case .pngEncodingFailed:
@@ -340,6 +360,45 @@ enum MyShottrUserFacingError: Error {
                 message:
                     "The captured pixels could not be encoded as PNG. "
                     + "No document was created.",
+                primaryAction: .dismiss
+            )
+        }
+    }
+
+    private static func captureWorkflowViewModel(
+        _ error: CaptureWorkflowError
+    ) -> UserFacingErrorViewModel {
+        switch error {
+        case .selectionFailed:
+            return UserFacingErrorViewModel(
+                title: "Capture Area Could Not Be Selected",
+                message:
+                    "The region selector stopped before an area was "
+                    + "confirmed. No screenshot was captured.",
+                primaryAction: .dismiss
+            )
+        case .projectCreationFailed:
+            return UserFacingErrorViewModel(
+                title: "Screenshot Document Could Not Be Created",
+                message:
+                    "The captured image could not be prepared as an editable "
+                    + "document. No editor window was opened.",
+                primaryAction: .dismiss
+            )
+        case .windowPresenterUnavailable:
+            return UserFacingErrorViewModel(
+                title: "Screenshot Could Not Be Opened",
+                message:
+                    "The document window presenter is no longer available. "
+                    + "The screenshot was not opened.",
+                primaryAction: .dismiss
+            )
+        case .windowPresentationFailed:
+            return UserFacingErrorViewModel(
+                title: "Screenshot Could Not Be Opened",
+                message:
+                    "The document window could not open the screenshot. "
+                    + "No editor document was installed.",
                 primaryAction: .dismiss
             )
         }
@@ -415,8 +474,8 @@ enum MyShottrUserFacingError: Error {
             detail = "The bundled native helper path is invalid."
         case .missingPublicKeyResource:
             detail = "The bundled Chrome extension identity is missing."
-        case .systemCallFailed(let name, _):
-            detail = "The local Chrome registration step “\(name)” failed."
+        case .systemCallFailed:
+            detail = "A local Chrome registration step failed."
         }
         return UserFacingErrorViewModel(
             title: "Chrome Setup Could Not Be Completed",
@@ -460,7 +519,7 @@ enum MyShottrUserFacingError: Error {
                 title: "Chrome Capture Image Is Invalid",
                 message:
                     "The inbox image is not a valid PNG. "
-                    + "No partial editor document was opened.",
+                    + "No editor document was opened.",
                 primaryAction: .dismiss
             )
         case .imageTooLarge:
@@ -471,12 +530,87 @@ enum MyShottrUserFacingError: Error {
                     + "No editor document was opened.",
                 primaryAction: .dismiss
             )
-        case .systemCallFailed(let name, _):
+        case .systemCallFailed:
             return UserFacingErrorViewModel(
                 title: "Chrome Capture Import Failed",
                 message:
-                    "The local inbox operation “\(name)” failed. "
+                    "A local inbox operation failed. "
                     + "Existing documents were not changed.",
+                primaryAction: .dismiss
+            )
+        }
+    }
+
+    private static func chromeImportViewModel(
+        _ error: ChromeCaptureImportError
+    ) -> UserFacingErrorViewModel {
+        switch error {
+        case .validation(let error):
+            return inboxViewModel(error)
+        case .validationFailed:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Could Not Be Validated",
+                message:
+                    "The local capture could not be validated and was not "
+                    + "imported. The inbox entry remains available.",
+                primaryAction: .dismiss
+            )
+        case .projectCreationFailed:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Could Not Be Prepared",
+                message:
+                    "The validated image could not be prepared as an editor "
+                    + "document and was not imported.",
+                primaryAction: .dismiss
+            )
+        case .windowPresenterUnavailable:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Could Not Be Opened",
+                message:
+                    "The document window presenter is unavailable, so the "
+                    + "capture was not imported. The inbox entry remains.",
+                primaryAction: .dismiss
+            )
+        case .windowPresentationFailed:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Could Not Be Opened",
+                message:
+                    "The editor window could not open, so the capture was "
+                    + "not imported. The inbox entry remains.",
+                primaryAction: .dismiss
+            )
+        case .durableCommitFailedAfterOpen:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Opened; Inbox Commit Failed",
+                message:
+                    "The editor document opened, but the inbox handoff was "
+                    + "not committed. The local capture remains for retry "
+                    + "without opening another window in this session.",
+                primaryAction: .dismiss
+            )
+        case .cleanupFailedAfterOpen:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Opened; Cleanup Failed",
+                message:
+                    "The editor document opened and the inbox handoff was "
+                    + "committed, but its local file remains for cleanup "
+                    + "retry without opening another window.",
+                primaryAction: .dismiss
+            )
+        case .cleanupFailedAfterPriorOpen:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Cleanup Failed",
+                message:
+                    "The editor document opened earlier, but its committed "
+                    + "local inbox file remains for cleanup retry.",
+                primaryAction: .dismiss
+            )
+        case .scanFailed:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Inbox Could Not Be Scanned",
+                message:
+                    "MyShottr could not enumerate one local inbox phase. "
+                    + "Existing inbox files remain unchanged.",
                 primaryAction: .dismiss
             )
         }
@@ -507,7 +641,7 @@ enum MyShottrUserFacingError: Error {
                 title: "Editor Document Is Invalid",
                 message:
                     "The editor could not accept the document. "
-                    + "No partial document was installed.",
+                    + "The current document was not replaced.",
                 primaryAction: .dismiss
             )
         case .cancelled:
@@ -626,7 +760,7 @@ enum MyShottrUserFacingError: Error {
             title: "Image Transfer Failed",
             message:
                 detail
-                + " Partial output was removed and the document is unchanged.",
+                + " Temporary output was removed and the document is unchanged.",
             primaryAction: .dismiss
         )
     }

@@ -331,7 +331,9 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         )
     }
 
-    func testRecoveryRemovalFailureKeepsDocumentModified() throws {
+    func testRecoveryRemovalFailureKeepsSavedStateAndMarksCleanupPending()
+        throws
+    {
         let recoveryStore = SpyRecoveryStore()
         let session = DocumentSession(
             recoveryStore: recoveryStore,
@@ -347,15 +349,56 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
             ProjectFixtures.documentID
         )
 
-        XCTAssertThrowsError(
-            try session.completeSave(session.projectForSave())
-        ) {
-            XCTAssertEqual(
-                $0 as? RecoveryStoreError,
-                .removeFailed(ProjectFixtures.documentID)
-            )
-        }
-        XCTAssertTrue(session.isModified)
+        let result = try session.completeSave(
+            session.projectForSave()
+        )
+
+        XCTAssertEqual(
+            result,
+            .savedRecoveryCleanupPending
+        )
+        XCTAssertFalse(session.isModified)
+        XCTAssertEqual(
+            session.pendingRecoveryCleanupDocumentID,
+            ProjectFixtures.documentID
+        )
+
+        session.close()
+
+        XCTAssertNil(
+            session.pendingRecoveryCleanupDocumentID
+        )
+    }
+
+    func testPendingRecoveryCleanupRetriesTheSameRemoval() throws {
+        let recoveryStore = SpyRecoveryStore()
+        let session = DocumentSession(
+            recoveryStore: recoveryStore,
+            recoveryClock: ManualRecoveryClock()
+        )
+        try session.open(
+            project: ProjectFixtures.project(text: "initial")
+        )
+        try session.applySnapshot(
+            ProjectFixtures.project(text: "saved").annotationJSON
+        )
+        recoveryStore.error = .removeFailed(
+            ProjectFixtures.documentID
+        )
+        XCTAssertEqual(
+            try session.completeSave(session.projectForSave()),
+            .savedRecoveryCleanupPending
+        )
+        recoveryStore.error = nil
+
+        try session.retryPendingRecoveryCleanup()
+
+        XCTAssertEqual(
+            recoveryStore.removedDocumentIDs,
+            [ProjectFixtures.documentID]
+        )
+        XCTAssertNil(session.pendingRecoveryCleanupDocumentID)
+        XCTAssertFalse(session.isModified)
     }
 
     func testExplicitDiscardRemovesRecoveryButClosePreservesIt()

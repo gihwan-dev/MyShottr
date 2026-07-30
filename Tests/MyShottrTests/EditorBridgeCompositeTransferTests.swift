@@ -152,7 +152,10 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
 
         XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
         XCTAssertFalse(session.isOpen)
-        XCTAssertEqual(bridge.lastError, .invalidMessage)
+        XCTAssertEqual(
+            bridge.lastProtocolError,
+            .malformedMessage
+        )
     }
 
     func testInvalidCorrelatedLoadDocumentFailsAndDiscardsStagedBytes() async throws {
@@ -316,7 +319,10 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
             payload: .object([:])
         ).encodedData())
 
-        await assertBridgeError(request, equals: .invalidMessage)
+        await assertProtocolError(
+            request,
+            equals: .malformedMessage
+        )
     }
 
     func testSnapshotReplyUsingAnActiveCompositeIDFailsTheCompositeImmediately() async throws {
@@ -337,7 +343,10 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         let envelope = try await nextRequest(from: &requests, expectedCount: 1)
         bridge.receive(data: try annotationSnapshot(requestID: envelope.requestId))
 
-        await assertBridgeError(request, equals: .invalidMessage)
+        await assertBridgeError(
+            request,
+            equals: .invalidMessage
+        )
     }
 
     func testCompositeReplyUsingAnActiveSnapshotIDFailsTheSnapshotImmediately() async throws {
@@ -361,7 +370,10 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
             base64: ProjectFixtures.pngData.base64EncodedString()
         ))
 
-        await assertBridgeError(request, equals: .invalidMessage)
+        await assertBridgeError(
+            request,
+            equals: .invalidMessage
+        )
     }
 
     func testCompositeReplyUsingAnActiveLoadIDFailsAndDiscardsTheLoadImmediately() async throws {
@@ -405,7 +417,10 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         let requestID = await nextSnapshotRequest(from: &snapshotRequests, expectedCount: 1)
         bridge.receive(data: try malformedBridgeError(requestID: requestID))
 
-        await assertBridgeError(request, equals: .invalidMessage)
+        await assertProtocolError(
+            request,
+            equals: .malformedMessage
+        )
     }
 
     func testMalformedBridgeErrorFailsAnActiveCompositeImmediately() async throws {
@@ -424,7 +439,10 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         let composite = try await nextRequest(from: &outgoing, expectedCount: 1)
         bridge.receive(data: try malformedBridgeError(requestID: composite.requestId))
 
-        await assertBridgeError(request, equals: .invalidMessage)
+        await assertProtocolError(
+            request,
+            equals: .malformedMessage
+        )
     }
 
     func testMalformedBridgeErrorFailsAnActiveLoadAndUnknownIDIsIgnored() async throws {
@@ -437,13 +455,20 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
 
         bridge.receive(data: try malformedBridgeError(requestID: UUID()))
         XCTAssertNil(bridge.lastError)
+        XCTAssertEqual(
+            bridge.lastProtocolError,
+            .malformedMessage
+        )
 
         try bridge.load(project: project)
         let load = try XCTUnwrap(outgoing.last)
         bridge.receive(data: try malformedBridgeError(requestID: load.requestId))
 
         XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
-        XCTAssertEqual(bridge.lastError, .invalidMessage)
+        XCTAssertEqual(
+            bridge.lastProtocolError,
+            .malformedMessage
+        )
     }
 
     func testCallerCancellationResumesSnapshotRequestExactlyOnce() async throws {
@@ -704,6 +729,22 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         let result = await task.result
         guard case let .failure(error) = result else { return XCTFail("Expected bridge request to fail") }
         XCTAssertEqual(error as? EditorBridgeError, expected)
+    }
+
+    private func assertProtocolError<Value>(
+        _ task: Task<Value, Error>,
+        equals expected: EditorBridgeEnvelopeError
+    ) async {
+        let result = await task.result
+        guard case let .failure(error) = result else {
+            return XCTFail(
+                "Expected bridge request to fail"
+            )
+        }
+        XCTAssertEqual(
+            error as? EditorBridgeEnvelopeError,
+            expected
+        )
     }
 
     private func assertInvalidMessage(_ task: Task<CompositeTransfer, Error>) async {

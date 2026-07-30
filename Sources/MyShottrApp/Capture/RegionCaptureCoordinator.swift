@@ -39,23 +39,47 @@ final class RegionCaptureCoordinator {
             captureIsActive = false
         }
 
+        let outcome: RegionSelectionOutcome
         do {
-            let outcome = try await selector.selectRegion()
-            guard case let .confirmed(selection) = outcome else {
-                return nil
-            }
+            outcome = try await selector.selectRegion()
+        } catch let error as CaptureError {
+            return .capture(error)
+        } catch {
+            return .captureWorkflow(.selectionFailed)
+        }
+        guard case let .confirmed(selection) = outcome else {
+            return nil
+        }
 
-            let artifact = try await capturer.capture(
+        let artifact: CaptureArtifact
+        do {
+            artifact = try await capturer.capture(
                 selection: selection
             )
-            let project = try projectFactory.make(
+        } catch let error as CaptureError {
+            return .capture(error)
+        } catch {
+            return .capture(.screenCaptureKitFailed)
+        }
+
+        let project: MyShottrProject
+        do {
+            project = try projectFactory.make(
                 artifact: artifact,
                 now: now()
             )
-            try windows?.present(project: project)
-            return nil
         } catch {
-            return .wrapping(error, context: .capture)
+            return .captureWorkflow(.projectCreationFailed)
         }
+
+        guard let windows else {
+            return .captureWorkflow(.windowPresenterUnavailable)
+        }
+        do {
+            try windows.present(project: project)
+        } catch {
+            return .captureWorkflow(.windowPresentationFailed)
+        }
+        return nil
     }
 }

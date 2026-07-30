@@ -28,8 +28,16 @@ struct CaptureReadyNotificationAPI {
     )
 }
 
-enum CaptureInboxCoordinatorError: Error {
+enum ChromeCaptureImportError: Error, Equatable {
+    case validation(PendingCaptureInboxError)
+    case validationFailed
+    case projectCreationFailed
     case windowPresenterUnavailable
+    case windowPresentationFailed
+    case durableCommitFailedAfterOpen
+    case cleanupFailedAfterOpen
+    case cleanupFailedAfterPriorOpen
+    case scanFailed
 }
 
 @MainActor
@@ -56,7 +64,10 @@ final class CaptureInboxCoordinator: NSObject {
         notificationAPI: CaptureReadyNotificationAPI = .live,
         reportError:
             @escaping (MyShottrUserFacingError) -> Void = {
-                UserFacingErrorPresenter().present($0, from: nil)
+                UserFacingErrorPresenter.shared.present(
+                    $0,
+                    from: nil
+                )
         }
     ) {
         self.inbox = inbox
@@ -77,13 +88,7 @@ final class CaptureInboxCoordinator: NSObject {
             )
             isObserving = true
         }
-        do {
-            try consumePendingCaptures()
-        } catch {
-            reportError(
-                .wrapping(error, context: .chromeImport)
-            )
-        }
+        consumePendingCaptures()
     }
 
     func stop() {
@@ -94,41 +99,37 @@ final class CaptureInboxCoordinator: NSObject {
         isObserving = false
     }
 
-    func consumePendingCaptures() throws {
-        var firstError: (any Error)?
-
+    func consumePendingCaptures() {
         do {
             for presented in try inbox.cleanupOnlyCaptures() {
                 do {
                     _ = try inbox.cleanupPresented(presented)
                 } catch {
-                    if firstError == nil {
-                        firstError = error
-                    }
+                    reportError(
+                        .chromeImport(
+                            .cleanupFailedAfterPriorOpen
+                        )
+                    )
                 }
             }
         } catch {
-            firstError = error
+            reportError(.chromeImport(.scanFailed))
         }
 
         do {
             for staged in try inbox.pendingCaptures() {
                 do {
                     try consume(id: staged.id)
+                } catch let error as ChromeCaptureImportError {
+                    reportError(.chromeImport(error))
                 } catch {
-                    if firstError == nil {
-                        firstError = error
-                    }
+                    reportError(
+                        .chromeImport(.validationFailed)
+                    )
                 }
             }
         } catch {
-            if firstError == nil {
-                firstError = error
-            }
-        }
-
-        if let firstError {
-            throw firstError
+            reportError(.chromeImport(.scanFailed))
         }
     }
 
@@ -139,20 +140,48 @@ final class CaptureInboxCoordinator: NSObject {
         }
 
         guard let windows else {
-            throw CaptureInboxCoordinatorError.windowPresenterUnavailable
+            throw ChromeCaptureImportError
+                .windowPresenterUnavailable
         }
-        let claim = try inbox.claim(id: id)
-        let artifact = try CaptureArtifact(
-            id: id,
-            sourceKind: .chromeVisibleViewport,
-            pngData: claim.pngData,
-            scale: nil
-        )
-        let project = try projectFactory.make(
-            artifact: artifact,
-            now: now()
-        )
-        try windows.present(project: project)
+        let claim: PendingCaptureClaim
+        do {
+            claim = try inbox.claim(id: id)
+        } catch let error as PendingCaptureInboxError {
+            throw ChromeCaptureImportError.validation(error)
+        } catch {
+            throw ChromeCaptureImportError.validationFailed
+        }
+        let artifact: CaptureArtifact
+        do {
+            artifact = try CaptureArtifact(
+                id: id,
+                sourceKind: .chromeVisibleViewport,
+                pngData: claim.pngData,
+                scale: nil
+            )
+        } catch SafePNGValidationError.invalidPNG {
+            throw ChromeCaptureImportError.validation(.invalidPNG)
+        } catch SafePNGValidationError.imageTooLarge {
+            throw ChromeCaptureImportError.validation(.imageTooLarge)
+        } catch {
+            throw ChromeCaptureImportError.validationFailed
+        }
+        let project: MyShottrProject
+        do {
+            project = try projectFactory.make(
+                artifact: artifact,
+                now: now()
+            )
+        } catch {
+            throw ChromeCaptureImportError
+                .projectCreationFailed
+        }
+        do {
+            try windows.present(project: project)
+        } catch {
+            throw ChromeCaptureImportError
+                .windowPresentationFailed
+        }
         presentedStates[id] = .awaitingCommit(claim)
         try finishPresentedCapture(id: id)
     }
@@ -165,13 +194,23 @@ final class CaptureInboxCoordinator: NSObject {
         let presented: PresentedCapture
         switch state {
         case .awaitingCommit(let claim):
-            presented = try inbox.commitPresentation(claim)
+            do {
+                presented = try inbox.commitPresentation(claim)
+            } catch {
+                throw ChromeCaptureImportError
+                    .durableCommitFailedAfterOpen
+            }
             presentedStates[id] = .awaitingCleanup(presented)
         case .awaitingCleanup(let capture):
             presented = capture
         }
 
-        _ = try inbox.cleanupPresented(presented)
+        do {
+            _ = try inbox.cleanupPresented(presented)
+        } catch {
+            throw ChromeCaptureImportError
+                .cleanupFailedAfterOpen
+        }
         presentedStates.removeValue(forKey: id)
     }
 
@@ -188,12 +227,14 @@ final class CaptureInboxCoordinator: NSObject {
 
         do {
             try consume(id: id)
-        } catch PendingCaptureInboxError.captureNotFound {
+        } catch ChromeCaptureImportError.validation(
+            .captureNotFound
+        ) {
             return
+        } catch let error as ChromeCaptureImportError {
+            reportError(.chromeImport(error))
         } catch {
-            reportError(
-                .wrapping(error, context: .chromeImport)
-            )
+            reportError(.chromeImport(.validationFailed))
         }
     }
 

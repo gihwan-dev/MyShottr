@@ -125,7 +125,7 @@ final class AppDelegate:
             },
         launchErrorReporter:
             @escaping LaunchErrorReporter = {
-                UserFacingErrorPresenter().present(
+                UserFacingErrorPresenter.shared.present(
                     $0,
                     from: nil
                 )

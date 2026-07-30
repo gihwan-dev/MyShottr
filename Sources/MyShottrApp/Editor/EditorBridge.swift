@@ -29,7 +29,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private let javaScriptEvaluationObserver: ((UUID, @escaping (Error?) -> Void) -> Void)?
     private let outgoingMessageObserver: ((NativeToEditorEnvelope) -> Void)?
     private(set) var lastError: EditorBridgeError?
+    private(set) var lastProtocolError: EditorBridgeEnvelopeError?
     var onUncorrelatedError: ((EditorBridgeError) -> Void)?
+    var onProtocolError: ((EditorBridgeEnvelopeError) -> Void)?
 
     init(
         session: DocumentSession,
@@ -167,7 +169,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
               JSONSerialization.isValidJSONObject(message.body),
               let data = try? JSONSerialization.data(withJSONObject: message.body)
         else {
-            reportUncorrelatedError(.invalidMessage)
+            reportProtocolError(.malformedMessage)
             return
         }
         receive(data: data)
@@ -178,11 +180,17 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         do {
             message = try EditorToNativeEnvelope.decode(from: data)
         } catch {
-            if let requestID = validatedRequestID(from: data) {
-                failPendingRequest(requestID, error: EditorBridgeError.invalidMessage)
+            let protocolError =
+                (error as? EditorBridgeEnvelopeError)
+                ?? .malformedMessage
+            if let requestID = requestID(from: data) {
+                failPendingProtocolRequest(
+                    requestID,
+                    error: protocolError
+                )
                 return
             }
-            reportUncorrelatedError(.invalidMessage)
+            reportProtocolError(protocolError)
             return
         }
         if retiredRequestIDs.contains(message.requestId) { return }
@@ -451,6 +459,14 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private func failPendingRequest(_ requestID: UUID, error: Error) {
         if retiredRequestIDs.contains(requestID) { return }
         if requestID == pendingLoadRequestID {
+            if let protocolError =
+                error as? EditorBridgeEnvelopeError {
+                failLoadProtocolRequest(
+                    requestID,
+                    error: protocolError
+                )
+                return
+            }
             failLoadRequest(
                 requestID,
                 error: (error as? EditorBridgeError) ?? .invalidDocument
@@ -463,6 +479,34 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 error: error,
                 recordInvalidMessage: (error as? EditorBridgeError) == .invalidMessage
             )
+        }
+    }
+
+    private func failPendingProtocolRequest(
+        _ requestID: UUID,
+        error: EditorBridgeEnvelopeError
+    ) {
+        if retiredRequestIDs.contains(requestID) {
+            return
+        }
+        if requestID == pendingLoadRequestID {
+            failLoadProtocolRequest(
+                requestID,
+                error: error
+            )
+        } else if snapshotContinuations[requestID] != nil {
+            failSnapshotRequest(
+                requestID,
+                error: error
+            )
+        } else if compositeContinuations[requestID] != nil {
+            failCompositeRequest(
+                requestID,
+                error: error,
+                recordInvalidMessage: false
+            )
+        } else {
+            reportProtocolError(error)
         }
     }
 
@@ -484,6 +528,17 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         guard requestID == pendingLoadRequestID else { return }
         discardPendingLoad()
         reportUncorrelatedError(error)
+    }
+
+    private func failLoadProtocolRequest(
+        _ requestID: UUID,
+        error: EditorBridgeEnvelopeError
+    ) {
+        guard requestID == pendingLoadRequestID else {
+            return
+        }
+        discardPendingLoad()
+        reportProtocolError(error)
     }
 
     private func failCompositeRequest(
@@ -567,10 +622,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         requestDeadlineTasks.removeValue(forKey: requestID)?.cancel()
     }
 
-    private func validatedRequestID(from data: Data) -> UUID? {
+    private func requestID(from data: Data) -> UUID? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys) == ["protocolVersion", "requestId", "type", "payload"],
-              object["protocolVersion"] as? Int == EditorBridgeEnvelope<EditorToNativeMessageType, BridgeJSONValue>.protocolVersion,
               let requestIDString = object["requestId"] as? String,
               let requestID = UUID(uuidString: requestIDString)
         else {
@@ -584,5 +638,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     ) {
         lastError = error
         onUncorrelatedError?(error)
+    }
+
+    private func reportProtocolError(
+        _ error: EditorBridgeEnvelopeError
+    ) {
+        lastProtocolError = error
+        onProtocolError?(error)
     }
 }

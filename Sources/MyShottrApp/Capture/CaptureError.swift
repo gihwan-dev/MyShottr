@@ -6,6 +6,13 @@ enum CaptureError: Error, Equatable {
     case displayUnavailable(CGDirectDisplayID)
     case emptySelection
     case captureAlreadyInProgress
-    case captureFailed(String)
+    case screenCaptureKitFailed
     case pngEncodingFailed
+}
+
+enum CaptureWorkflowError: Error, Equatable {
+    case selectionFailed
+    case projectCreationFailed
+    case windowPresenterUnavailable
+    case windowPresentationFailed
 }

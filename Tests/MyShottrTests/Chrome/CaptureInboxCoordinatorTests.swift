@@ -72,7 +72,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
             windows: windows
         )
 
-        try coordinator.consumePendingCaptures()
+        coordinator.consumePendingCaptures()
 
         XCTAssertEqual(inbox.claimedIDs, [first.id, second.id])
         XCTAssertEqual(inbox.committedIDs, [first.id, second.id])
@@ -126,6 +126,141 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         )
     }
 
+    func testLaunchScanReportsEveryInvalidItemAndStillImportsValidItem() {
+        let firstInvalid = StagedCapture(
+            id: ChromeFixtures.captureID,
+            pngURL: URL(fileURLWithPath: "/inbox/invalid-1.png")
+        )
+        let secondInvalid = StagedCapture(
+            id: ChromeFixtures.stateID,
+            pngURL: URL(fileURLWithPath: "/inbox/invalid-2.png")
+        )
+        let valid = StagedCapture(
+            id: ChromeFixtures.secondCaptureID,
+            pngURL: URL(fileURLWithPath: "/inbox/valid.png")
+        )
+        let inbox = StubPendingCaptureInbox(
+            pending: [firstInvalid, secondInvalid, valid],
+            dataByID: [
+                firstInvalid.id: ProjectFixtures.pngData,
+                secondInvalid.id: ProjectFixtures.pngData,
+                valid.id: ProjectFixtures.pngData,
+            ]
+        )
+        inbox.claimErrorByID[firstInvalid.id] =
+            PendingCaptureInboxError.invalidPNG
+        inbox.claimErrorByID[secondInvalid.id] =
+            PendingCaptureInboxError.imageTooLarge
+        let windows = SpyDocumentWindowPresenter()
+        var reported: [MyShottrUserFacingError] = []
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: StubNewProjectFactory(),
+            windows: windows,
+            reportError: { reported.append($0) }
+        )
+
+        coordinator.start()
+        coordinator.stop()
+
+        XCTAssertEqual(
+            reported.map(\.viewModel.title),
+            [
+                "Chrome Capture Image Is Invalid",
+                "Chrome Capture Is Too Large",
+            ]
+        )
+        XCTAssertEqual(
+            windows.presentedProjects.map(\.manifest.documentId),
+            [valid.id]
+        )
+    }
+
+    func testWindowFailureReportsNotImportedPhase() {
+        let inbox = StubPendingCaptureInbox(
+            pending: [
+                StagedCapture(
+                    id: ChromeFixtures.captureID,
+                    pngURL: URL(
+                        fileURLWithPath: "/inbox/capture.png"
+                    )
+                ),
+            ]
+        )
+        let windows = SpyDocumentWindowPresenter()
+        windows.presentationError =
+            CapturePipelineTestError.presentation
+        var reported: [MyShottrUserFacingError] = []
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: StubNewProjectFactory(),
+            windows: windows,
+            reportError: { reported.append($0) }
+        )
+
+        coordinator.start()
+        coordinator.stop()
+
+        XCTAssertEqual(reported.count, 1)
+        guard let error = reported.first else {
+            return XCTFail("Expected one presentation failure")
+        }
+        XCTAssertEqual(
+            error.viewModel.title,
+            "Chrome Capture Could Not Be Opened"
+        )
+        XCTAssertTrue(
+            error.viewModel.message.contains("was not imported")
+        )
+        XCTAssertTrue(windows.presentedProjects.isEmpty)
+    }
+
+    func testCommitFailureReportsOpenedDocumentAndRetainedRetryState() {
+        let inbox = StubPendingCaptureInbox(
+            pending: [
+                StagedCapture(
+                    id: ChromeFixtures.captureID,
+                    pngURL: URL(
+                        fileURLWithPath: "/inbox/capture.png"
+                    )
+                ),
+            ]
+        )
+        inbox.commitError = ChromeFixtureError.commit
+        let windows = SpyDocumentWindowPresenter()
+        var reported: [MyShottrUserFacingError] = []
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: StubNewProjectFactory(),
+            windows: windows,
+            reportError: { reported.append($0) }
+        )
+
+        coordinator.start()
+        coordinator.stop()
+
+        XCTAssertEqual(windows.presentedProjects.count, 1)
+        XCTAssertEqual(reported.count, 1)
+        guard let error = reported.first else {
+            return XCTFail("Expected one durable commit failure")
+        }
+        XCTAssertEqual(
+            error.viewModel.title,
+            "Chrome Capture Opened; Inbox Commit Failed"
+        )
+        XCTAssertTrue(
+            error.viewModel.message.contains(
+                "document opened"
+            )
+        )
+        XCTAssertTrue(
+            error.viewModel.message.contains("retry")
+        )
+        XCTAssertFalse(
+            error.viewModel.message.contains("not imported")
+        )
+    }
+
     func testProjectFactoryFailureLeavesClaimUncommitted() {
         let inbox = StubPendingCaptureInbox()
         let windows = SpyDocumentWindowPresenter()
@@ -141,8 +276,8 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
             try coordinator.consume(id: ChromeFixtures.captureID)
         ) {
             XCTAssertEqual(
-                $0 as? CapturePipelineTestError,
-                .projectCreation
+                $0 as? ChromeCaptureImportError,
+                .projectCreationFailed
             )
         }
         XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
@@ -166,8 +301,8 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
             try coordinator.consume(id: ChromeFixtures.captureID)
         ) {
             XCTAssertEqual(
-                $0 as? CapturePipelineTestError,
-                .presentation
+                $0 as? ChromeCaptureImportError,
+                .windowPresentationFailed
             )
         }
         XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
@@ -192,8 +327,8 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
             try coordinator.consume(id: ChromeFixtures.captureID)
         ) {
             XCTAssertEqual(
-                $0 as? ChromeFixtureError,
-                .commit
+                $0 as? ChromeCaptureImportError,
+                .durableCommitFailedAfterOpen
             )
         }
         inbox.commitError = nil
@@ -226,8 +361,8 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
             try coordinator.consume(id: ChromeFixtures.captureID)
         ) {
             XCTAssertEqual(
-                $0 as? ChromeFixtureError,
-                .cleanup
+                $0 as? ChromeCaptureImportError,
+                .cleanupFailedAfterOpen
             )
         }
         inbox.cleanupError = nil
@@ -266,7 +401,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
             windows: windows
         )
 
-        try coordinator.consumePendingCaptures()
+        coordinator.consumePendingCaptures()
 
         XCTAssertEqual(inbox.cleanedIDs, [ChromeFixtures.captureID])
         XCTAssertTrue(inbox.claimedIDs.isEmpty)

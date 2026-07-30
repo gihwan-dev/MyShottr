@@ -195,16 +195,93 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
     }
 
     @MainActor
-    func testMalformedUncorrelatedMessageReportsExactlyOnce() {
+    func testProtocolFailuresReachProductionHandlerWithoutCollapsing() {
         let bridge = EditorBridge(session: DocumentSession())
-        var reportedErrors: [EditorBridgeError] = []
-        bridge.onUncorrelatedError = {
+        var reportedErrors: [EditorBridgeEnvelopeError] = []
+        bridge.onProtocolError = {
             reportedErrors.append($0)
         }
 
         bridge.receive(data: Data("{}".utf8))
+        bridge.receive(
+            data: Data("""
+            {
+              "protocolVersion": 9,
+              "requestId": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+              "type": "editorReady",
+              "payload": {}
+            }
+            """.utf8)
+        )
+        let oversized =
+            "{\"protocolVersion\":1,"
+            + "\"requestId\":\"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\","
+            + "\"type\":\"editorReady\",\"payload\":{\"contents\":\""
+            + String(
+                repeating: "a",
+                count: EditorToNativeEnvelope.maxPayloadBytes + 1
+            )
+            + "\"}}"
+        bridge.receive(data: Data(oversized.utf8))
 
-        XCTAssertEqual(reportedErrors, [.invalidMessage])
+        XCTAssertEqual(
+            reportedErrors,
+            [
+                .malformedMessage,
+                .unsupportedProtocolVersion(9),
+                .payloadTooLarge,
+            ]
+        )
+    }
+
+    @MainActor
+    func testCorrelatedMalformedSnapshotThrowsProtocolErrorOnce()
+        async throws
+    {
+        var requestID: UUID?
+        let bridge = EditorBridge(
+            session: DocumentSession(),
+            annotationSnapshotRequestObserver: {
+                requestID = $0
+            }
+        )
+        var reportedErrors: [EditorBridgeEnvelopeError] = []
+        bridge.onProtocolError = {
+            reportedErrors.append($0)
+        }
+        bridge.receive(
+            data: try EditorToNativeEnvelope(
+                type: .editorReady,
+                payload: .object([:])
+            ).encodedData()
+        )
+
+        let request = Task {
+            try await bridge.requestAnnotationSnapshot()
+        }
+        await Task.yield()
+        let id = try XCTUnwrap(requestID)
+        bridge.receive(
+            data: Data("""
+            {
+              "protocolVersion": 1,
+              "requestId": "\(id.uuidString)",
+              "type": "annotationSnapshot",
+              "payload": {}
+            }
+            """.utf8)
+        )
+
+        do {
+            _ = try await request.value
+            XCTFail("Malformed correlated reply must fail the request")
+        } catch {
+            XCTAssertEqual(
+                error as? EditorBridgeEnvelopeError,
+                .malformedMessage
+            )
+        }
+        XCTAssertTrue(reportedErrors.isEmpty)
     }
 
     @MainActor

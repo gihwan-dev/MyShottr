@@ -45,7 +45,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         recoveryStore: (any RecoveryStoring)? = nil,
         isRecoveredDocument: Bool = false,
         errorPresenter: any UserFacingErrorPresenting =
-            UserFacingErrorPresenter()
+            UserFacingErrorPresenter.shared
     ) throws {
         let resolvedRecoveryStore: any RecoveryStoring
         if let recoveryStore {
@@ -109,6 +109,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         editorWebView.onBridgeFailure = {
             [weak self] error in
             self?.present(.editorBridge(error))
+        }
+        editorWebView.onProtocolFailure = {
+            [weak self] error in
+            self?.present(.editorProtocol(error))
         }
         if isRecoveredDocument {
             session.prepareForRecoveryRestore()
@@ -309,12 +313,16 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             }
             try projectStore.save(project, to: url)
             projectURL = url
-            try session.completeSave(
+            let completion = try session.completeSave(
                 project,
                 expectedModificationRevision:
                     modificationRevision
             )
             window?.title = url.deletingPathExtension().lastPathComponent
+            if completion
+                == .savedRecoveryCleanupPending {
+                presentRecoveryCleanupWarning()
+            }
             return true
         } catch {
             present(
@@ -349,8 +357,41 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
     @discardableResult
     func present(_ error: MyShottrUserFacingError) -> Bool {
-        errorPresenter.present(error, from: window)
+        present(
+            error,
+            retrySameOperation: nil
+        )
+    }
+
+    @discardableResult
+    func present(
+        _ error: MyShottrUserFacingError,
+        retrySameOperation: (() -> Void)?
+    ) -> Bool {
+        errorPresenter.present(
+            error,
+            from: window,
+            retrySameOperation: retrySameOperation
+        )
         return true
+    }
+
+    private func presentRecoveryCleanupWarning() {
+        present(
+            .recoveryCleanupAfterSave,
+            retrySameOperation: {
+                [weak self] in
+                self?.retryRecoveryCleanup()
+            }
+        )
+    }
+
+    private func retryRecoveryCleanup() {
+        do {
+            try session.retryPendingRecoveryCleanup()
+        } catch {
+            presentRecoveryCleanupWarning()
+        }
     }
 }
 

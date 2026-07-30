@@ -49,7 +49,7 @@ struct ScreenCaptureClient: ScreenCapturing, @unchecked Sendable {
         } catch let error as CaptureError {
             throw error
         } catch {
-            throw CaptureError.captureFailed(error.localizedDescription)
+            throw CaptureError.screenCaptureKitFailed
         }
 
         let pngData = try Self.encodePNG(image)

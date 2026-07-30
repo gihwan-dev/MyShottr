@@ -55,6 +55,35 @@ final class DocumentWindowControllerCommandTests: XCTestCase {
         )
         XCTAssertEqual(presenter.windowWasProvided, [true])
     }
+
+    func testRecoveryCleanupWarningForwardsItsSameRetryClosure()
+        throws
+    {
+        let presenter = SpyUserFacingErrorPresenter()
+        let controller = try DocumentWindowController(
+            project: ProjectFixtures.project(
+                text: "Saved cleanup warning"
+            ),
+            projectURL: nil,
+            errorPresenter: presenter
+        )
+        var retryCount = 0
+
+        controller.present(
+            .recoveryCleanupAfterSave,
+            retrySameOperation: {
+                retryCount += 1
+            }
+        )
+
+        XCTAssertEqual(
+            presenter.presentedViewModels.map(\.primaryAction),
+            [.retrySameOperation]
+        )
+        XCTAssertEqual(presenter.retryActions.count, 1)
+        presenter.retryActions[0]?()
+        XCTAssertEqual(retryCount, 1)
+    }
 }
 
 @MainActor
@@ -64,12 +93,17 @@ private final class SpyUserFacingErrorPresenter:
     private(set) var presentedViewModels:
         [UserFacingErrorViewModel] = []
     private(set) var windowWasProvided: [Bool] = []
+    private(set) var retryActions: [
+        (() -> Void)?
+    ] = []
 
     func present(
         _ error: MyShottrUserFacingError,
-        from window: NSWindow?
+        from window: NSWindow?,
+        retrySameOperation: (() -> Void)?
     ) {
         presentedViewModels.append(error.viewModel)
         windowWasProvided.append(window != nil)
+        retryActions.append(retrySameOperation)
     }
 }

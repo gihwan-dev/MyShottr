@@ -218,7 +218,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             ]
         )
 
-        try coordinator.consumePendingCaptures()
+        coordinator.consumePendingCaptures()
 
         XCTAssertEqual(windows.presentedProjects.count, 1)
         XCTAssertTrue(try relaunchedInbox.pendingCaptures().isEmpty)
@@ -279,11 +279,8 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             try coordinator.consume(id: ChromeFixtures.captureID)
         ) {
             XCTAssertEqual(
-                $0 as? PendingCaptureInboxError,
-                .systemCallFailed(
-                    name: "commit presented capture",
-                    code: EIO
-                )
+                $0 as? ChromeCaptureImportError,
+                .durableCommitFailedAfterOpen
             )
         }
         XCTAssertEqual(windows.presentedProjects.count, 1)
@@ -318,11 +315,8 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             try firstCoordinator.consume(id: ChromeFixtures.captureID)
         ) {
             XCTAssertEqual(
-                $0 as? PendingCaptureInboxError,
-                .systemCallFailed(
-                    name: "fsync inbox after presented transition",
-                    code: EIO
-                )
+                $0 as? ChromeCaptureImportError,
+                .durableCommitFailedAfterOpen
             )
         }
         XCTAssertEqual(firstWindows.presentedProjects.count, 1)
@@ -339,7 +333,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: relaunchedWindows
         )
 
-        try relaunchedCoordinator.consumePendingCaptures()
+        relaunchedCoordinator.consumePendingCaptures()
 
         XCTAssertTrue(relaunchedWindows.presentedProjects.isEmpty)
         XCTAssertTrue(try relaunchedInbox.cleanupOnlyCaptures().isEmpty)
@@ -381,7 +375,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        try coordinator.consumePendingCaptures()
+        coordinator.consumePendingCaptures()
 
         XCTAssertTrue(windows.presentedProjects.isEmpty)
         XCTAssertTrue(try relaunchedInbox.pendingCaptures().isEmpty)
@@ -413,11 +407,8 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             try coordinator.consume(id: ChromeFixtures.captureID)
         ) {
             XCTAssertEqual(
-                $0 as? PendingCaptureInboxError,
-                .systemCallFailed(
-                    name: "remove quarantined capture",
-                    code: EIO
-                )
+                $0 as? ChromeCaptureImportError,
+                .cleanupFailedAfterOpen
             )
         }
         XCTAssertEqual(windows.presentedProjects.count, 1)
@@ -433,7 +424,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: relaunchedWindows
         )
 
-        try relaunchedCoordinator.consumePendingCaptures()
+        relaunchedCoordinator.consumePendingCaptures()
 
         XCTAssertTrue(relaunchedWindows.presentedProjects.isEmpty)
         XCTAssertTrue(try relaunchedInbox.cleanupOnlyCaptures().isEmpty)
@@ -468,11 +459,8 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             try coordinator.consume(id: ChromeFixtures.captureID)
         ) {
             XCTAssertEqual(
-                $0 as? PendingCaptureInboxError,
-                .systemCallFailed(
-                    name: "quarantine capture",
-                    code: EIO
-                )
+                $0 as? ChromeCaptureImportError,
+                .cleanupFailedAfterOpen
             )
         }
         XCTAssertEqual(windows.presentedProjects.count, 1)
@@ -514,11 +502,8 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             try coordinator.consume(id: ChromeFixtures.captureID)
         ) {
             XCTAssertEqual(
-                $0 as? PendingCaptureInboxError,
-                .systemCallFailed(
-                    name: "fsync inbox after quarantine transition",
-                    code: EIO
-                )
+                $0 as? ChromeCaptureImportError,
+                .cleanupFailedAfterOpen
             )
         }
         XCTAssertEqual(windows.presentedProjects.count, 1)
@@ -568,7 +553,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: relaunchedWindows
         )
 
-        try relaunchedCoordinator.consumePendingCaptures()
+        relaunchedCoordinator.consumePendingCaptures()
 
         XCTAssertTrue(relaunchedWindows.presentedProjects.isEmpty)
     }
@@ -626,7 +611,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        try coordinator.consumePendingCaptures()
+        coordinator.consumePendingCaptures()
 
         XCTAssertTrue(windows.presentedProjects.isEmpty)
         XCTAssertFalse(
@@ -687,7 +672,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        try coordinator.consumePendingCaptures()
+        coordinator.consumePendingCaptures()
 
         XCTAssertTrue(windows.presentedProjects.isEmpty)
         XCTAssertTrue(try relaunchedInbox.cleanupOnlyCaptures().isEmpty)

@@ -7,6 +7,12 @@ enum DocumentSessionError: Error, Equatable {
     case recoverySnapshotUnavailable
 }
 
+enum DocumentSaveCompletion: Equatable {
+    case saved
+    case savedWithNewerChanges
+    case savedRecoveryCleanupPending
+}
+
 @MainActor
 protocol RecoveryScheduledOperation: AnyObject {
     func cancel()
@@ -71,6 +77,7 @@ final class DocumentSession {
         any RecoveryScheduledOperation
     )?
     private var restoreStagedProjectAsModified = false
+    private(set) var pendingRecoveryCleanupDocumentID: UUID?
     private(set) var modificationRevision: UInt64 = 0
     private(set) var isModified = false {
         didSet { onModifiedStateChange?(isModified) }
@@ -99,6 +106,7 @@ final class DocumentSession {
         self.project = project
         stagedProject = nil
         restoreStagedProjectAsModified = false
+        pendingRecoveryCleanupDocumentID = nil
         modificationRevision = 0
         isModified = false
     }
@@ -123,6 +131,7 @@ final class DocumentSession {
             modificationRevision &+= 1
         }
         restoreStagedProjectAsModified = false
+        pendingRecoveryCleanupDocumentID = nil
     }
 
     func discardStaged() {
@@ -136,6 +145,7 @@ final class DocumentSession {
         project = nil
         stagedProject = nil
         restoreStagedProjectAsModified = false
+        pendingRecoveryCleanupDocumentID = nil
         modificationRevision = 0
         isModified = false
     }
@@ -175,25 +185,46 @@ final class DocumentSession {
         return project
     }
 
+    @discardableResult
     func completeSave(
         _ savedProject: MyShottrProject,
         expectedModificationRevision: UInt64? = nil
-    ) throws {
+    ) throws -> DocumentSaveCompletion {
         try validate(annotationJSON: savedProject.annotationJSON, for: savedProject.manifest)
         if let expectedModificationRevision,
            modificationRevision
             != expectedModificationRevision
         {
             isModified = true
-            return
+            return .savedWithNewerChanges
         }
         project = savedProject
         recoveryTask?.cancel()
         recoveryTask = nil
-        try recoveryStore?.remove(
-            documentId: savedProject.manifest.documentId
-        )
         isModified = false
+        do {
+            try recoveryStore?.remove(
+                documentId: savedProject.manifest.documentId
+            )
+            pendingRecoveryCleanupDocumentID = nil
+            return .saved
+        } catch {
+            pendingRecoveryCleanupDocumentID =
+                savedProject.manifest.documentId
+            return .savedRecoveryCleanupPending
+        }
+    }
+
+    @discardableResult
+    func retryPendingRecoveryCleanup() throws -> Bool {
+        guard let documentID =
+                pendingRecoveryCleanupDocumentID
+        else {
+            return false
+        }
+        try recoveryStore?.remove(documentId: documentID)
+        pendingRecoveryCleanupDocumentID = nil
+        return true
     }
 
     func discardRecovery() throws {

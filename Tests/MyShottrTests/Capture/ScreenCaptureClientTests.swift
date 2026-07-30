@@ -37,7 +37,7 @@ final class ScreenCaptureClientTests: XCTestCase {
             permission: permission,
             captureImage: { _, _ in
                 XCTFail("The capture adapter must not run without permission")
-                throw CaptureError.captureFailed("unexpected capture")
+                throw CaptureError.screenCaptureKitFailed
             }
         )
 
@@ -71,7 +71,7 @@ final class ScreenCaptureClientTests: XCTestCase {
         } catch {
             XCTAssertEqual(
                 error as? CaptureError,
-                .captureFailed("capture unavailable")
+                .screenCaptureKitFailed
             )
         }
     }

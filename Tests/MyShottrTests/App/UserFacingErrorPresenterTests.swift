@@ -24,7 +24,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
                 .dismiss
             ),
             (
-                .captureFailed("ScreenCaptureKit stopped"),
+                .screenCaptureKitFailed,
                 "Screen Capture Failed",
                 .dismiss
             ),
@@ -40,6 +40,36 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             XCTAssertEqual(viewModel.title, title)
             XCTAssertEqual(viewModel.primaryAction, action)
             XCTAssertFalse(viewModel.message.isEmpty)
+        }
+    }
+
+    func testCaptureWorkflowFailuresKeepTheirBoundedPhase() {
+        let cases: [(CaptureWorkflowError, String)] = [
+            (
+                .selectionFailed,
+                "Capture Area Could Not Be Selected"
+            ),
+            (
+                .projectCreationFailed,
+                "Screenshot Document Could Not Be Created"
+            ),
+            (
+                .windowPresenterUnavailable,
+                "Screenshot Could Not Be Opened"
+            ),
+            (
+                .windowPresentationFailed,
+                "Screenshot Could Not Be Opened"
+            ),
+        ]
+
+        for (error, expectedTitle) in cases {
+            let viewModel = MyShottrUserFacingError
+                .captureWorkflow(error)
+                .viewModel
+            XCTAssertEqual(viewModel.title, expectedTitle)
+            XCTAssertEqual(viewModel.primaryAction, .dismiss)
+            XCTAssertFalse(viewModel.message.contains("raw-secret"))
         }
     }
 
@@ -116,6 +146,87 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             XCTAssertEqual(viewModel.title, title)
             XCTAssertEqual(viewModel.primaryAction, .dismiss)
             XCTAssertFalse(viewModel.message.isEmpty)
+            XCTAssertFalse(
+                viewModel.message
+                    .localizedCaseInsensitiveContains("partial")
+            )
+        }
+    }
+
+    func testChromeImportPhasesNeverMisstateOpenedDocuments() {
+        let cases: [
+            (
+                ChromeCaptureImportError,
+                String,
+                Bool
+            )
+        ] = [
+            (
+                .validation(.invalidPNG),
+                "Chrome Capture Image Is Invalid",
+                false
+            ),
+            (
+                .validationFailed,
+                "Chrome Capture Could Not Be Validated",
+                false
+            ),
+            (
+                .projectCreationFailed,
+                "Chrome Capture Could Not Be Prepared",
+                false
+            ),
+            (
+                .windowPresenterUnavailable,
+                "Chrome Capture Could Not Be Opened",
+                false
+            ),
+            (
+                .windowPresentationFailed,
+                "Chrome Capture Could Not Be Opened",
+                false
+            ),
+            (
+                .durableCommitFailedAfterOpen,
+                "Chrome Capture Opened; Inbox Commit Failed",
+                true
+            ),
+            (
+                .cleanupFailedAfterOpen,
+                "Chrome Capture Opened; Cleanup Failed",
+                true
+            ),
+            (
+                .cleanupFailedAfterPriorOpen,
+                "Chrome Capture Cleanup Failed",
+                true
+            ),
+            (
+                .scanFailed,
+                "Chrome Capture Inbox Could Not Be Scanned",
+                false
+            ),
+        ]
+
+        for (error, title, documentOpened) in cases {
+            let viewModel = MyShottrUserFacingError
+                .chromeImport(error)
+                .viewModel
+            XCTAssertEqual(viewModel.title, title)
+            XCTAssertEqual(viewModel.primaryAction, .dismiss)
+            XCTAssertEqual(
+                viewModel.message.contains("document opened"),
+                documentOpened
+            )
+            XCTAssertFalse(
+                viewModel.message
+                    .localizedCaseInsensitiveContains("partial")
+            )
+            if documentOpened {
+                XCTAssertFalse(
+                    viewModel.message.contains("not imported")
+                )
+            }
         }
     }
 
@@ -134,6 +245,10 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             XCTAssertEqual(viewModel.title, title)
             XCTAssertEqual(viewModel.primaryAction, .dismiss)
             XCTAssertFalse(viewModel.message.isEmpty)
+            XCTAssertFalse(
+                viewModel.message
+                    .localizedCaseInsensitiveContains("partial")
+            )
         }
 
         let protocolCases: [(EditorBridgeEnvelopeError, String)] = [
@@ -151,6 +266,10 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             XCTAssertEqual(viewModel.title, title)
             XCTAssertEqual(viewModel.primaryAction, .dismiss)
             XCTAssertFalse(viewModel.message.isEmpty)
+            XCTAssertFalse(
+                viewModel.message
+                    .localizedCaseInsensitiveContains("partial")
+            )
         }
     }
 
@@ -212,6 +331,23 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             MyShottrUserFacingError.projectSave.viewModel.primaryAction,
             .dismiss
         )
+        let cleanupWarning = MyShottrUserFacingError
+            .recoveryCleanupAfterSave
+            .viewModel
+        XCTAssertEqual(
+            cleanupWarning.title,
+            "Document Saved; Recovery Cleanup Failed"
+        )
+        XCTAssertEqual(
+            cleanupWarning.primaryAction,
+            .retrySameOperation
+        )
+        XCTAssertTrue(
+            cleanupWarning.message.contains("was saved")
+        )
+        XCTAssertFalse(
+            cleanupWarning.message.contains("not replaced")
+        )
         XCTAssertEqual(
             MyShottrUserFacingError.pngExport.viewModel.title,
             "PNG Could Not Be Exported"
@@ -235,6 +371,10 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             XCTAssertEqual(viewModel.title, "Image Transfer Failed")
             XCTAssertEqual(viewModel.primaryAction, .dismiss)
             XCTAssertFalse(viewModel.message.isEmpty)
+            XCTAssertFalse(
+                viewModel.message
+                    .localizedCaseInsensitiveContains("partial")
+            )
         }
     }
 
@@ -261,6 +401,29 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             )
             XCTAssertFalse(viewModel.message.isEmpty)
         }
+
+        let rawRegistration = MyShottrUserFacingError
+            .chromeRegistration(
+                .systemCallFailed(
+                    name: "raw-secret",
+                    code: 5
+                )
+            )
+            .viewModel
+        XCTAssertFalse(
+            rawRegistration.message.contains("raw-secret")
+        )
+        let rawInbox = MyShottrUserFacingError
+            .inbox(
+                .systemCallFailed(
+                    name: "raw-secret",
+                    code: 5
+                )
+            )
+            .viewModel
+        XCTAssertFalse(
+            rawInbox.message.contains("raw-secret")
+        )
     }
 
     func testRecoveryErrorsHaveExhaustiveMappings() {
@@ -339,7 +502,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         }
 
         let issue = RecoveryScanIssue(
-            entryName: "corrupt.myshottr",
+            entryName: "raw-secret.myshottr",
             error: .invalidPackagePath("corrupt.myshottr")
         )
         let issueViewModel = MyShottrUserFacingError
@@ -349,7 +512,9 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             issueViewModel.title,
             "Recovery Data Could Not Be Read"
         )
-        XCTAssertTrue(issueViewModel.message.contains("corrupt.myshottr"))
+        XCTAssertFalse(
+            issueViewModel.message.contains("raw-secret")
+        )
 
         let documentCases: [DocumentSessionError] = [
             .invalidDocument,
@@ -423,7 +588,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         XCTAssertEqual(
             MyShottrUserFacingError
                 .wrapping(
-                    CaptureInboxCoordinatorError
+                    ChromeCaptureImportError
                         .windowPresenterUnavailable,
                     context: .chromeImport
                 )
@@ -519,6 +684,191 @@ final class UserFacingErrorPresenterTests: XCTestCase {
 
         XCTAssertEqual(openedChromeHelp, 1)
     }
+
+    func testSameWindowPresentsErrorsInFIFOOrder() {
+        let recorder = AlertPresentationRecorder()
+        let presenter = UserFacingErrorPresenter(
+            presentation: recorder.api,
+            actions: .noOp
+        )
+        let window = NSWindow()
+
+        presenter.present(.pngExport, from: window)
+        presenter.present(.projectSave, from: window)
+        presenter.present(.clipboard(.writeFailed), from: window)
+
+        XCTAssertEqual(
+            recorder.sheetAlerts.map(\.messageText),
+            ["PNG Could Not Be Exported"]
+        )
+
+        recorder.completeSheet(
+            with: .alertFirstButtonReturn
+        )
+        XCTAssertEqual(
+            recorder.sheetAlerts.map(\.messageText),
+            [
+                "PNG Could Not Be Exported",
+                "Project Could Not Be Saved",
+            ]
+        )
+
+        recorder.completeSheet(
+            with: .alertFirstButtonReturn
+        )
+        XCTAssertEqual(
+            recorder.sheetAlerts.map(\.messageText),
+            [
+                "PNG Could Not Be Exported",
+                "Project Could Not Be Saved",
+                "Image Could Not Be Copied",
+            ]
+        )
+    }
+
+    func testDifferentWindowsHaveIndependentSheetQueues() {
+        let recorder = AlertPresentationRecorder()
+        let presenter = UserFacingErrorPresenter(
+            presentation: recorder.api,
+            actions: .noOp
+        )
+
+        presenter.present(.pngExport, from: NSWindow())
+        presenter.present(.projectSave, from: NSWindow())
+
+        XCTAssertEqual(recorder.sheetAlerts.count, 2)
+        XCTAssertEqual(
+            recorder.sheetAlerts.map(\.messageText),
+            [
+                "PNG Could Not Be Exported",
+                "Project Could Not Be Saved",
+            ]
+        )
+    }
+
+    func testModalPresentationDoesNotReenterRunModal() {
+        let recorder = AlertPresentationRecorder()
+        let presenter = UserFacingErrorPresenter(
+            presentation: recorder.api,
+            actions: .noOp
+        )
+        recorder.onRunModal = { alert in
+            guard alert.messageText
+                    == "PNG Could Not Be Exported"
+            else {
+                return
+            }
+            presenter.present(.projectSave, from: nil)
+        }
+
+        presenter.present(.pngExport, from: nil)
+
+        XCTAssertEqual(recorder.maximumModalDepth, 1)
+        XCTAssertEqual(
+            recorder.modalAlerts.map(\.messageText),
+            [
+                "PNG Could Not Be Exported",
+                "Project Could Not Be Saved",
+            ]
+        )
+    }
+
+    func testQueuedSheetUsesModalWhenItsWindowCloses() {
+        let recorder = AlertPresentationRecorder()
+        var activationCount = 0
+        let presenter = UserFacingErrorPresenter(
+            presentation: recorder.api,
+            actions: .init(
+                openScreenRecordingSettings: {},
+                openChromeSetupInstructions: {},
+                activateApplication: {
+                    activationCount += 1
+                }
+            )
+        )
+        let window = NSWindow()
+        presenter.present(.pngExport, from: window)
+        presenter.present(.projectSave, from: window)
+
+        NotificationCenter.default.post(
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+        recorder.completeSheet(
+            with: .alertFirstButtonReturn
+        )
+        presenter.present(
+            .clipboard(.writeFailed),
+            from: window
+        )
+
+        XCTAssertEqual(recorder.sheetAlerts.count, 1)
+        XCTAssertEqual(
+            recorder.modalAlerts.map(\.messageText),
+            [
+                "Project Could Not Be Saved",
+                "Image Could Not Be Copied",
+            ]
+        )
+        XCTAssertEqual(activationCount, 2)
+    }
+
+    func testAlreadyClosedWindowUsesModalWithoutCreatingWindow() {
+        let recorder = AlertPresentationRecorder()
+        let presenter = UserFacingErrorPresenter(
+            presentation: recorder.api,
+            actions: .noOp
+        )
+        let window = NSWindow()
+        NotificationCenter.default.post(
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+
+        presenter.present(.pngExport, from: window)
+
+        XCTAssertTrue(recorder.sheetAlerts.isEmpty)
+        XCTAssertEqual(
+            recorder.modalAlerts.map(\.messageText),
+            ["PNG Could Not Be Exported"]
+        )
+    }
+
+    func testQueuedRetryClosureReleasesAfterItsAction() {
+        let recorder = AlertPresentationRecorder()
+        let presenter = UserFacingErrorPresenter(
+            presentation: recorder.api,
+            actions: .noOp
+        )
+        let window = NSWindow()
+        var owner: RetryClosureOwner? =
+            RetryClosureOwner()
+        let ownerReference = WeakReference(owner)
+        var retryCount = 0
+
+        presenter.present(.pngExport, from: window)
+        presenter.present(
+            .recoveryCleanupAfterSave,
+            from: window,
+            retrySameOperation: { [owner] in
+                _ = owner
+                retryCount += 1
+            }
+        )
+        owner = nil
+        XCTAssertNotNil(ownerReference.value)
+
+        recorder.completeSheet(
+            with: .alertFirstButtonReturn
+        )
+        XCTAssertNotNil(ownerReference.value)
+        recorder.completeSheet(
+            with: .alertFirstButtonReturn
+        )
+
+        XCTAssertEqual(retryCount, 1)
+        XCTAssertNil(ownerReference.value)
+    }
 }
 
 @MainActor
@@ -528,25 +878,60 @@ private final class AlertPresentationRecorder {
     var modalAlerts: [NSAlert] = []
     var modalResponse: NSApplication.ModalResponse =
         .alertFirstButtonReturn
-    private var sheetCompletion:
-        ((NSApplication.ModalResponse) -> Void)?
+    var onRunModal: ((NSAlert) -> Void)?
+    private(set) var maximumModalDepth = 0
+    private var modalDepth = 0
+    private var sheetCompletions: [
+        (NSApplication.ModalResponse) -> Void
+    ] = []
 
     var api: UserFacingAlertPresentation {
         UserFacingAlertPresentation(
             beginSheet: { [weak self] alert, window, completion in
                 self?.sheetAlerts.append(alert)
                 self?.sheetWindows.append(window)
-                self?.sheetCompletion = completion
+                self?.sheetCompletions.append(completion)
             },
             runModal: { [weak self] alert in
-                self?.modalAlerts.append(alert)
-                return self?.modalResponse ?? .abort
+                guard let self else {
+                    return .abort
+                }
+                modalDepth += 1
+                maximumModalDepth = max(
+                    maximumModalDepth,
+                    modalDepth
+                )
+                modalAlerts.append(alert)
+                onRunModal?(alert)
+                modalDepth -= 1
+                return modalResponse
             }
         )
     }
 
     func completeSheet(with response: NSApplication.ModalResponse) {
-        sheetCompletion?(response)
-        sheetCompletion = nil
+        guard !sheetCompletions.isEmpty else {
+            return
+        }
+        sheetCompletions.removeFirst()(response)
+    }
+}
+
+@MainActor
+private extension UserFacingErrorActions {
+    static let noOp = UserFacingErrorActions(
+        openScreenRecordingSettings: {},
+        openChromeSetupInstructions: {},
+        activateApplication: {}
+    )
+}
+
+private final class RetryClosureOwner {}
+
+private final class WeakReference<Value: AnyObject> {
+    weak var value: Value?
+
+    init(_ value: Value?) {
+        self.value = value
     }
 }

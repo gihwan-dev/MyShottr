@@ -112,7 +112,7 @@ final class RegionCaptureCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(
             error?.viewModel.title,
-            "Screen Capture Failed"
+            "Capture Area Could Not Be Selected"
         )
         XCTAssertTrue(capturedSelections.isEmpty)
         XCTAssertTrue(windows.presentedProjects.isEmpty)
@@ -161,9 +161,32 @@ final class RegionCaptureCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(
             error?.viewModel.title,
-            "Screen Capture Failed"
+            "Screenshot Document Could Not Be Created"
         )
         XCTAssertTrue(windows.presentedProjects.isEmpty)
+    }
+
+    func testMissingWindowPresenterReturnsTypedDeliveryFailure()
+        async throws
+    {
+        let coordinator = RegionCaptureCoordinator(
+            selector: FakeRegionSelector(
+                result: .confirmed(CaptureFixtures.selection)
+            ),
+            capturer: FakeScreenCapturer(result: try artifact()),
+            projectFactory: StubNewProjectFactory(),
+            windows: SpyDocumentWindowPresenter()
+        )
+
+        let error = await coordinator.captureArea()
+
+        guard case
+            .captureWorkflow(.windowPresenterUnavailable)? = error
+        else {
+            return XCTFail(
+                "Expected typed window-presenter-unavailable failure"
+            )
+        }
     }
 
     func testWindowPresentationFailureIsReturned() async throws {
@@ -182,7 +205,7 @@ final class RegionCaptureCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(
             error?.viewModel.title,
-            "Screen Capture Failed"
+            "Screenshot Could Not Be Opened"
         )
         XCTAssertTrue(windows.presentedProjects.isEmpty)
     }
