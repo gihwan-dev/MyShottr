@@ -206,3 +206,16 @@ private extension NSToolbarItem.Identifier {
     static let saveProject = NSToolbarItem.Identifier("com.myshottr.saveProject")
     static let exportComposite = NSToolbarItem.Identifier("com.myshottr.exportComposite")
 }
+
+@MainActor
+protocol EditorWindowControlling: AnyObject {
+    var onClose: (() -> Void)? { get set }
+    func presentWindow()
+}
+
+extension DocumentWindowController: EditorWindowControlling {
+    func presentWindow() {
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+    }
+}

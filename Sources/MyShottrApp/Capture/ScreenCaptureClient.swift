@@ -4,7 +4,11 @@ import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
-struct ScreenCaptureClient {
+protocol ScreenCapturing: Sendable {
+    func capture(selection: RegionSelection) async throws -> CaptureArtifact
+}
+
+struct ScreenCaptureClient: ScreenCapturing, @unchecked Sendable {
     typealias CaptureImage = (
         _ displayID: CGDirectDisplayID,
         _ configuration: SCStreamConfiguration
