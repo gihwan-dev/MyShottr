@@ -189,15 +189,18 @@ The extension service worker sends this message to the registered helper:
 ```json
 {
   "protocolVersion": 1,
-  "type": "captureVisibleViewport",
+  "type": "capture",
+  "captureMode": "visibleViewport",
   "mimeType": "image/png",
   "dataBase64": "<base64 PNG>"
 }
 ```
 
-The helper accepts only protocol version `1`, the expected message type, and
-`image/png`. The decoded image limit is 45 MiB so that base64 expansion, JSON
-framing, and the message prefix remain below Chrome's 64 MiB
+The helper accepts exactly these five fields, protocol version `1`, message type
+`capture`, capture mode `visibleViewport`, and MIME type `image/png`.
+`fullPage` is an explicit unsupported mode and is rejected before image
+decoding or staging. The decoded image limit is 45 MiB so that base64 expansion,
+JSON framing, and the message prefix remain below Chrome's 64 MiB
 Chrome-to-native-host limit.
 
 The helper:
