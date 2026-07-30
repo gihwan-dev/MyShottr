@@ -62,6 +62,26 @@ assert.match(
   /!\[MyShottr Quick Ink editor\]\(docs\/images\/editor-quick-ink\.png\)/,
 );
 
+const featuresBody = readme.match(
+  /^## Features\n(?<body>[\s\S]*?)(?=^## )/m,
+)?.groups?.body;
+assert.ok(featuresBody, "README Features section is missing");
+const featureBullets = [...featuresBody.matchAll(
+  /^- (?<item>[^\n]*(?:\n  [^\n]*)*)/gm,
+)].map((match) => match.groups.item.replace(/\s+/g, " "));
+const telemetryFeatureBullets = featureBullets
+  .filter((item) => /\btelemetry\b/i.test(item));
+assert.equal(
+  telemetryFeatureBullets.length,
+  1,
+  "README Features must have one consolidated privacy bullet",
+);
+assert.match(telemetryFeatureBullets[0], /local-only/i);
+assert.match(telemetryFeatureBullets[0], /no account/i);
+assert.match(telemetryFeatureBullets[0], /upload/i);
+assert.match(telemetryFeatureBullets[0], /analytics/i);
+assert.match(telemetryFeatureBullets[0], /background[\s-]+network transfer/i);
+
 for (const text of [
   "macOS 15",
   "Command-Shift-2",
@@ -78,7 +98,6 @@ for (const text of [
   "viewport",
   "full-page",
   "Desktop mockup",
-  "No telemetry",
   "activeTab",
   "nativeMessaging",
   "presentation layer",

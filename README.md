@@ -18,8 +18,8 @@ the current verification boundary.
 - Move, resize, rotate, duplicate, reorder, multi-select, undo, and redo
 - Copy Image, source-resolution PNG export, and editable `.myshottr` projects
 - Crash recovery for unsaved documents
-- No account, upload, analytics, or telemetry
-- No telemetry or background capture-data network transfer
+- Local-only capture processing with no account, upload, analytics, telemetry,
+  or background network transfer
 
 ## 한국어 빠른 설치
 
