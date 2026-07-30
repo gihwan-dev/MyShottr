@@ -28,6 +28,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             defer: false
         )
         super.init(window: window)
+        self.nextResponder = window.nextResponder
+        window.nextResponder = self
         window.title = projectURL?.deletingPathExtension().lastPathComponent ?? "Untitled MyShottr Project"
         window.contentView = editorWebView.webView
         window.delegate = self
@@ -92,18 +94,18 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         switch itemIdentifier {
         case .copyComposite:
-            item.label = "Copy"
-            item.toolTip = "Copy annotated PNG"
+            item.label = "Copy Image"
+            item.toolTip = "Copy the annotated PNG (Command-Shift-C)"
             item.target = self
             item.action = #selector(copyComposite(_:))
         case .saveProject:
-            item.label = "Save"
-            item.toolTip = "Save MyShottr project"
+            item.label = "Save Project"
+            item.toolTip = "Save an editable MyShottr project (Command-S)"
             item.target = self
             item.action = #selector(saveProjectAction(_:))
         case .exportComposite:
-            item.label = "Export"
-            item.toolTip = "Export annotated PNG"
+            item.label = "Export PNG"
+            item.toolTip = "Export the annotated PNG (Command-E)"
             item.target = self
             item.action = #selector(exportComposite(_:))
         default:
@@ -112,7 +114,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         return item
     }
 
-    @objc private func copyComposite(_ sender: Any?) {
+    @objc func copyComposite(_ sender: Any?) -> Bool {
+        guard window?.isKeyWindow == true else { return false }
         Task { @MainActor in
             do {
                 let transfer = try await editorWebView.requestComposite()
@@ -122,14 +125,17 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                 present(error)
             }
         }
+        return true
     }
 
-    @objc private func saveProjectAction(_ sender: Any?) {
+    @objc func saveProjectAction(_ sender: Any?) -> Bool {
+        guard window?.isKeyWindow == true else { return false }
         Task { @MainActor in _ = await saveProject() }
+        return true
     }
 
-    @objc private func exportComposite(_ sender: Any?) {
-        guard let destinationURL = choosePNGExportURL() else { return }
+    @objc func exportComposite(_ sender: Any?) -> Bool {
+        guard window?.isKeyWindow == true, let destinationURL = choosePNGExportURL() else { return false }
         Task { @MainActor in
             do {
                 let transfer = try await editorWebView.requestComposite(destinationDirectory: destinationURL.deletingLastPathComponent())
@@ -139,6 +145,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                 present(error)
             }
         }
+        return true
     }
 
     private func saveProject() async -> Bool {

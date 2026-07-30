@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorCanvas } from "./canvas/EditorCanvas";
-import { moveElementsWithinBounds, SelectionController } from "./canvas/SelectionController";
-import { createElementId } from "./canvas/tools/createElement";
+import { SelectionController } from "./canvas/SelectionController";
+import { createDuplicateElements } from "./canvas/tools/createElement";
 import { keyboardCommandFor, isTextEntryTarget } from "./canvas/tools/ToolController";
 import { ContextStylePalette } from "./components/ContextStylePalette";
 import { FloatingToolPalette } from "./components/FloatingToolPalette";
@@ -12,7 +12,7 @@ import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
 import { sendComposite } from "./export/sendComposite";
 import { createHistoryStore, type HistoryStore } from "./model/history";
 import { findElement } from "./model/reducer";
-import type { EditorCommand, EditorDefaults, EditorDocument, EditorTool, PaletteColor, Point, TextElement } from "./model/elements";
+import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, PaletteColor, Point, TextElement } from "./model/elements";
 import { KONVA_DEFAULT_FONT_FAMILY } from "./canvas/renderingConstants";
 import "./styles.css";
 
@@ -29,6 +29,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   if (!history.current) history.current = createHistoryStore(initialDocument);
   const defaults = useRef(initialDocument.defaults);
   const selection = useRef(new SelectionController());
+  const copiedElements = useRef<EditorElement[]>([]);
   const [document, setDocument] = useState(() => ({ ...history.current!.document, defaults: defaults.current }));
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<EditorTool>(initialTool);
@@ -67,32 +68,22 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   const duplicateSelection = useCallback(() => {
     if (selectedIds.length === 0) return;
     const current = history.current!.document;
-    const nextSeed = Math.max(0, ...current.elements.map((element) => element.seed)) + 1;
-    const nextZIndex = Math.max(-1, ...current.elements.map((element) => element.zIndex)) + 1;
-    const existingIds = new Set(current.elements.map((element) => element.id));
-    const duplicateIds = selectedIds.map(() => createElementId());
-    if (
-      new Set(duplicateIds).size !== duplicateIds.length
-      || duplicateIds.some((id) => existingIds.has(id))
-    ) {
-      throw new Error("Duplicate element ids must be unique");
-    }
     const sources = selectedIds.map((id) => findElement(current, id));
-    const offsets = moveElementsWithinBounds(
-      sources,
-      { x: 12, y: 12 },
-      { sourceWidth: current.sourcePixelWidth, sourceHeight: current.sourcePixelHeight },
-    );
-    const elements = offsets.map((offset, index) => {
-      return {
-        ...offset,
-        id: duplicateIds[index],
-        seed: nextSeed + index,
-        zIndex: nextZIndex + index,
-      };
-    });
-    dispatch({ type: "createMany", elements });
+    dispatch({ type: "createMany", elements: createDuplicateElements(current, sources) });
   }, [dispatch, selectedIds]);
+  const copySelection = useCallback(() => {
+    if (selectedIds.length === 0) return;
+    const current = history.current!.document;
+    copiedElements.current = selectedIds.map((id) => structuredClone(findElement(current, id)));
+  }, [selectedIds]);
+  const pasteSelection = useCallback(() => {
+    if (copiedElements.current.length === 0) return;
+    const elements = createDuplicateElements(history.current!.document, copiedElements.current);
+    dispatch({ type: "createMany", elements });
+    selection.current.clear();
+    elements.forEach((element) => selection.current.toggle(element.id));
+    setSelectedIds([...selection.current.selectedIds]);
+  }, [dispatch]);
   const reorderSelection = useCallback((direction: "forward" | "backward") => {
     if (selectedIds.length === 0) return;
     dispatch({ type: "reorder", ids: selectedIds, direction });
@@ -142,6 +133,14 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         duplicateSelection();
         return;
       }
+      if (command === "copy") {
+        copySelection();
+        return;
+      }
+      if (command === "paste") {
+        pasteSelection();
+        return;
+      }
       if (command === "bringForward" || command === "sendBackward") {
         reorderSelection(command === "bringForward" ? "forward" : "backward");
         return;
@@ -157,7 +156,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dispatch, duplicateSelection, publishDocument, reorderSelection, select, selectTool, selectedIds]);
+  }, [copySelection, dispatch, duplicateSelection, pasteSelection, publishDocument, reorderSelection, select, selectTool, selectedIds]);
 
   return (
     <main className="editor-app" aria-label="MyShottr editor">

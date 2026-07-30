@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App, EditorApp } from "./App";
 import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
+import { keyboardCommandFor } from "./canvas/tools/ToolController";
 import type { EditorCommand, EditorDocument, PaletteColor } from "./model/elements";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "./test/fixtures";
 
@@ -194,6 +195,32 @@ describe("EditorApp", () => {
     ]);
     fireEvent.keyDown(window, { key: "z", metaKey: true });
     expect(changes.at(-1)?.elements).toHaveLength(2);
+  });
+
+  it("copies and pastes a selected annotation without replacing its identity", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.keyDown(window, { key: "c", metaKey: true });
+    fireEvent.keyDown(window, { key: "v", metaKey: true });
+
+    const elements = changes.at(-1)?.elements ?? [];
+    expect(elements).toHaveLength(2);
+    expect(elements[1]).toMatchObject({ x: 12, y: 12 });
+    expect(elements[1]?.id).not.toBe(elements[0]?.id);
+  });
+
+  it("does not turn command-v into the selection tool", () => {
+    expect(keyboardCommandFor(
+      new KeyboardEvent("keydown", { key: "v", metaKey: true }),
+    )).toBe("paste");
   });
 
   it("uses one bounded duplicate offset for the whole selection", () => {

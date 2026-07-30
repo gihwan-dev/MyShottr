@@ -1,10 +1,12 @@
 import type {
   CreationGesture,
   EditorDefaults,
+  EditorDocument,
   EditorElement,
   EditorTool,
   Point,
 } from "../../model/elements";
+import { moveElementsWithinBounds } from "../SelectionController";
 
 export type CreationContext = {
   defaults: EditorDefaults;
@@ -15,6 +17,34 @@ export type CreationContext = {
 
 export function createElementId(): string {
   return crypto.randomUUID();
+}
+
+export function createDuplicateElements(
+  document: Pick<EditorDocument, "elements" | "sourcePixelWidth" | "sourcePixelHeight">,
+  sources: EditorElement[],
+): EditorElement[] {
+  if (sources.length === 0) return [];
+  const nextSeed = Math.max(0, ...document.elements.map((element) => element.seed)) + 1;
+  const nextZIndex = Math.max(-1, ...document.elements.map((element) => element.zIndex)) + 1;
+  const existingIds = new Set(document.elements.map((element) => element.id));
+  const duplicateIds = sources.map(() => createElementId());
+  if (
+    new Set(duplicateIds).size !== duplicateIds.length
+    || duplicateIds.some((id) => existingIds.has(id))
+  ) {
+    throw new Error("Duplicate element ids must be unique");
+  }
+  const offsets = moveElementsWithinBounds(
+    sources,
+    { x: 12, y: 12 },
+    { sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight },
+  );
+  return offsets.map((offset, index) => ({
+    ...offset,
+    id: duplicateIds[index],
+    seed: nextSeed + index,
+    zIndex: nextZIndex + index,
+  }));
 }
 
 export function createElement(

@@ -13,6 +13,8 @@ export const shortcuts = {
   numberMarker: "n",
   delete: ["Backspace", "Delete"],
   duplicate: "Meta+d",
+  copy: "Meta+c",
+  paste: "Meta+v",
   bringForward: "Meta+]",
   sendBackward: "Meta+[",
   undo: "Meta+z",
@@ -23,6 +25,8 @@ export type KeyboardCommand =
   | EditorTool
   | "delete"
   | "duplicate"
+  | "copy"
+  | "paste"
   | "bringForward"
   | "sendBackward"
   | "undo"
@@ -30,6 +34,8 @@ export type KeyboardCommand =
 
 export function keyboardCommandFor(event: KeyboardEvent): KeyboardCommand | undefined {
   if (event.metaKey) {
+    if (event.key.toLowerCase() === "c") return "copy";
+    if (event.key.toLowerCase() === "v") return "paste";
     if (event.key === "]") return "bringForward";
     if (event.key === "[") return "sendBackward";
     if (event.key.toLowerCase() === "d") return "duplicate";
