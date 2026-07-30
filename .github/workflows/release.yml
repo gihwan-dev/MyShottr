@@ -67,6 +67,82 @@ jobs:
         env:
           VERSION: ${{ steps.release-contract.outputs.version }}
         run: Scripts/verify-release-artifacts.sh "${VERSION}" "dist/release/${VERSION}"
+      - name: Verify release notes checksums
+        shell: zsh
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.release-contract.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "${TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "${VERSION}" == "${TAG#v}" ]]
+          node --input-type=module - \
+            "dist/release/${VERSION}/SHA256SUMS.txt" \
+            "docs/releases/${TAG}.md" \
+            "MyShottr-${VERSION}-macos.zip" \
+            "MyShottr-Chrome-${VERSION}.zip" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const [checksumPath, notesPath, appName, extensionName] = process.argv.slice(2);
+          const expectedNames = [appName, extensionName];
+          const checksumLinePattern = /^([0-9a-f]{64})  ([A-Za-z0-9.-]+)$/;
+
+          function fail(message) {
+            process.stderr.write("release-checksums: " + message + "\n");
+            process.exit(1);
+          }
+
+          function parseExactEntries(content, label) {
+            const normalized = content.endsWith("\n") ? content.slice(0, -1) : content;
+            const lines = normalized.split("\n");
+            if (lines.length !== expectedNames.length) {
+              fail(label + " must contain exactly two checksum entries");
+            }
+            return lines.map((line, index) => {
+              const match = line.match(checksumLinePattern);
+              if (!match || match[2] !== expectedNames[index]) {
+                fail(label + " contains an unexpected checksum entry");
+              }
+              return line;
+            });
+          }
+
+          if (
+            !checksumPath ||
+            !notesPath ||
+            expectedNames.length !== 2 ||
+            expectedNames.some((name) => !name)
+          ) {
+            fail("expected checksum path, release notes path, and two artifact names");
+          }
+
+          const checksumLines = parseExactEntries(
+            readFileSync(checksumPath, "utf8"),
+            "SHA256SUMS.txt",
+          );
+          const notes = readFileSync(notesPath, "utf8");
+          const checksumSections = [
+            ...notes.matchAll(
+              /^## SHA-256 checksums\n\n```text\n([\s\S]*?)\n```$/gm,
+            ),
+          ];
+          if (checksumSections.length !== 1) {
+            fail("release notes must contain exactly one SHA-256 checksum section");
+          }
+          const notesLines = parseExactEntries(
+            checksumSections[0][1],
+            "release notes checksum section",
+          );
+          const allNotesChecksumLines = notes
+            .split("\n")
+            .filter((line) => /^[0-9A-Fa-f]{64}  /.test(line));
+          if (JSON.stringify(allNotesChecksumLines) !== JSON.stringify(notesLines)) {
+            fail("release notes contain an extra checksum entry");
+          }
+          if (JSON.stringify(notesLines) !== JSON.stringify(checksumLines)) {
+            fail("release notes checksums do not match SHA256SUMS.txt");
+          }
+          NODE
       - name: Publish GitHub Release
         shell: zsh
         env:

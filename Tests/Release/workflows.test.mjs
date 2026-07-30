@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const CI_PATH = ".github/workflows/ci.yml";
 const RELEASE_PATH = ".github/workflows/release.yml";
@@ -37,6 +44,78 @@ TAG_COMMIT="$(git rev-parse --verify "\${TAG}^{commit}")"
 [[ "\${TAG_COMMIT}" == "\${EXPECTED_SHA}" ]]
 git merge-base --is-ancestor "\${EXPECTED_SHA}" "origin/main"
 printf 'version=%s\\n' "\${VERSION}" >> "\${GITHUB_OUTPUT}"
+`;
+
+const RELEASE_CHECKSUM_LOCK_RUN = `set -euo pipefail
+[[ "\${TAG}" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]
+[[ "\${VERSION}" == "\${TAG#v}" ]]
+node --input-type=module - \\
+  "dist/release/\${VERSION}/SHA256SUMS.txt" \\
+  "docs/releases/\${TAG}.md" \\
+  "MyShottr-\${VERSION}-macos.zip" \\
+  "MyShottr-Chrome-\${VERSION}.zip" <<'NODE'
+import { readFileSync } from "node:fs";
+
+const [checksumPath, notesPath, appName, extensionName] = process.argv.slice(2);
+const expectedNames = [appName, extensionName];
+const checksumLinePattern = /^([0-9a-f]{64})  ([A-Za-z0-9.-]+)$/;
+
+function fail(message) {
+  process.stderr.write("release-checksums: " + message + "\\n");
+  process.exit(1);
+}
+
+function parseExactEntries(content, label) {
+  const normalized = content.endsWith("\\n") ? content.slice(0, -1) : content;
+  const lines = normalized.split("\\n");
+  if (lines.length !== expectedNames.length) {
+    fail(label + " must contain exactly two checksum entries");
+  }
+  return lines.map((line, index) => {
+    const match = line.match(checksumLinePattern);
+    if (!match || match[2] !== expectedNames[index]) {
+      fail(label + " contains an unexpected checksum entry");
+    }
+    return line;
+  });
+}
+
+if (
+  !checksumPath ||
+  !notesPath ||
+  expectedNames.length !== 2 ||
+  expectedNames.some((name) => !name)
+) {
+  fail("expected checksum path, release notes path, and two artifact names");
+}
+
+const checksumLines = parseExactEntries(
+  readFileSync(checksumPath, "utf8"),
+  "SHA256SUMS.txt",
+);
+const notes = readFileSync(notesPath, "utf8");
+const checksumSections = [
+  ...notes.matchAll(
+    /^## SHA-256 checksums\\n\\n\`\`\`text\\n([\\s\\S]*?)\\n\`\`\`$/gm,
+  ),
+];
+if (checksumSections.length !== 1) {
+  fail("release notes must contain exactly one SHA-256 checksum section");
+}
+const notesLines = parseExactEntries(
+  checksumSections[0][1],
+  "release notes checksum section",
+);
+const allNotesChecksumLines = notes
+  .split("\\n")
+  .filter((line) => /^[0-9A-Fa-f]{64}  /.test(line));
+if (JSON.stringify(allNotesChecksumLines) !== JSON.stringify(notesLines)) {
+  fail("release notes contain an extra checksum entry");
+}
+if (JSON.stringify(notesLines) !== JSON.stringify(checksumLines)) {
+  fail("release notes checksums do not match SHA256SUMS.txt");
+}
+NODE
 `;
 
 const RELEASE_PUBLISH_RUN = `set -euo pipefail
@@ -301,6 +380,15 @@ function validateRelease(releaseSource) {
       run: 'Scripts/verify-release-artifacts.sh "${VERSION}" "dist/release/${VERSION}"',
     },
     {
+      name: "Verify release notes checksums",
+      shell: "zsh",
+      env: {
+        TAG: "${{ github.ref_name }}",
+        VERSION: "${{ steps.release-contract.outputs.version }}",
+      },
+      run: RELEASE_CHECKSUM_LOCK_RUN,
+    },
+    {
       name: "Publish GitHub Release",
       shell: "zsh",
       env: {
@@ -361,10 +449,143 @@ function expectRejected(label, ciSource, releaseSource) {
   );
 }
 
+function workflowStepBlock(source, name, nextName) {
+  const startNeedle = `      - name: ${name}\n`;
+  const start = source.indexOf(startNeedle);
+  assert.notEqual(start, -1, `${name} step fixture is stale`);
+  if (!nextName) {
+    return source.slice(start);
+  }
+  const end = source.indexOf(`      - name: ${nextName}\n`, start + 1);
+  assert.notEqual(end, -1, `${nextName} step fixture is stale`);
+  return source.slice(start, end);
+}
+
+function checksumNotes(lines) {
+  return [
+    "# Test release",
+    "",
+    "## SHA-256 checksums",
+    "",
+    "```text",
+    ...lines,
+    "```",
+    "",
+  ].join("\n");
+}
+
+function runChecksumVerifier(run, checksumSource, notesSource) {
+  const verifierMatch = run.match(/<<'NODE'\n([\s\S]*?)\nNODE\n?$/);
+  assert.ok(verifierMatch, "could not isolate the release checksum verifier");
+  const temporaryDirectory = mkdtempSync(
+    join(tmpdir(), "myshottr-release-checksums."),
+  );
+  const checksumPath = join(temporaryDirectory, "SHA256SUMS.txt");
+  const notesPath = join(temporaryDirectory, "v0.1.0.md");
+  writeFileSync(checksumPath, checksumSource, "utf8");
+  writeFileSync(notesPath, notesSource, "utf8");
+  try {
+    return spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-",
+        checksumPath,
+        notesPath,
+        "MyShottr-0.1.0-macos.zip",
+        "MyShottr-Chrome-0.1.0.zip",
+      ],
+      {
+        input: verifierMatch[1],
+        encoding: "utf8",
+      },
+    );
+  } finally {
+    rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 const ciSource = readFileSync(CI_PATH, "utf8");
 const releaseSource = readFileSync(RELEASE_PATH, "utf8");
 
 validateWorkflows(ciSource, releaseSource);
+
+const parsedRelease = parseYaml(releaseSource, "release workflow");
+const checksumStep = parsedRelease.jobs.release.steps.find(
+  (step) => step.name === "Verify release notes checksums",
+);
+assert.ok(checksumStep, "release checksum step is missing");
+
+const checksumLines = [
+  "2601c96dd5f8d3d674333c94754e522748a95bb88f051bfd26b2be1371c828f6  MyShottr-0.1.0-macos.zip",
+  "b5e8f91b31eaa3d5674954bcd1d63774be51f5a5ad595ee2542efed8458e2f3f  MyShottr-Chrome-0.1.0.zip",
+];
+const validChecksumSource = `${checksumLines.join("\n")}\n`;
+const validNotesSource = checksumNotes(checksumLines);
+const validChecksumResult = runChecksumVerifier(
+  checksumStep.run,
+  validChecksumSource,
+  validNotesSource,
+);
+assert.equal(
+  validChecksumResult.status,
+  0,
+  `valid release checksums must pass:\n${validChecksumResult.stderr}`,
+);
+
+const mismatchResult = runChecksumVerifier(
+  checksumStep.run,
+  validChecksumSource,
+  checksumNotes([
+    `0601c96dd5f8d3d674333c94754e522748a95bb88f051bfd26b2be1371c828f6  MyShottr-0.1.0-macos.zip`,
+    checksumLines[1],
+  ]),
+);
+assert.notEqual(mismatchResult.status, 0, "a checksum mismatch must fail closed");
+
+const removedChecksumResult = runChecksumVerifier(
+  checksumStep.run,
+  validChecksumSource,
+  checksumNotes([checksumLines[0]]),
+);
+assert.notEqual(
+  removedChecksumResult.status,
+  0,
+  "a removed checksum must fail closed",
+);
+
+const reorderedChecksumsResult = runChecksumVerifier(
+  checksumStep.run,
+  validChecksumSource,
+  checksumNotes([checksumLines[1], checksumLines[0]]),
+);
+assert.notEqual(
+  reorderedChecksumsResult.status,
+  0,
+  "reordered checksums must fail closed",
+);
+
+const duplicateChecksumResult = runChecksumVerifier(
+  checksumStep.run,
+  validChecksumSource,
+  checksumNotes([checksumLines[0], checksumLines[0]]),
+);
+assert.notEqual(
+  duplicateChecksumResult.status,
+  0,
+  "a duplicate checksum must fail closed",
+);
+
+const extraChecksumResult = runChecksumVerifier(
+  checksumStep.run,
+  validChecksumSource,
+  checksumNotes([...checksumLines, checksumLines[0]]),
+);
+assert.notEqual(
+  extraChecksumResult.status,
+  0,
+  "an extra checksum must fail closed",
+);
 
 const extraReleaseUpload = replaceOnce(
   releaseSource,
@@ -387,6 +608,31 @@ expectRejected(
   "packaging before source verification must be rejected",
   ciSource,
   swapBlocks(releaseSource, verifySourceBlock, packageBlock),
+);
+
+const checksumLockBlock = workflowStepBlock(
+  releaseSource,
+  "Verify release notes checksums",
+  "Publish GitHub Release",
+);
+const publishBlock = workflowStepBlock(
+  releaseSource,
+  "Publish GitHub Release",
+);
+expectRejected(
+  "removing checksum verification must be rejected",
+  ciSource,
+  replaceOnce(
+    releaseSource,
+    checksumLockBlock,
+    "",
+    "removed checksum verification",
+  ),
+);
+expectRejected(
+  "publishing before checksum verification must be rejected",
+  ciSource,
+  swapBlocks(releaseSource, checksumLockBlock, publishBlock),
 );
 
 const mutableCheckout = replaceOnce(
