@@ -304,12 +304,21 @@ final class AppDelegate:
         return .terminateLater
     }
 
-    func present(project: MyShottrProject) throws {
-        _ = try openDocument(
+    func present(
+        project: MyShottrProject
+    ) async throws {
+        let opening = try beginOpeningDocument(
             project: project,
             projectURL: nil,
             isRecoveredDocument: false
         )
+        do {
+            try await opening.controller
+                .waitForEditorLoad()
+        } catch {
+            discardFailedOpening(opening.controller)
+            throw error
+        }
     }
 
     private func captureArea() {
@@ -369,6 +378,39 @@ final class AppDelegate:
         projectURL: URL?,
         isRecoveredDocument: Bool
     ) throws -> Bool {
+        let opening = try beginOpeningDocument(
+            project: project,
+            projectURL: projectURL,
+            isRecoveredDocument: isRecoveredDocument
+        )
+        Task { @MainActor [weak self] in
+            do {
+                try await opening.controller
+                    .waitForEditorLoad()
+            } catch {
+                guard let self else {
+                    return
+                }
+                discardFailedOpening(opening.controller)
+                launchErrorReporter(
+                    MyShottrUserFacingError.wrapping(
+                        error,
+                        context: .editorBridge
+                    )
+                )
+            }
+        }
+        return opening.didCreate
+    }
+
+    private func beginOpeningDocument(
+        project: MyShottrProject,
+        projectURL: URL?,
+        isRecoveredDocument: Bool
+    ) throws -> (
+        controller: any EditorWindowControlling,
+        didCreate: Bool
+    ) {
         if let existing = existingDocumentWindow(
             documentID: project.manifest.documentId,
             projectURL: projectURL
@@ -376,7 +418,7 @@ final class AppDelegate:
             existing.focusWindow()
             applicationLifecycle.setActivationPolicy(.regular)
             applicationLifecycle.activate()
-            return false
+            return (existing, false)
         }
 
         let controller = try documentWindowFactory(
@@ -401,7 +443,24 @@ final class AppDelegate:
         documentWindows.append(controller)
         applicationLifecycle.setActivationPolicy(.regular)
         applicationLifecycle.activate()
-        return true
+        return (controller, true)
+    }
+
+    private func discardFailedOpening(
+        _ controller: any EditorWindowControlling
+    ) {
+        guard let index = documentWindows.firstIndex(
+            where: { $0 === controller }
+        ) else {
+            return
+        }
+        documentWindows.remove(at: index)
+        controller.discardFailedPresentation()
+        if documentWindows.isEmpty {
+            applicationLifecycle.setActivationPolicy(
+                .accessory
+            )
+        }
     }
 
     private func startRecovery() {

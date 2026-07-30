@@ -143,23 +143,44 @@ final class DocumentSession {
         isModified = false
     }
 
+    func openUnsaved(
+        project: MyShottrProject
+    ) throws {
+        try open(project: project)
+        modificationRevision = 1
+        isModified = true
+        try recoveryStore?.write(
+            project,
+            documentId: project.manifest.documentId
+        )
+    }
+
     func stage(project: MyShottrProject) throws {
         guard project.manifest.formatVersion == ProjectManifest.currentFormatVersion else {
             throw DocumentSessionError.invalidDocument
         }
+        let replacesDocument =
+            self.project?.manifest.documentId
+                != project.manifest.documentId
+        self.project = project
         stagedProject = project
+        if replacesDocument {
+            modificationRevision = 0
+            isModified = false
+        }
     }
 
     func commitStaged(annotationJSON: Data) throws {
         guard var stagedProject else { throw DocumentSessionError.noStagedDocument }
         try validate(annotationJSON: annotationJSON, for: stagedProject.manifest)
+        let wasModified = isModified
         stagedProject.annotationJSON = annotationJSON
         project = stagedProject
         self.stagedProject = nil
         let restoredAsModified =
             restoreStagedProjectAsModified
-        isModified = restoredAsModified
-        if restoredAsModified {
+        isModified = wasModified || restoredAsModified
+        if restoredAsModified && !wasModified {
             modificationRevision &+= 1
         }
         restoreStagedProjectAsModified = false

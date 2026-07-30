@@ -61,13 +61,46 @@ struct StubNewProjectFactory: NewProjectCreating {
 @MainActor
 final class SpyDocumentWindowPresenter: DocumentWindowPresenting {
     var presentationError: (any Error)?
+    var suspendsPresentation = false
     private(set) var presentedProjects: [MyShottrProject] = []
+    private(set) var presentationAttempts: [MyShottrProject] = []
+    private var presentationContinuation:
+        CheckedContinuation<Void, Never>?
+    private var startedContinuations: [
+        CheckedContinuation<Void, Never>
+    ] = []
 
-    func present(project: MyShottrProject) throws {
+    func present(
+        project: MyShottrProject
+    ) async throws {
+        presentationAttempts.append(project)
+        let waiting = startedContinuations
+        startedContinuations.removeAll()
+        waiting.forEach { $0.resume() }
+        if suspendsPresentation {
+            await withCheckedContinuation {
+                presentationContinuation = $0
+            }
+        }
         if let presentationError {
             throw presentationError
         }
         presentedProjects.append(project)
+    }
+
+    func waitUntilPresentationStarts() async {
+        guard presentationAttempts.isEmpty else {
+            return
+        }
+        await withCheckedContinuation {
+            startedContinuations.append($0)
+        }
+    }
+
+    func resumePresentation() {
+        suspendsPresentation = false
+        presentationContinuation?.resume()
+        presentationContinuation = nil
     }
 }
 

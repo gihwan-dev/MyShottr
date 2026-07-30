@@ -2,7 +2,9 @@ import Foundation
 
 @MainActor
 protocol DocumentWindowPresenting: AnyObject {
-    func present(project: MyShottrProject) throws
+    func present(
+        project: MyShottrProject
+    ) async throws
 }
 
 @MainActor
@@ -76,7 +78,11 @@ final class RegionCaptureCoordinator {
             return .captureWorkflow(.windowPresenterUnavailable)
         }
         do {
-            try windows.present(project: project)
+            try await windows.present(project: project)
+        } catch let error as EditorBridgeError {
+            return .editorBridge(error)
+        } catch let error as EditorBridgeEnvelopeError {
+            return .editorProtocol(error)
         } catch {
             return .captureWorkflow(.windowPresentationFailed)
         }

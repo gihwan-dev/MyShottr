@@ -86,7 +86,9 @@ final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
         configuration.userContentController.removeScriptMessageHandler(forName: "myshottr")
     }
 
-    func load(project: MyShottrProject) throws {
+    func load(
+        project: MyShottrProject
+    ) throws -> EditorLoadOperation {
         try bridge.load(project: project)
     }
 

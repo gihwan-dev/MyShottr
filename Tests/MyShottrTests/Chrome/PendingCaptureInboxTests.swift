@@ -172,7 +172,9 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
     }
 
     @MainActor
-    func testClaimDirectorySyncFailureRecoversProcessingOnRelaunch() throws {
+    func testClaimDirectorySyncFailureRecoversProcessingOnRelaunch()
+        async throws
+    {
         let operations = InboxFileOperationController()
         let firstInbox = try PendingCaptureInbox(
             root: temporaryDirectory,
@@ -218,7 +220,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             ]
         )
 
-        coordinator.consumePendingCaptures()
+        await coordinator.consumePendingCaptures()
 
         XCTAssertEqual(windows.presentedProjects.count, 1)
         XCTAssertTrue(try relaunchedInbox.pendingCaptures().isEmpty)
@@ -258,7 +260,9 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
     }
 
     @MainActor
-    func testPresentedRenameFailureRetriesWithoutDuplicateWindow() throws {
+    func testPresentedRenameFailureRetriesWithoutDuplicateWindow()
+        async throws
+    {
         let operations = InboxFileOperationController()
         operations.failNextRename(toSuffix: ".presented")
         let inbox = try PendingCaptureInbox(
@@ -275,18 +279,15 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        XCTAssertThrowsError(
-            try coordinator.consume(id: ChromeFixtures.captureID)
-        ) {
-            XCTAssertEqual(
-                $0 as? ChromeCaptureImportError,
-                .durableCommitFailedAfterOpen
-            )
-        }
+        await assertConsume(
+            coordinator,
+            id: ChromeFixtures.captureID,
+            throws: .durableCommitFailedAfterOpen
+        )
         XCTAssertEqual(windows.presentedProjects.count, 1)
         XCTAssertEqual(inboxURLs(suffix: ".processing").count, 1)
 
-        try coordinator.consume(id: ChromeFixtures.captureID)
+        try await coordinator.consume(id: ChromeFixtures.captureID)
 
         XCTAssertEqual(windows.presentedProjects.count, 1)
         XCTAssertTrue(try inbox.pendingCaptures().isEmpty)
@@ -294,7 +295,9 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
     }
 
     @MainActor
-    func testPresentedSyncFailureIsCleanupOnlyOnRelaunch() throws {
+    func testPresentedSyncFailureIsCleanupOnlyOnRelaunch()
+        async throws
+    {
         let operations = InboxFileOperationController()
         let inbox = try PendingCaptureInbox(
             root: temporaryDirectory,
@@ -311,14 +314,11 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: firstWindows
         )
 
-        XCTAssertThrowsError(
-            try firstCoordinator.consume(id: ChromeFixtures.captureID)
-        ) {
-            XCTAssertEqual(
-                $0 as? ChromeCaptureImportError,
-                .durableCommitFailedAfterOpen
-            )
-        }
+        await assertConsume(
+            firstCoordinator,
+            id: ChromeFixtures.captureID,
+            throws: .durableCommitFailedAfterOpen
+        )
         XCTAssertEqual(firstWindows.presentedProjects.count, 1)
         XCTAssertEqual(inboxURLs(suffix: ".presented").count, 1)
         XCTAssertTrue(try inbox.pendingCaptures().isEmpty)
@@ -333,14 +333,16 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: relaunchedWindows
         )
 
-        relaunchedCoordinator.consumePendingCaptures()
+        await relaunchedCoordinator.consumePendingCaptures()
 
         XCTAssertTrue(relaunchedWindows.presentedProjects.isEmpty)
         XCTAssertTrue(try relaunchedInbox.cleanupOnlyCaptures().isEmpty)
     }
 
     @MainActor
-    func testPresentedStateSuppressesSameIDProcessingOnRelaunch() throws {
+    func testPresentedStateSuppressesSameIDProcessingOnRelaunch()
+        async throws
+    {
         let inbox = try PendingCaptureInbox(
             root: temporaryDirectory,
             idGenerator: { ChromeFixtures.captureID },
@@ -375,7 +377,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        coordinator.consumePendingCaptures()
+        await coordinator.consumePendingCaptures()
 
         XCTAssertTrue(windows.presentedProjects.isEmpty)
         XCTAssertTrue(try relaunchedInbox.pendingCaptures().isEmpty)
@@ -383,7 +385,9 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
     }
 
     @MainActor
-    func testCleanupUnlinkFailureConvergesWithoutDuplicateWindow() throws {
+    func testCleanupUnlinkFailureConvergesWithoutDuplicateWindow()
+        async throws
+    {
         let operations = InboxFileOperationController()
         operations.failNextUnlink()
         let inbox = try PendingCaptureInbox(
@@ -403,14 +407,11 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        XCTAssertThrowsError(
-            try coordinator.consume(id: ChromeFixtures.captureID)
-        ) {
-            XCTAssertEqual(
-                $0 as? ChromeCaptureImportError,
-                .cleanupFailedAfterOpen
-            )
-        }
+        await assertConsume(
+            coordinator,
+            id: ChromeFixtures.captureID,
+            throws: .cleanupFailedAfterOpen
+        )
         XCTAssertEqual(windows.presentedProjects.count, 1)
         XCTAssertEqual(inboxURLs(suffix: ".quarantine").count, 1)
 
@@ -424,14 +425,16 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: relaunchedWindows
         )
 
-        relaunchedCoordinator.consumePendingCaptures()
+        await relaunchedCoordinator.consumePendingCaptures()
 
         XCTAssertTrue(relaunchedWindows.presentedProjects.isEmpty)
         XCTAssertTrue(try relaunchedInbox.cleanupOnlyCaptures().isEmpty)
     }
 
     @MainActor
-    func testCleanupRenameFailurePreservesPresentedUntilRetry() throws {
+    func testCleanupRenameFailurePreservesPresentedUntilRetry()
+        async throws
+    {
         let operations = InboxFileOperationController()
         operations.failNextRename(toSuffix: ".quarantine")
         let inbox = try PendingCaptureInbox(
@@ -455,26 +458,25 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        XCTAssertThrowsError(
-            try coordinator.consume(id: ChromeFixtures.captureID)
-        ) {
-            XCTAssertEqual(
-                $0 as? ChromeCaptureImportError,
-                .cleanupFailedAfterOpen
-            )
-        }
+        await assertConsume(
+            coordinator,
+            id: ChromeFixtures.captureID,
+            throws: .cleanupFailedAfterOpen
+        )
         XCTAssertEqual(windows.presentedProjects.count, 1)
         XCTAssertEqual(inboxURLs(suffix: ".presented").count, 1)
         XCTAssertTrue(inboxURLs(suffix: ".quarantine").isEmpty)
 
-        try coordinator.consume(id: ChromeFixtures.captureID)
+        try await coordinator.consume(id: ChromeFixtures.captureID)
 
         XCTAssertEqual(windows.presentedProjects.count, 1)
         XCTAssertTrue(try inbox.cleanupOnlyCaptures().isEmpty)
     }
 
     @MainActor
-    func testCleanupSyncFailurePreservesQuarantineUntilRetry() throws {
+    func testCleanupSyncFailurePreservesQuarantineUntilRetry()
+        async throws
+    {
         let operations = InboxFileOperationController()
         let inbox = try PendingCaptureInbox(
             root: temporaryDirectory,
@@ -498,26 +500,25 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        XCTAssertThrowsError(
-            try coordinator.consume(id: ChromeFixtures.captureID)
-        ) {
-            XCTAssertEqual(
-                $0 as? ChromeCaptureImportError,
-                .cleanupFailedAfterOpen
-            )
-        }
+        await assertConsume(
+            coordinator,
+            id: ChromeFixtures.captureID,
+            throws: .cleanupFailedAfterOpen
+        )
         XCTAssertEqual(windows.presentedProjects.count, 1)
         XCTAssertTrue(inboxURLs(suffix: ".presented").isEmpty)
         XCTAssertEqual(inboxURLs(suffix: ".quarantine").count, 1)
 
-        try coordinator.consume(id: ChromeFixtures.captureID)
+        try await coordinator.consume(id: ChromeFixtures.captureID)
 
         XCTAssertEqual(windows.presentedProjects.count, 1)
         XCTAssertTrue(try inbox.cleanupOnlyCaptures().isEmpty)
     }
 
     @MainActor
-    func testPostUnlinkSyncFailureIsCommittedCleanupOnly() throws {
+    func testPostUnlinkSyncFailureIsCommittedCleanupOnly()
+        async throws
+    {
         let operations = InboxFileOperationController()
         let inbox = try PendingCaptureInbox(
             root: temporaryDirectory,
@@ -537,7 +538,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        try coordinator.consume(id: ChromeFixtures.captureID)
+        try await coordinator.consume(id: ChromeFixtures.captureID)
 
         XCTAssertEqual(windows.presentedProjects.count, 1)
         XCTAssertTrue(try inbox.pendingCaptures().isEmpty)
@@ -553,13 +554,15 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: relaunchedWindows
         )
 
-        relaunchedCoordinator.consumePendingCaptures()
+        await relaunchedCoordinator.consumePendingCaptures()
 
         XCTAssertTrue(relaunchedWindows.presentedProjects.isEmpty)
     }
 
     @MainActor
-    func testReplacedProcessingPathIsMovedButNeverUnlinked() throws {
+    func testReplacedProcessingPathIsMovedButNeverUnlinked()
+        async throws
+    {
         let stateIDs = UUIDSequence([
             ChromeFixtures.stateID,
             ChromeFixtures.secondStateID,
@@ -611,7 +614,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        coordinator.consumePendingCaptures()
+        await coordinator.consumePendingCaptures()
 
         XCTAssertTrue(windows.presentedProjects.isEmpty)
         XCTAssertFalse(
@@ -622,7 +625,9 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
     }
 
     @MainActor
-    func testInvalidEntryCleanupMovesToQuarantineBeforeUnlink() throws {
+    func testInvalidEntryCleanupMovesToQuarantineBeforeUnlink()
+        async throws
+    {
         let operations = InboxFileOperationController()
         operations.failNextUnlink()
         let stateIDs = UUIDSequence([
@@ -672,7 +677,7 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             windows: windows
         )
 
-        coordinator.consumePendingCaptures()
+        await coordinator.consumePendingCaptures()
 
         XCTAssertTrue(windows.presentedProjects.isEmpty)
         XCTAssertTrue(try relaunchedInbox.cleanupOnlyCaptures().isEmpty)
@@ -777,6 +782,31 @@ final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
             .filter { $0.hasSuffix(suffix) }
             .sorted()
             .map { temporaryDirectory.appendingPathComponent($0) }
+    }
+
+    @MainActor
+    private func assertConsume(
+        _ coordinator: CaptureInboxCoordinator,
+        id: UUID,
+        throws expectedError: ChromeCaptureImportError,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            try await coordinator.consume(id: id)
+            XCTFail(
+                "Expected \(expectedError)",
+                file: file,
+                line: line
+            )
+        } catch {
+            XCTAssertEqual(
+                error as? ChromeCaptureImportError,
+                expectedError,
+                file: file,
+                line: line
+            )
+        }
     }
 }
 

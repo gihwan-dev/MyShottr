@@ -68,6 +68,7 @@ final class RecoveryCleanupRetryCoordinator {
 final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     private let session: DocumentSession
     private let editorWebView: EditorWebView
+    private let editorLoadOperation: EditorLoadOperation?
     private let projectStore: any ProjectPackageStoring
     private let errorPresenter: any UserFacingErrorPresenting
     let representedDocumentID: UUID
@@ -115,8 +116,28 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                 recoveryStore: resolvedRecoveryStore
             )
         }
+        let editorWebView = EditorWebView(
+            session: session,
+            preferences: preferences
+        )
+        let editorLoadOperation: EditorLoadOperation?
+        if testSession == nil {
+            if isRecoveredDocument {
+                session.prepareForRecoveryRestore()
+            } else if projectURL == nil {
+                try session.openUnsaved(project: project)
+            } else {
+                try session.open(project: project)
+            }
+            editorLoadOperation = try editorWebView.load(
+                project: project
+            )
+        } else {
+            editorLoadOperation = nil
+        }
         self.session = session
-        self.editorWebView = EditorWebView(session: session, preferences: preferences)
+        self.editorWebView = editorWebView
+        self.editorLoadOperation = editorLoadOperation
         self.projectStore = projectStore
         self.errorPresenter = errorPresenter
         self.annotationSnapshotProvider =
@@ -177,12 +198,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         editorWebView.onProtocolFailure = {
             [weak self] error in
             self?.present(.editorProtocol(error))
-        }
-        if isRecoveredDocument {
-            session.prepareForRecoveryRestore()
-        }
-        if testSession == nil {
-            try editorWebView.load(project: project)
         }
     }
 
@@ -478,6 +493,8 @@ protocol EditorWindowControlling: AnyObject {
     var modificationRevision: UInt64 { get }
     var pendingTerminationDiscardDocumentID: UUID? { get }
     func presentWindow() throws
+    func waitForEditorLoad() async throws
+    func discardFailedPresentation()
     func focusWindow()
     func flushRecoveryForTermination() async throws
     func resolvePendingChangesForTermination() async -> Bool
@@ -506,5 +523,17 @@ extension DocumentWindowController: EditorWindowControlling {
     func presentWindow() {
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    func waitForEditorLoad() async throws {
+        try await editorLoadOperation?.wait()
+    }
+
+    func discardFailedPresentation() {
+        editorWebView.tearDown()
+        session.close()
+        window?.orderOut(nil)
+        window?.delegate = nil
+        window = nil
     }
 }

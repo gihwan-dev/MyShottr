@@ -134,14 +134,20 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
     }
 
     @MainActor
-    func testStagesLoadUntilItsCorrelatedSnapshotIsAccepted() throws {
+    func testNativeSessionOwnsLoadBeforeItsCorrelatedSnapshotIsAccepted()
+        throws
+    {
         let session = DocumentSession()
         var outgoing: [NativeToEditorEnvelope] = []
         let bridge = EditorBridge(session: session) { outgoing.append($0) }
         let project = try project(annotationDocument: validDocument())
 
         try bridge.load(project: project)
-        XCTAssertFalse(session.isOpen)
+        XCTAssertTrue(session.isOpen)
+        XCTAssertEqual(
+            session.sourcePNG(for: project.manifest.documentId),
+            project.originalPNG
+        )
 
         bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
         let load = try XCTUnwrap(outgoing.last)
@@ -157,7 +163,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             payload: .object(["document": try annotationValue(validDocument())])
         )
         bridge.receive(data: try wrongSnapshot.encodedData())
-        XCTAssertFalse(session.isOpen)
+        XCTAssertTrue(session.isOpen)
 
         let acceptedSnapshot = try EditorToNativeEnvelope(
             requestId: load.requestId,
@@ -169,16 +175,17 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
     }
 
     @MainActor
-    func testBridgeErrorForPendingLoadDiscardsTheStagedDocument() throws {
+    func testBridgeErrorForPendingLoadPreservesTheNativeDocument()
+        async throws
+    {
         let session = DocumentSession()
         var outgoing: [NativeToEditorEnvelope] = []
         let bridge = EditorBridge(session: session) { outgoing.append($0) }
-        var reportedErrors: [EditorBridgeError] = []
-        bridge.onUncorrelatedError = {
-            reportedErrors.append($0)
-        }
+        let project = try project(
+            annotationDocument: validDocument()
+        )
 
-        try bridge.load(project: try project(annotationDocument: validDocument()))
+        let operation = try bridge.load(project: project)
         bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
         let load = try XCTUnwrap(outgoing.last)
         let error = try EditorToNativeEnvelope(
@@ -188,10 +195,22 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         )
 
         bridge.receive(data: try error.encodedData())
-        XCTAssertFalse(session.isOpen)
-        XCTAssertNil(session.sourcePNG(for: loadDocumentID(from: load)))
-        XCTAssertEqual(bridge.lastError, .invalidDocument)
-        XCTAssertEqual(reportedErrors, [.invalidDocument])
+        do {
+            try await operation.wait()
+            XCTFail("Rejected editor load must fail its operation")
+        } catch {
+            XCTAssertEqual(
+                error as? EditorBridgeError,
+                .invalidDocument
+            )
+        }
+        XCTAssertTrue(session.isOpen)
+        XCTAssertEqual(
+            session.sourcePNG(
+                for: loadDocumentID(from: load)
+            ),
+            project.originalPNG
+        )
     }
 
     @MainActor
@@ -285,19 +304,34 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
     }
 
     @MainActor
-    func testDeferredLoadFailureDiscardsStagedSourceBytes() throws {
+    func testDeferredLoadFailurePreservesNativeSourceBytes()
+        async throws
+    {
         let session = DocumentSession()
         let bridge = EditorBridge(session: session)
         var project = try project(annotationDocument: validDocument())
         project.annotationJSON = Data("not json".utf8)
 
-        try bridge.load(project: project)
+        let operation = try bridge.load(project: project)
         XCTAssertEqual(session.sourcePNG(for: project.manifest.documentId), project.originalPNG)
 
         bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
-        XCTAssertFalse(session.isOpen)
-        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
-        XCTAssertEqual(bridge.lastError, .invalidDocument)
+        do {
+            try await operation.wait()
+            XCTFail("Invalid load payload must fail its operation")
+        } catch {
+            XCTAssertEqual(
+                error as? EditorBridgeError,
+                .invalidDocument
+            )
+        }
+        XCTAssertTrue(session.isOpen)
+        XCTAssertEqual(
+            session.sourcePNG(
+                for: project.manifest.documentId
+            ),
+            project.originalPNG
+        )
     }
 
     private func project(annotationDocument: [String: Any]) throws -> MyShottrProject {

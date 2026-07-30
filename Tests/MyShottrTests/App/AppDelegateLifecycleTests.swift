@@ -138,9 +138,13 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(delegate.activeDocumentWindowCount, 0)
     }
 
-    func testLaunchInstallsHostThenScansPendingChromeCaptures() {
+    func testLaunchInstallsHostThenScansPendingChromeCaptures() async {
         let application = SpyApplicationLifecycle()
         let window = SpyEditorWindowController()
+        let presentation = expectation(
+            description: "pending Chrome capture presented"
+        )
+        window.onPresent = { presentation.fulfill() }
         let inbox = StubPendingCaptureInbox(
             pending: [
                 StagedCapture(
@@ -192,6 +196,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 name: NSApplication.didFinishLaunchingNotification
             )
         )
+        await fulfillment(of: [presentation], timeout: 1)
 
         XCTAssertEqual(events, ["install", "coordinator", "window"])
         XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
@@ -202,9 +207,13 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(window.presentationCount, 1)
     }
 
-    func testRegistrationFailureStillStartsPendingChromeImport() {
+    func testRegistrationFailureStillStartsPendingChromeImport() async {
         let application = SpyApplicationLifecycle()
         let window = SpyEditorWindowController()
+        let presentation = expectation(
+            description: "pending Chrome capture presented"
+        )
+        window.onPresent = { presentation.fulfill() }
         let inbox = StubPendingCaptureInbox(
             pending: [
                 StagedCapture(
@@ -253,6 +262,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 name: NSApplication.didFinishLaunchingNotification
             )
         )
+        await fulfillment(of: [presentation], timeout: 1)
 
         XCTAssertEqual(
             reportedErrors.first?.viewModel.title,
@@ -260,7 +270,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
         XCTAssertEqual(
             events,
-            ["install", "coordinator", "window", "report"]
+            ["install", "coordinator", "report", "window"]
         )
         XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
         XCTAssertEqual(inbox.cleanedIDs, [ChromeFixtures.captureID])
@@ -268,7 +278,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(window.presentationCount, 1)
     }
 
-    func testPresentingDocumentRetainsWindowAndActivatesRegularApp() throws {
+    func testPresentingDocumentRetainsWindowAndActivatesRegularApp()
+        async throws
+    {
         let application = SpyApplicationLifecycle()
         let window = SpyEditorWindowController()
         let delegate = AppDelegate(
@@ -276,7 +288,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
             documentWindowFactory: { _, _, _ in window }
         )
 
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "Capture")
         )
 
@@ -286,7 +298,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(window.presentationCount, 1)
     }
 
-    func testPresentationFailureDoesNotRetainOrActivateWindow() {
+    func testPresentationFailureDoesNotRetainOrActivateWindow() async {
         let application = SpyApplicationLifecycle()
         let window = SpyEditorWindowController()
         window.presentationError =
@@ -296,13 +308,14 @@ final class AppDelegateLifecycleTests: XCTestCase {
             documentWindowFactory: { _, _, _ in window }
         )
 
-        XCTAssertThrowsError(
-            try delegate.present(
+        do {
+            try await delegate.present(
                 project: ProjectFixtures.project(text: "Capture")
             )
-        ) {
+            XCTFail("Expected presentation failure")
+        } catch {
             XCTAssertEqual(
-                $0 as? AppDelegateLifecycleTestError,
+                error as? AppDelegateLifecycleTestError,
                 .presentation
             )
         }
@@ -311,7 +324,108 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(application.activationCount, 0)
     }
 
-    func testClosingLastDocumentReturnsToAccessoryPolicy() throws {
+    func testPresentWaitsForEditorACKAndReturnsTypedFailure() async {
+        let application = SpyApplicationLifecycle()
+        let window = SpyEditorWindowController()
+        window.pauseEditorLoad = true
+        window.editorLoadError = EditorBridgeError.timedOut
+        let loadStarted = expectation(
+            description: "editor load started"
+        )
+        window.onEditorLoadWait = { count in
+            if count == 1 {
+                loadStarted.fulfill()
+            }
+        }
+        let delegate = AppDelegate(
+            applicationLifecycle: application.lifecycle,
+            documentWindowFactory: { _, _, _ in window }
+        )
+
+        let presentation = Task { @MainActor in
+            try await delegate.present(
+                project: ProjectFixtures.project(text: "Capture")
+            )
+        }
+        await fulfillment(of: [loadStarted], timeout: 1)
+
+        XCTAssertEqual(delegate.activeDocumentWindowCount, 1)
+        XCTAssertEqual(window.presentationCount, 1)
+        XCTAssertEqual(window.failedPresentationDiscardCount, 0)
+
+        window.resumeEditorLoad()
+        do {
+            try await presentation.value
+            XCTFail("Expected typed editor timeout")
+        } catch {
+            XCTAssertEqual(
+                error as? EditorBridgeError,
+                .timedOut
+            )
+        }
+
+        XCTAssertEqual(delegate.activeDocumentWindowCount, 0)
+        XCTAssertEqual(window.failedPresentationDiscardCount, 1)
+        XCTAssertEqual(
+            application.activationPolicies,
+            [.regular, .accessory]
+        )
+    }
+
+    func testConcurrentPresentationsShareOneEditorLoadAndCleanup()
+        async
+    {
+        let window = SpyEditorWindowController()
+        window.pauseEditorLoad = true
+        window.editorLoadError = EditorBridgeError.invalidMessage
+        let loadWaiters = expectation(
+            description: "both callers wait for one editor load"
+        )
+        loadWaiters.expectedFulfillmentCount = 2
+        window.onEditorLoadWait = { _ in
+            loadWaiters.fulfill()
+        }
+        var factoryCalls = 0
+        let delegate = AppDelegate(
+            documentWindowFactory: { _, _, _ in
+                factoryCalls += 1
+                return window
+            }
+        )
+        let project = ProjectFixtures.project(text: "Capture")
+
+        let first = Task { @MainActor in
+            try await delegate.present(project: project)
+        }
+        await Task.yield()
+        let second = Task { @MainActor in
+            try await delegate.present(project: project)
+        }
+        await fulfillment(of: [loadWaiters], timeout: 1)
+
+        XCTAssertEqual(factoryCalls, 1)
+        XCTAssertEqual(window.presentationCount, 1)
+        XCTAssertEqual(window.focusCount, 1)
+        XCTAssertEqual(delegate.activeDocumentWindowCount, 1)
+
+        window.resumeEditorLoad()
+        for presentation in [first, second] {
+            do {
+                try await presentation.value
+                XCTFail("Expected shared editor failure")
+            } catch {
+                XCTAssertEqual(
+                    error as? EditorBridgeError,
+                    .invalidMessage
+                )
+            }
+        }
+
+        XCTAssertEqual(delegate.activeDocumentWindowCount, 0)
+        XCTAssertEqual(window.failedPresentationDiscardCount, 1)
+    }
+
+    func testClosingLastDocumentReturnsToAccessoryPolicy() async throws {
         let application = SpyApplicationLifecycle()
         let firstWindow = SpyEditorWindowController()
         let secondWindow = SpyEditorWindowController()
@@ -329,10 +443,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 _, _, _ in windows.removeFirst()
             }
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "First")
         )
-        try delegate.present(
+        try await delegate.present(
             project: RecoveryFixtures.project(
                 text: "Second",
                 documentID: RecoveryFixtures.secondDocumentID
@@ -357,7 +471,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
     }
 
     func testDuplicateDocumentIdentifierFocusesExistingWindow()
-        throws
+        async throws
     {
         let application = SpyApplicationLifecycle()
         let window = SpyEditorWindowController()
@@ -372,10 +486,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
             }
         )
 
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "first")
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "duplicate")
         )
 
@@ -427,7 +541,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
     }
 
     func testNoModifiedWindowsTerminateImmediatelyAndMarkClean()
-        throws
+        async throws
     {
         let terminationState = SpySessionTerminationState()
         let window = SpyEditorWindowController()
@@ -450,7 +564,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 name: NSApplication.didFinishLaunchingNotification
             )
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "clean")
         )
 
@@ -500,7 +614,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 name: NSApplication.didFinishLaunchingNotification
             )
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "modified")
         )
 
@@ -554,7 +668,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 name: NSApplication.didFinishLaunchingNotification
             )
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "modified")
         )
 
@@ -619,10 +733,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 name: NSApplication.didFinishLaunchingNotification
             )
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "first")
         )
-        try delegate.present(
+        try await delegate.present(
             project: RecoveryFixtures.project(
                 text: "second",
                 documentID: RecoveryFixtures.secondDocumentID
@@ -700,7 +814,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 reply.fulfill()
             }
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "first")
         )
 
@@ -711,7 +825,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
             .terminateLater
         )
         await fulfillment(of: [firstPrompt], timeout: 1)
-        try delegate.present(
+        try await delegate.present(
             project: RecoveryFixtures.project(
                 text: "new",
                 documentID: RecoveryFixtures.secondDocumentID
@@ -771,10 +885,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 reply.fulfill()
             }
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "first")
         )
-        try delegate.present(
+        try await delegate.present(
             project: RecoveryFixtures.project(
                 text: "second",
                 documentID: RecoveryFixtures.secondDocumentID
@@ -843,10 +957,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 reply.fulfill()
             }
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "first")
         )
-        try delegate.present(
+        try await delegate.present(
             project: RecoveryFixtures.project(
                 text: "second",
                 documentID: RecoveryFixtures.secondDocumentID
@@ -901,10 +1015,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 replyExpectation.fulfill()
             }
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "first")
         )
-        try delegate.present(
+        try await delegate.present(
             project: RecoveryFixtures.project(
                 text: "second",
                 documentID: RecoveryFixtures.secondDocumentID
@@ -961,10 +1075,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 reply.fulfill()
             }
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "first")
         )
-        try delegate.present(
+        try await delegate.present(
             project: RecoveryFixtures.project(
                 text: "second",
                 documentID: RecoveryFixtures.secondDocumentID
@@ -1008,7 +1122,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 replyExpectation.fulfill()
             }
         )
-        try delegate.present(
+        try await delegate.present(
             project: ProjectFixtures.project(text: "modified")
         )
 
@@ -1167,6 +1281,7 @@ private func makeEmptyChromeCoordinator(
 private final class SpyEditorWindowController: EditorWindowControlling {
     var onClose: (() -> Void)?
     var presentationError: (any Error)?
+    var editorLoadError: (any Error)?
     var representedDocumentID = ProjectFixtures.documentID
     var representedProjectURL: URL?
     var hasModifiedDocument = false
@@ -1178,12 +1293,19 @@ private final class SpyEditorWindowController: EditorWindowControlling {
     var events: ((String) -> Void)?
     var pauseFlush = false
     var pauseResolution = false
+    var pauseEditorLoad = false
+    var onPresent: (() -> Void)?
+    var onEditorLoadWait: ((Int) -> Void)?
     var onResolve: ((Int) -> Void)?
+    private var editorLoadContinuations:
+        [CheckedContinuation<Void, Never>] = []
     private var flushContinuation:
         CheckedContinuation<Void, Never>?
     private var resolutionContinuation:
         CheckedContinuation<Void, Never>?
     private(set) var presentationCount = 0
+    private(set) var failedPresentationDiscardCount = 0
+    private(set) var editorLoadWaitCount = 0
     private(set) var focusCount = 0
     private(set) var flushCount = 0
     private(set) var resolveCount = 0
@@ -1194,6 +1316,24 @@ private final class SpyEditorWindowController: EditorWindowControlling {
             throw presentationError
         }
         presentationCount += 1
+        onPresent?()
+    }
+
+    func waitForEditorLoad() async throws {
+        editorLoadWaitCount += 1
+        onEditorLoadWait?(editorLoadWaitCount)
+        if pauseEditorLoad {
+            await withCheckedContinuation {
+                editorLoadContinuations.append($0)
+            }
+        }
+        if let editorLoadError {
+            throw editorLoadError
+        }
+    }
+
+    func discardFailedPresentation() {
+        failedPresentationDiscardCount += 1
     }
 
     func focusWindow() {
@@ -1237,6 +1377,13 @@ private final class SpyEditorWindowController: EditorWindowControlling {
         pauseFlush = false
         flushContinuation?.resume()
         flushContinuation = nil
+    }
+
+    func resumeEditorLoad() {
+        pauseEditorLoad = false
+        let continuations = editorLoadContinuations
+        editorLoadContinuations.removeAll()
+        continuations.forEach { $0.resume() }
     }
 
     func resumeResolution() {

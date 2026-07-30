@@ -10,6 +10,51 @@ enum EditorBridgeError: Error, Equatable {
 }
 
 @MainActor
+final class EditorLoadOperation {
+    private enum State {
+        case pending([
+            CheckedContinuation<Void, any Error>
+        ])
+        case completed(Result<Void, any Error>)
+    }
+
+    private var state: State = .pending([])
+
+    func wait() async throws {
+        switch state {
+        case .completed(let result):
+            return try result.get()
+        case .pending:
+            break
+        }
+
+        try await withCheckedThrowingContinuation {
+            continuation in
+            guard case var .pending(waiters) = state else {
+                if case let .completed(result) = state {
+                    continuation.resume(with: result)
+                }
+                return
+            }
+            waiters.append(continuation)
+            state = .pending(waiters)
+        }
+    }
+
+    func complete(
+        with result: Result<Void, any Error>
+    ) {
+        guard case let .pending(waiters) = state else {
+            return
+        }
+        state = .completed(result)
+        for waiter in waiters {
+            waiter.resume(with: result)
+        }
+    }
+}
+
+@MainActor
 final class EditorBridge: NSObject, WKScriptMessageHandler {
     private let session: DocumentSession
     private let preferences: any EditorPreferencesStoring
@@ -17,6 +62,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private var editorIsReady = false
     private var pendingProject: MyShottrProject?
     private var pendingLoadRequestID: UUID?
+    private var pendingLoadOperation: EditorLoadOperation?
     private var snapshotContinuations: [UUID: CheckedContinuation<Data, Error>] = [:]
     private var compositeContinuations: [UUID: CheckedContinuation<CompositeTransfer, Error>] = [:]
     private var compositeTransfers: [UUID: CompositeTransfer] = [:]
@@ -67,14 +113,26 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         self.webView = webView
     }
 
-    func load(project: MyShottrProject) throws {
+    @discardableResult
+    func load(
+        project: MyShottrProject
+    ) throws -> EditorLoadOperation {
         do {
             cancelPendingLoad()
             try session.stage(project: project)
+            let operation = EditorLoadOperation()
             pendingProject = project
-            if editorIsReady { try sendLoadDocument(project) }
+            pendingLoadOperation = operation
+            if editorIsReady {
+                try sendLoadDocument(project)
+            }
+            return operation
         } catch {
-            discardPendingLoad()
+            discardPendingLoad(
+                result: .failure(
+                    EditorBridgeError.invalidDocument
+                )
+            )
             lastError = .invalidDocument
             throw EditorBridgeError.invalidDocument
         }
@@ -143,7 +201,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     }
 
     func tearDown() {
-        discardPendingLoad()
+        cancelPendingLoad()
         editorIsReady = false
         for task in requestDeadlineTasks.values { task.cancel() }
         requestDeadlineTasks.removeAll()
@@ -209,8 +267,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 do {
                     try sendLoadDocument(pendingProject)
                 } catch {
-                    discardPendingLoad()
-                    reportUncorrelatedError(.invalidDocument)
+                    failPendingLoadBeforeDispatch(
+                        error: .invalidDocument
+                    )
                 }
             }
         case .documentChanged:
@@ -297,6 +356,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 retiredRequestIDs.insert(message.requestId)
                 pendingProject = nil
                 pendingLoadRequestID = nil
+                pendingLoadOperation?
+                    .complete(with: .success(()))
+                pendingLoadOperation = nil
             } else if snapshotContinuations[message.requestId] != nil {
                 try session.install(annotationJSON: data)
                 completeSnapshotRequest(message.requestId, data: data)
@@ -413,7 +475,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         }
     }
 
-    private func discardPendingLoad() {
+    private func discardPendingLoad(
+        result: Result<Void, any Error>
+    ) {
         if let pendingLoadRequestID {
             cancelDeadline(for: pendingLoadRequestID)
             retiredRequestIDs.insert(pendingLoadRequestID)
@@ -421,11 +485,22 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         session.discardStaged()
         pendingProject = nil
         pendingLoadRequestID = nil
+        pendingLoadOperation?.complete(with: result)
+        pendingLoadOperation = nil
     }
 
     private func cancelPendingLoad() {
-        guard pendingLoadRequestID != nil || pendingProject != nil else { return }
-        discardPendingLoad()
+        guard pendingLoadRequestID != nil
+                || pendingProject != nil
+                || pendingLoadOperation != nil
+        else {
+            return
+        }
+        discardPendingLoad(
+            result: .failure(
+                EditorBridgeError.cancelled
+            )
+        )
     }
 
     @discardableResult
@@ -526,8 +601,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
 
     private func failLoadRequest(_ requestID: UUID, error: EditorBridgeError) {
         guard requestID == pendingLoadRequestID else { return }
-        discardPendingLoad()
-        reportUncorrelatedError(error)
+        lastError = error
+        discardPendingLoad(result: .failure(error))
     }
 
     private func failLoadProtocolRequest(
@@ -537,8 +612,18 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         guard requestID == pendingLoadRequestID else {
             return
         }
-        discardPendingLoad()
-        reportProtocolError(error)
+        lastProtocolError = error
+        discardPendingLoad(result: .failure(error))
+    }
+
+    private func failPendingLoadBeforeDispatch(
+        error: EditorBridgeError
+    ) {
+        guard pendingLoadOperation != nil else {
+            return
+        }
+        lastError = error
+        discardPendingLoad(result: .failure(error))
     }
 
     private func failCompositeRequest(

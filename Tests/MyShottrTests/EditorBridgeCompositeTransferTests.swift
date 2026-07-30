@@ -107,7 +107,9 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         XCTAssertNil(bridge.lastError)
     }
 
-    func testLoadWithoutAcknowledgementTimesOutAndDiscardsTheStagedProject() async throws {
+    func testLoadTimeoutPreservesNativeProjectAndExactRetrySucceeds()
+        async throws
+    {
         let session = DocumentSession()
         var outgoing: [NativeToEditorEnvelope] = []
         let bridge = EditorBridge(
@@ -119,17 +121,56 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
         let project = validProject()
 
-        try bridge.load(project: project)
-        XCTAssertEqual(outgoing.last?.type, .loadDocument)
-        XCTAssertEqual(session.sourcePNG(for: project.manifest.documentId), project.originalPNG)
-        try await Task.sleep(for: .milliseconds(30))
+        let failedLoad = try bridge.load(project: project)
+        let failedEnvelope = try XCTUnwrap(outgoing.last)
+        do {
+            try await failedLoad.wait()
+            XCTFail("Unacknowledged load must time out")
+        } catch {
+            XCTAssertEqual(
+                error as? EditorBridgeError,
+                .timedOut
+            )
+        }
 
-        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
-        XCTAssertFalse(session.isOpen)
-        XCTAssertEqual(bridge.lastError, .timedOut)
+        XCTAssertTrue(session.isOpen)
+        XCTAssertEqual(
+            session.sourcePNG(
+                for: project.manifest.documentId
+            ),
+            project.originalPNG
+        )
+
+        let retriedLoad = try bridge.load(project: project)
+        let retryEnvelope = try XCTUnwrap(outgoing.last)
+        XCTAssertNotEqual(
+            retryEnvelope.requestId,
+            failedEnvelope.requestId
+        )
+        bridge.receive(
+            data: try annotationSnapshot(
+                requestID: retryEnvelope.requestId
+            )
+        )
+
+        try await retriedLoad.wait()
+        XCTAssertEqual(
+            session.project?.manifest.documentId,
+            project.manifest.documentId
+        )
+
+        bridge.receive(
+            data: try annotationSnapshot(
+                requestID: failedEnvelope.requestId
+            )
+        )
+        XCTAssertEqual(
+            session.project?.manifest.documentId,
+            project.manifest.documentId
+        )
     }
 
-    func testMalformedCorrelatedLoadAcknowledgementFailsImmediatelyAndDiscardsStagedBytes() async throws {
+    func testMalformedCorrelatedLoadAcknowledgementFailsAndPreservesNativeBytes() async throws {
         let session = DocumentSession()
         var outgoing: [NativeToEditorEnvelope] = []
         let bridge = EditorBridge(
@@ -150,15 +191,18 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         ).encodedData())
         await Task.yield()
 
-        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
-        XCTAssertFalse(session.isOpen)
+        XCTAssertEqual(
+            session.sourcePNG(for: project.manifest.documentId),
+            project.originalPNG
+        )
+        XCTAssertTrue(session.isOpen)
         XCTAssertEqual(
             bridge.lastProtocolError,
             .malformedMessage
         )
     }
 
-    func testInvalidCorrelatedLoadDocumentFailsAndDiscardsStagedBytes() async throws {
+    func testInvalidCorrelatedLoadDocumentFailsAndPreservesNativeBytes() async throws {
         let session = DocumentSession()
         var outgoing: [NativeToEditorEnvelope] = []
         let bridge = EditorBridge(
@@ -178,8 +222,11 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         ))
         await Task.yield()
 
-        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
-        XCTAssertFalse(session.isOpen)
+        XCTAssertEqual(
+            session.sourcePNG(for: project.manifest.documentId),
+            project.originalPNG
+        )
+        XCTAssertTrue(session.isOpen)
         XCTAssertEqual(bridge.lastError, .invalidDocument)
     }
 
@@ -239,11 +286,14 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         bridge.receive(data: try annotationSnapshot(requestID: load.requestId))
         await Task.yield()
         XCTAssertEqual(bridge.lastError, .timedOut)
-        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
+        XCTAssertEqual(
+            session.sourcePNG(for: project.manifest.documentId),
+            project.originalPNG
+        )
         bridge.tearDown()
     }
 
-    func testTearDownCancelsLoadDeadlineAndDiscardsStagedBytes() async throws {
+    func testTearDownCancelsLoadDeadlineAndPreservesNativeBytes() async throws {
         let session = DocumentSession()
         var outgoing: [NativeToEditorEnvelope] = []
         let bridge = EditorBridge(
@@ -256,12 +306,24 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
         let project = validProject()
 
-        try bridge.load(project: project)
+        let operation = try bridge.load(project: project)
         let load = try XCTUnwrap(outgoing.last)
         bridge.tearDown()
+        do {
+            try await operation.wait()
+            XCTFail("Tear down must cancel the pending load")
+        } catch {
+            XCTAssertEqual(
+                error as? EditorBridgeError,
+                .cancelled
+            )
+        }
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertNil(bridge.lastError)
-        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
+        XCTAssertEqual(
+            session.sourcePNG(for: project.manifest.documentId),
+            project.originalPNG
+        )
         bridge.receive(data: try annotationSnapshot(requestID: load.requestId))
         await Task.yield()
         XCTAssertNil(bridge.lastError)
@@ -376,7 +438,7 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         )
     }
 
-    func testCompositeReplyUsingAnActiveLoadIDFailsAndDiscardsTheLoadImmediately() async throws {
+    func testCompositeReplyUsingAnActiveLoadIDFailsAndPreservesNativeBytes() async throws {
         let session = DocumentSession()
         var outgoing: [NativeToEditorEnvelope] = []
         let bridge = EditorBridge(
@@ -398,7 +460,10 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
             base64: ProjectFixtures.pngData.base64EncodedString()
         ))
 
-        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
+        XCTAssertEqual(
+            session.sourcePNG(for: project.manifest.documentId),
+            project.originalPNG
+        )
         XCTAssertEqual(bridge.lastError, .invalidMessage)
     }
 
@@ -464,7 +529,10 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         let load = try XCTUnwrap(outgoing.last)
         bridge.receive(data: try malformedBridgeError(requestID: load.requestId))
 
-        XCTAssertNil(session.sourcePNG(for: project.manifest.documentId))
+        XCTAssertEqual(
+            session.sourcePNG(for: project.manifest.documentId),
+            project.originalPNG
+        )
         XCTAssertEqual(
             bridge.lastProtocolError,
             .malformedMessage

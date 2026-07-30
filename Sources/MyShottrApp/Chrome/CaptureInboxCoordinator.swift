@@ -34,6 +34,8 @@ enum ChromeCaptureImportError: Error, Equatable {
     case projectCreationFailed
     case windowPresenterUnavailable
     case windowPresentationFailed
+    case editorLoad(EditorBridgeError)
+    case editorProtocol(EditorBridgeEnvelopeError)
     case durableCommitFailedAfterOpen
     case cleanupFailedAfterOpen
     case cleanupFailedAfterPriorOpen
@@ -52,7 +54,9 @@ struct ChromeCaptureImportBatchSummary: Equatable {
                  .validationFailed,
                  .projectCreationFailed,
                  .windowPresenterUnavailable,
-                 .windowPresentationFailed:
+                 .windowPresentationFailed,
+                 .editorLoad,
+                 .editorProtocol:
                 notImportedCount += 1
             case .durableCommitFailedAfterOpen,
                  .cleanupFailedAfterOpen,
@@ -113,7 +117,9 @@ final class CaptureInboxCoordinator: NSObject {
             )
             isObserving = true
         }
-        consumePendingCaptures()
+        Task { @MainActor [weak self] in
+            await self?.consumePendingCaptures()
+        }
     }
 
     func stop() {
@@ -124,7 +130,7 @@ final class CaptureInboxCoordinator: NSObject {
         isObserving = false
     }
 
-    func consumePendingCaptures() {
+    func consumePendingCaptures() async {
         var failures: [ChromeCaptureImportError] = []
         do {
             for presented in try inbox.cleanupOnlyCaptures() {
@@ -143,7 +149,7 @@ final class CaptureInboxCoordinator: NSObject {
         do {
             for staged in try inbox.pendingCaptures() {
                 do {
-                    try consume(id: staged.id)
+                    try await consume(id: staged.id)
                 } catch let error as ChromeCaptureImportError {
                     failures.append(error)
                 } catch {
@@ -165,7 +171,7 @@ final class CaptureInboxCoordinator: NSObject {
         }
     }
 
-    func consume(id: UUID) throws {
+    func consume(id: UUID) async throws {
         if presentedStates[id] != nil {
             try finishPresentedCapture(id: id)
             return
@@ -209,7 +215,13 @@ final class CaptureInboxCoordinator: NSObject {
                 .projectCreationFailed
         }
         do {
-            try windows.present(project: project)
+            try await windows.present(project: project)
+        } catch let error as EditorBridgeError {
+            throw ChromeCaptureImportError
+                .editorLoad(error)
+        } catch let error as EditorBridgeEnvelopeError {
+            throw ChromeCaptureImportError
+                .editorProtocol(error)
         } catch {
             throw ChromeCaptureImportError
                 .windowPresentationFailed
@@ -246,7 +258,9 @@ final class CaptureInboxCoordinator: NSObject {
         presentedStates.removeValue(forKey: id)
     }
 
-    func handleCaptureReadyNotification(_ notification: Notification) {
+    func handleCaptureReadyNotification(
+        _ notification: Notification
+    ) async {
         guard
             notification.name == Self.captureReadyNotification,
             notification.userInfo == nil,
@@ -258,7 +272,7 @@ final class CaptureInboxCoordinator: NSObject {
         }
 
         do {
-            try consume(id: id)
+            try await consume(id: id)
         } catch ChromeCaptureImportError.validation(
             .captureNotFound
         ) {
@@ -274,7 +288,12 @@ final class CaptureInboxCoordinator: NSObject {
     private func receiveCaptureReadyNotification(
         _ notification: Notification
     ) {
-        handleCaptureReadyNotification(notification)
+        Task { @MainActor [weak self] in
+            await self?
+                .handleCaptureReadyNotification(
+                    notification
+                )
+        }
     }
 }
 

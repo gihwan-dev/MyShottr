@@ -590,6 +590,24 @@ enum MyShottrUserFacingError: Error {
                     + "not imported. The inbox entry remains.",
                 primaryAction: .dismiss
             )
+        case .editorLoad:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Is Waiting for Retry",
+                message:
+                    "The editor did not acknowledge the document, so the "
+                    + "inbox handoff was not committed. The inbox entry and "
+                    + "native recovery copy remain available.",
+                primaryAction: .dismiss
+            )
+        case .editorProtocol:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Is Waiting for Retry",
+                message:
+                    "The editor rejected the document protocol, so the "
+                    + "inbox handoff was not committed. The inbox entry and "
+                    + "native recovery copy remain available.",
+                primaryAction: .dismiss
+            )
         case .durableCommitFailedAfterOpen:
             return UserFacingErrorViewModel(
                 title: "Chrome Capture Opened; Inbox Commit Failed",

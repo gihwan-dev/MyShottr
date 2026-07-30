@@ -4,6 +4,33 @@ import XCTest
 
 @MainActor
 final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
+    func testUnsavedProjectIsDurableBeforeEditorAcknowledgement()
+        throws
+    {
+        let recoveryStore = SpyRecoveryStore()
+        let session = DocumentSession(
+            recoveryStore: recoveryStore,
+            recoveryClock: ManualRecoveryClock()
+        )
+        let project = ProjectFixtures.project(
+            text: "Durable before ACK"
+        )
+
+        try session.openUnsaved(project: project)
+
+        XCTAssertEqual(session.project, project)
+        XCTAssertTrue(session.isModified)
+        XCTAssertEqual(
+            recoveryStore.writes,
+            [
+                .init(
+                    project: project,
+                    documentId: project.manifest.documentId
+                ),
+            ]
+        )
+    }
+
     func testChangesWithinTwoSecondsProduceOneRecoveryWrite()
         async throws
     {
