@@ -26,7 +26,8 @@ final class AppDelegate:
 {
     typealias DocumentWindowFactory = (
         _ project: MyShottrProject,
-        _ projectURL: URL?
+        _ projectURL: URL?,
+        _ isRecoveredDocument: Bool
     ) throws -> any EditorWindowControlling
     typealias NativeMessagingHostInstaller = () throws -> Void
     typealias ChromeCaptureCoordinatorFactory = (
@@ -34,6 +35,10 @@ final class AppDelegate:
         _ windows: any DocumentWindowPresenting
     ) throws -> CaptureInboxCoordinator
     typealias LaunchErrorReporter = (any Error) -> Void
+    typealias SessionTerminationStateFactory =
+        () throws -> any SessionTerminationTracking
+    typealias RecoveryStoreFactory =
+        () throws -> any RecoveryStoring
 
     private let dependencies: AppDependencies
     private let applicationLifecycle: ApplicationLifecycle
@@ -43,12 +48,20 @@ final class AppDelegate:
     private let chromeCaptureCoordinatorFactory:
         ChromeCaptureCoordinatorFactory
     private let launchErrorReporter: LaunchErrorReporter
+    private let sessionTerminationStateFactory:
+        SessionTerminationStateFactory
+    private let recoveryStoreFactory: RecoveryStoreFactory
+    private let recoveryPrompt: any RecoveryPrompting
     private let hotKeyAPI: GlobalHotKeyAPI
     private var documentWindows: [any EditorWindowControlling] = []
     private var captureCoordinator: RegionCaptureCoordinator?
     private var chromeCaptureCoordinator: CaptureInboxCoordinator?
     private var menuBarController: MenuBarController?
     private var hotKeyRegistrar: GlobalHotKeyRegistrar?
+    private var sessionTerminationState: (
+        any SessionTerminationTracking
+    )?
+    private var recoveryCoordinator: RecoveryCoordinator?
 
     var activeDocumentWindowCount: Int {
         documentWindows.count
@@ -60,10 +73,12 @@ final class AppDelegate:
             applicationLifecycle: .live,
             documentWindowFactory: {
                 project,
-                projectURL in
+                projectURL,
+                isRecoveredDocument in
                 try DocumentWindowController(
                     project: project,
-                    projectURL: projectURL
+                    projectURL: projectURL,
+                    isRecoveredDocument: isRecoveredDocument
                 )
             }
         )
@@ -74,10 +89,12 @@ final class AppDelegate:
         applicationLifecycle: ApplicationLifecycle = .live,
         documentWindowFactory: @escaping DocumentWindowFactory = {
             project,
-            projectURL in
+            projectURL,
+            isRecoveredDocument in
             try DocumentWindowController(
                 project: project,
-                projectURL: projectURL
+                projectURL: projectURL,
+                isRecoveredDocument: isRecoveredDocument
             )
         },
         nativeMessagingHostInstaller:
@@ -98,6 +115,16 @@ final class AppDelegate:
             @escaping LaunchErrorReporter = {
                 NSAlert(error: $0).runModal()
             },
+        sessionTerminationStateFactory:
+            @escaping SessionTerminationStateFactory = {
+                try SessionTerminationState()
+            },
+        recoveryStoreFactory:
+            @escaping RecoveryStoreFactory = {
+                try RecoveryStore()
+            },
+        recoveryPrompt:
+            any RecoveryPrompting = RecoveryAlertPrompt(),
         hotKeyAPI: GlobalHotKeyAPI = .live
     ) {
         self.dependencies = dependencies
@@ -108,6 +135,10 @@ final class AppDelegate:
         self.chromeCaptureCoordinatorFactory =
             chromeCaptureCoordinatorFactory
         self.launchErrorReporter = launchErrorReporter
+        self.sessionTerminationStateFactory =
+            sessionTerminationStateFactory
+        self.recoveryStoreFactory = recoveryStoreFactory
+        self.recoveryPrompt = recoveryPrompt
         self.hotKeyAPI = hotKeyAPI
         super.init()
     }
@@ -116,6 +147,7 @@ final class AppDelegate:
         if documentWindows.isEmpty {
             applicationLifecycle.setActivationPolicy(.accessory)
         }
+        startRecovery()
         let coordinator = dependencies.makeCaptureCoordinator(
             windows: self
         )
@@ -174,8 +206,23 @@ final class AppDelegate:
         for url in urls { openProject(at: url) }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        guard let sessionTerminationState else {
+            return
+        }
+        do {
+            try sessionTerminationState.markCleanExit()
+        } catch {
+            launchErrorReporter(error)
+        }
+    }
+
     func present(project: MyShottrProject) throws {
-        try openDocument(project: project, projectURL: nil)
+        try openDocument(
+            project: project,
+            projectURL: nil,
+            isRecoveredDocument: false
+        )
     }
 
     private func captureArea() {
@@ -212,7 +259,11 @@ final class AppDelegate:
     private func openProject(at url: URL) {
         do {
             let project = try dependencies.projectStore.load(from: url)
-            try openDocument(project: project, projectURL: url)
+            try openDocument(
+                project: project,
+                projectURL: url,
+                isRecoveredDocument: false
+            )
         } catch {
             NSAlert(error: error).runModal()
         }
@@ -220,11 +271,13 @@ final class AppDelegate:
 
     private func openDocument(
         project: MyShottrProject,
-        projectURL: URL?
+        projectURL: URL?,
+        isRecoveredDocument: Bool
     ) throws {
         let controller = try documentWindowFactory(
             project,
-            projectURL
+            projectURL,
+            isRecoveredDocument
         )
         controller.onClose = { [weak self, weak controller] in
             guard let self, let controller else {
@@ -244,4 +297,40 @@ final class AppDelegate:
         applicationLifecycle.setActivationPolicy(.regular)
         applicationLifecycle.activate()
     }
+
+    private func startRecovery() {
+        do {
+            let terminationState =
+                try sessionTerminationStateFactory()
+            let previousSessionWasClean =
+                try terminationState.beginSession()
+            sessionTerminationState = terminationState
+
+            let coordinator = RecoveryCoordinator(
+                recoveryStore: try recoveryStoreFactory(),
+                previousSessionWasClean:
+                    previousSessionWasClean,
+                prompt: recoveryPrompt,
+                restore: { [weak self] recovered in
+                    guard let self else {
+                        throw AppDelegateRecoveryError
+                            .applicationUnavailable
+                    }
+                    try self.openDocument(
+                        project: recovered.project,
+                        projectURL: nil,
+                        isRecoveredDocument: true
+                    )
+                }
+            )
+            recoveryCoordinator = coordinator
+            try coordinator.offerRecoveryIfNeeded()
+        } catch {
+            launchErrorReporter(error)
+        }
+    }
+}
+
+private enum AppDelegateRecoveryError: Error {
+    case applicationUnavailable
 }

@@ -14,9 +14,20 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         project: MyShottrProject,
         projectURL: URL?,
         projectStore: any ProjectPackageStoring = ProjectPackageStore(),
-        preferences: any EditorPreferencesStoring = UserDefaultsEditorPreferencesStore()
+        preferences: any EditorPreferencesStoring =
+            UserDefaultsEditorPreferencesStore(),
+        recoveryStore: (any RecoveryStoring)? = nil,
+        isRecoveredDocument: Bool = false
     ) throws {
-        let session = DocumentSession()
+        let resolvedRecoveryStore: any RecoveryStoring
+        if let recoveryStore {
+            resolvedRecoveryStore = recoveryStore
+        } else {
+            resolvedRecoveryStore = try RecoveryStore()
+        }
+        let session = DocumentSession(
+            recoveryStore: resolvedRecoveryStore
+        )
         self.session = session
         self.editorWebView = EditorWebView(session: session, preferences: preferences)
         self.projectStore = projectStore
@@ -30,12 +41,39 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         super.init(window: window)
         self.nextResponder = window.nextResponder
         window.nextResponder = self
-        window.title = projectURL?.deletingPathExtension().lastPathComponent ?? "Untitled MyShottr Project"
+        window.title = projectURL?
+            .deletingPathExtension()
+            .lastPathComponent
+            ?? (
+                isRecoveredDocument
+                    ? "Recovered MyShottr Project"
+                    : "Untitled MyShottr Project"
+            )
         window.contentView = editorWebView.webView
         window.delegate = self
         window.toolbar = makeToolbar()
-        session.onModifiedStateChange = { [weak window] modified in window?.isDocumentEdited = modified }
-        editorWebView.onNavigationFailure = { [weak self] error in self?.present(error) }
+        session.onModifiedStateChange = {
+            [weak window] modified in
+            window?.isDocumentEdited = modified
+        }
+        session.onRecoveryFailure = { [weak self] error in
+            self?.present(error)
+        }
+        session.recoverySnapshotProvider = {
+            [weak editorWebView] in
+            guard let editorWebView else {
+                throw EditorBridgeError.cancelled
+            }
+            return try await editorWebView
+                .requestAnnotationSnapshot()
+        }
+        editorWebView.onNavigationFailure = {
+            [weak self] error in
+            self?.present(error)
+        }
+        if isRecoveredDocument {
+            session.prepareForRecoveryRestore()
+        }
         try editorWebView.load(project: project)
     }
 
@@ -62,9 +100,14 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                     }
                 }
             case .alertSecondButtonReturn:
-                self.session.close()
-                self.closeAfterPrompt = true
-                self.window?.performClose(nil)
+                do {
+                    try self.session.discardRecovery()
+                    self.session.close()
+                    self.closeAfterPrompt = true
+                    self.window?.performClose(nil)
+                } catch {
+                    self.present(error)
+                }
             default:
                 break
             }

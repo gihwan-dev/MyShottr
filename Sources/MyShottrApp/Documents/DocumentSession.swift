@@ -7,6 +7,56 @@ enum DocumentSessionError: Error, Equatable {
 }
 
 @MainActor
+protocol RecoveryScheduledOperation: AnyObject {
+    func cancel()
+}
+
+@MainActor
+protocol RecoveryDebounceClock {
+    func schedule(
+        after delay: Duration,
+        operation: @escaping @MainActor @Sendable () async -> Void
+    ) -> any RecoveryScheduledOperation
+}
+
+@MainActor
+private final class TaskRecoveryScheduledOperation:
+    RecoveryScheduledOperation
+{
+    var task: Task<Void, Never>?
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+    }
+}
+
+@MainActor
+final class ContinuousRecoveryClock: RecoveryDebounceClock {
+    func schedule(
+        after delay: Duration,
+        operation: @escaping @MainActor @Sendable () async -> Void
+    ) -> any RecoveryScheduledOperation {
+        let scheduled = TaskRecoveryScheduledOperation()
+        scheduled.task = Task { @MainActor [weak scheduled] in
+            do {
+                try await ContinuousClock().sleep(for: delay)
+            } catch {
+                return
+            }
+            guard let scheduled,
+                  !Task.isCancelled
+            else {
+                return
+            }
+            await operation()
+            scheduled.task = nil
+        }
+        return scheduled
+    }
+}
+
+@MainActor
 final class DocumentSession {
     private static let supportedElementTypes: Set<String> = [
         "rectangle", "arrow", "line", "text", "freehand", "highlighter", "blur", "redaction", "numberMarker",
@@ -14,17 +64,39 @@ final class DocumentSession {
 
     private(set) var project: MyShottrProject?
     private var stagedProject: MyShottrProject?
+    private let recoveryStore: (any RecoveryStoring)?
+    private let recoveryClock: any RecoveryDebounceClock
+    private var recoveryTask: (
+        any RecoveryScheduledOperation
+    )?
+    private var restoreStagedProjectAsModified = false
     private(set) var isModified = false {
         didSet { onModifiedStateChange?(isModified) }
     }
     var onModifiedStateChange: ((Bool) -> Void)?
+    var onRecoveryFailure: ((any Error) -> Void)?
+    var recoverySnapshotProvider: (
+        @MainActor () async throws -> Data
+    )?
 
     var isOpen: Bool { project != nil }
 
+    init(
+        recoveryStore: (any RecoveryStoring)? = nil,
+        recoveryClock: any RecoveryDebounceClock =
+            ContinuousRecoveryClock()
+    ) {
+        self.recoveryStore = recoveryStore
+        self.recoveryClock = recoveryClock
+    }
+
     func open(project: MyShottrProject) throws {
         try validate(annotationJSON: project.annotationJSON, for: project.manifest)
+        recoveryTask?.cancel()
+        recoveryTask = nil
         self.project = project
         stagedProject = nil
+        restoreStagedProjectAsModified = false
         isModified = false
     }
 
@@ -41,22 +113,36 @@ final class DocumentSession {
         stagedProject.annotationJSON = annotationJSON
         project = stagedProject
         self.stagedProject = nil
-        isModified = false
+        isModified = restoreStagedProjectAsModified
+        restoreStagedProjectAsModified = false
     }
 
     func discardStaged() {
         stagedProject = nil
+        restoreStagedProjectAsModified = false
     }
 
     func close() {
+        recoveryTask?.cancel()
+        recoveryTask = nil
         project = nil
         stagedProject = nil
+        restoreStagedProjectAsModified = false
         isModified = false
     }
 
     func markModified() throws {
         guard project != nil else { throw DocumentSessionError.noOpenDocument }
         isModified = true
+        scheduleRecovery(requestLatestSnapshot: true)
+    }
+
+    func applySnapshot(_ annotationJSON: Data) throws {
+        let wasModified = isModified
+        try install(annotationJSON: annotationJSON)
+        if isModified || wasModified {
+            scheduleRecovery(requestLatestSnapshot: false)
+        }
     }
 
     func install(annotationJSON: Data) throws {
@@ -76,14 +162,79 @@ final class DocumentSession {
 
     func completeSave(_ savedProject: MyShottrProject) throws {
         try validate(annotationJSON: savedProject.annotationJSON, for: savedProject.manifest)
+        recoveryTask?.cancel()
+        recoveryTask = nil
         project = savedProject
+        try recoveryStore?.remove(
+            documentId: savedProject.manifest.documentId
+        )
         isModified = false
+    }
+
+    func discardRecovery() throws {
+        guard let documentId = project?.manifest.documentId else {
+            throw DocumentSessionError.noOpenDocument
+        }
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        try recoveryStore?.remove(documentId: documentId)
+    }
+
+    func prepareForRecoveryRestore() {
+        restoreStagedProjectAsModified = true
     }
 
     func sourcePNG(for documentID: UUID) -> Data? {
         if let project, project.manifest.documentId == documentID { return project.originalPNG }
         if let stagedProject, stagedProject.manifest.documentId == documentID { return stagedProject.originalPNG }
         return nil
+    }
+
+    private func scheduleRecovery(
+        requestLatestSnapshot: Bool
+    ) {
+        guard recoveryStore != nil,
+              project != nil,
+              !requestLatestSnapshot
+                || recoverySnapshotProvider != nil
+        else {
+            return
+        }
+        recoveryTask?.cancel()
+        recoveryTask = recoveryClock.schedule(
+            after: .seconds(2)
+        ) { [weak self] in
+            guard let self else {
+                return
+            }
+            do {
+                if requestLatestSnapshot {
+                    guard let recoverySnapshotProvider =
+                            self.recoverySnapshotProvider
+                    else {
+                        return
+                    }
+                    _ = try await recoverySnapshotProvider()
+                    guard !Task.isCancelled else {
+                        return
+                    }
+                }
+                guard let project = self.project,
+                      self.isModified,
+                      let recoveryStore = self.recoveryStore
+                else {
+                    return
+                }
+                try recoveryStore.write(
+                    project,
+                    documentId: project.manifest.documentId
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                self.onRecoveryFailure?(error)
+            }
+        }
     }
 
     private func validate(annotationJSON: Data, for manifest: ProjectManifest) throws {

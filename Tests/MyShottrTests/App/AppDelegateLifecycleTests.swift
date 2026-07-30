@@ -17,13 +17,20 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 projectStore: StubProjectStore(project: project)
             ),
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { openedProject, openedURL in
+            documentWindowFactory: {
+                openedProject,
+                openedURL,
+                isRecoveredDocument in
                 XCTAssertEqual(openedProject, project)
                 XCTAssertEqual(openedURL, projectURL)
+                XCTAssertFalse(isRecoveredDocument)
                 return window
             },
             nativeMessagingHostInstaller: {},
             chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
+            sessionTerminationStateFactory: makeCleanTerminationState,
+            recoveryStoreFactory: { SpyRecoveryStore() },
+            recoveryPrompt: SpyRecoveryPrompt(),
             hotKeyAPI: makeNoOpHotKeyAPI()
         )
 
@@ -46,6 +53,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
             applicationLifecycle: application.lifecycle,
             nativeMessagingHostInstaller: {},
             chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
+            sessionTerminationStateFactory: makeCleanTerminationState,
+            recoveryStoreFactory: { SpyRecoveryStore() },
+            recoveryPrompt: SpyRecoveryPrompt(),
             hotKeyAPI: makeNoOpHotKeyAPI()
         )
 
@@ -76,13 +86,17 @@ final class AppDelegateLifecycleTests: XCTestCase {
         var events: [String] = []
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { project, projectURL in
+            documentWindowFactory: {
+                project,
+                projectURL,
+                isRecoveredDocument in
                 events.append("window")
                 XCTAssertEqual(
                     project.manifest.documentId,
                     ChromeFixtures.captureID
                 )
                 XCTAssertNil(projectURL)
+                XCTAssertFalse(isRecoveredDocument)
                 return window
             },
             nativeMessagingHostInstaller: {
@@ -99,6 +113,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
                     reportError: { XCTFail("Unexpected Chrome import error: \($0)") }
                 )
             },
+            sessionTerminationStateFactory: makeCleanTerminationState,
+            recoveryStoreFactory: { SpyRecoveryStore() },
+            recoveryPrompt: SpyRecoveryPrompt(),
             hotKeyAPI: makeNoOpHotKeyAPI()
         )
 
@@ -134,7 +151,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         var events: [String] = []
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { _, _ in
+            documentWindowFactory: { _, _, _ in
                 events.append("window")
                 return window
             },
@@ -157,6 +174,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 events.append("report")
                 reportedErrors.append($0)
             },
+            sessionTerminationStateFactory: makeCleanTerminationState,
+            recoveryStoreFactory: { SpyRecoveryStore() },
+            recoveryPrompt: SpyRecoveryPrompt(),
             hotKeyAPI: makeNoOpHotKeyAPI()
         )
 
@@ -185,7 +205,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         let window = SpyEditorWindowController()
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { _, _ in window }
+            documentWindowFactory: { _, _, _ in window }
         )
 
         try delegate.present(
@@ -205,7 +225,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
             AppDelegateLifecycleTestError.presentation
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { _, _ in window }
+            documentWindowFactory: { _, _, _ in window }
         )
 
         XCTAssertThrowsError(
@@ -233,7 +253,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
         ]
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { _, _ in windows.removeFirst() }
+            documentWindowFactory: {
+                _, _, _ in windows.removeFirst()
+            }
         )
         try delegate.present(
             project: ProjectFixtures.project(text: "First")
@@ -279,6 +301,24 @@ private enum StubProjectStoreError: Error {
 private enum AppDelegateLifecycleTestError: Error, Equatable {
     case presentation
     case registration
+}
+
+private func makeCleanTerminationState()
+    -> any SessionTerminationTracking
+{
+    StubSessionTerminationState(previousSessionWasClean: true)
+}
+
+private struct StubSessionTerminationState:
+    SessionTerminationTracking
+{
+    let previousSessionWasClean: Bool
+
+    func beginSession() throws -> Bool {
+        previousSessionWasClean
+    }
+
+    func markCleanExit() throws {}
 }
 
 private func makeNoOpHotKeyAPI() -> GlobalHotKeyAPI {
