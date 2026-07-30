@@ -1,6 +1,7 @@
 .superpowers/
 .DS_Store
 DerivedData/
+/dist/release/
 MyShottr.xcodeproj/
 node_modules/
 Packages/*/node_modules/
