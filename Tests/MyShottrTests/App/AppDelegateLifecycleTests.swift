@@ -110,7 +110,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
 
         XCTAssertEqual(events, ["install", "coordinator", "window"])
         XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
-        XCTAssertEqual(inbox.acknowledgedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(inbox.cleanedIDs, [ChromeFixtures.captureID])
         XCTAssertEqual(delegate.activeDocumentWindowCount, 1)
         XCTAssertEqual(application.activationPolicies, [.accessory, .regular])
         XCTAssertEqual(application.activationCount, 1)
@@ -175,7 +175,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
             ["install", "coordinator", "window", "report"]
         )
         XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
-        XCTAssertEqual(inbox.acknowledgedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(inbox.cleanedIDs, [ChromeFixtures.captureID])
         XCTAssertEqual(delegate.activeDocumentWindowCount, 1)
         XCTAssertEqual(window.presentationCount, 1)
     }

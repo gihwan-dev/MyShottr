@@ -12,6 +12,12 @@ enum ChromeFixtures {
     static let secondCaptureID = UUID(
         uuidString: "1278A262-54A9-4D7D-9AC5-411DA020756C"
     )!
+    static let stateID = UUID(
+        uuidString: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
+    )!
+    static let secondStateID = UUID(
+        uuidString: "11111111-2222-4333-8444-555555555555"
+    )!
 
     static func compressibleGrayscalePNG(
         width: Int,
@@ -85,12 +91,16 @@ final class StubPendingCaptureInbox:
     @unchecked Sendable
 {
     var pending: [StagedCapture]
+    var cleanupOnly: [PresentedCapture] = []
     var dataByID: [UUID: Data]
     var claimErrorByID: [UUID: any Error] = [:]
-    var acknowledgeError: (any Error)?
+    var commitError: (any Error)?
+    var cleanupError: (any Error)?
     private(set) var claimedIDs: [UUID] = []
-    private(set) var acknowledgeAttempts: [UUID] = []
-    private(set) var acknowledgedIDs: [UUID] = []
+    private(set) var commitAttempts: [UUID] = []
+    private(set) var committedIDs: [UUID] = []
+    private(set) var cleanupAttempts: [UUID] = []
+    private(set) var cleanedIDs: [UUID] = []
 
     init(
         pending: [StagedCapture] = [],
@@ -115,6 +125,10 @@ final class StubPendingCaptureInbox:
         pending
     }
 
+    func cleanupOnlyCaptures() throws -> [PresentedCapture] {
+        cleanupOnly
+    }
+
     func claim(id: UUID) throws -> PendingCaptureClaim {
         claimedIDs.append(id)
         if let error = claimErrorByID[id] {
@@ -127,20 +141,45 @@ final class StubPendingCaptureInbox:
             id: id,
             pngData: data,
             processingURL: URL(
-                fileURLWithPath: "/inbox/\(id.uuidString).processing"
+                fileURLWithPath:
+                    "/inbox/\(id.uuidString)."
+                    + "\(ChromeFixtures.stateID.uuidString).processing"
             ),
             fileDevice: 1,
             fileInode: UInt64(abs(id.hashValue))
         )
     }
 
-    func acknowledge(_ claim: PendingCaptureClaim) throws {
-        acknowledgeAttempts.append(claim.id)
-        if let acknowledgeError {
-            throw acknowledgeError
+    func commitPresentation(
+        _ claim: PendingCaptureClaim
+    ) throws -> PresentedCapture {
+        commitAttempts.append(claim.id)
+        if let commitError {
+            throw commitError
         }
-        acknowledgedIDs.append(claim.id)
-        dataByID.removeValue(forKey: claim.id)
+        committedIDs.append(claim.id)
+        return PresentedCapture(
+            id: claim.id,
+            presentedURL: URL(
+                fileURLWithPath:
+                    "/inbox/\(claim.id.uuidString)."
+                    + "\(ChromeFixtures.stateID.uuidString).presented"
+            ),
+            fileDevice: claim.fileDevice,
+            fileInode: claim.fileInode
+        )
+    }
+
+    func cleanupPresented(
+        _ presented: PresentedCapture
+    ) throws -> PresentedCleanupResult {
+        cleanupAttempts.append(presented.id)
+        if let cleanupError {
+            throw cleanupError
+        }
+        cleanedIDs.append(presented.id)
+        dataByID.removeValue(forKey: presented.id)
+        return .removed
     }
 }
 
@@ -179,7 +218,8 @@ final class SpyChromeNewProjectFactory:
 }
 
 enum ChromeFixtureError: Error, Equatable {
-    case acknowledgment
+    case commit
+    case cleanup
     case compression
 }
 

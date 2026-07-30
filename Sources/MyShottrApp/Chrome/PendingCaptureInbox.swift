@@ -14,11 +14,30 @@ struct PendingCaptureClaim: Equatable, Sendable {
     let fileInode: UInt64
 }
 
+struct PresentedCapture: Equatable, Sendable {
+    let id: UUID
+    let presentedURL: URL
+    let fileDevice: UInt64
+    let fileInode: UInt64
+}
+
+enum PresentedCleanupResult: Equatable, Sendable {
+    case removed
+    case alreadyAbsent
+    case removedAwaitingDurability
+}
+
 protocol PendingCaptureStoring: Sendable {
     func stage(pngData: Data) throws -> StagedCapture
     func pendingCaptures() throws -> [StagedCapture]
+    func cleanupOnlyCaptures() throws -> [PresentedCapture]
     func claim(id: UUID) throws -> PendingCaptureClaim
-    func acknowledge(_ claim: PendingCaptureClaim) throws
+    func commitPresentation(
+        _ claim: PendingCaptureClaim
+    ) throws -> PresentedCapture
+    func cleanupPresented(
+        _ presented: PresentedCapture
+    ) throws -> PresentedCleanupResult
 }
 
 enum PendingCaptureInboxError: Error, Equatable {
@@ -34,17 +53,37 @@ struct PendingCaptureInbox: PendingCaptureStoring {
     let rootURL: URL
 
     private let idGenerator: @Sendable () -> UUID
+    private let stateIDGenerator: @Sendable () -> UUID
     private let directorySync: @Sendable (Int32) -> Int32
+    private let renameEntry:
+        @Sendable (Int32, String, String) -> Int32
+    private let unlinkEntry: @Sendable (Int32, String) -> Int32
 
     init(
         root: URL = PendingCaptureInbox.defaultRootURL,
         idGenerator: @escaping @Sendable () -> UUID = UUID.init,
+        stateIDGenerator:
+            @escaping @Sendable () -> UUID = UUID.init,
         directorySync:
-            @escaping @Sendable (Int32) -> Int32 = Darwin.fsync
+            @escaping @Sendable (Int32) -> Int32 = Darwin.fsync,
+        renameEntry:
+            @escaping @Sendable (
+                Int32,
+                String,
+                String
+            ) -> Int32 = Self.renameExclusive,
+        unlinkEntry:
+            @escaping @Sendable (
+                Int32,
+                String
+            ) -> Int32 = Self.unlink
     ) throws {
         rootURL = root.standardizedFileURL
         self.idGenerator = idGenerator
+        self.stateIDGenerator = stateIDGenerator
         self.directorySync = directorySync
+        self.renameEntry = renameEntry
+        self.unlinkEntry = unlinkEntry
         try createAndValidateRoot()
     }
 
@@ -58,11 +97,10 @@ struct PendingCaptureInbox: PendingCaptureStoring {
 
         let id = idGenerator()
         let filename = pendingFilename(id: id)
-        let processing = processingFilename(id: id)
-        guard try !entryExists(
-            processing,
+        guard try stateEntries(
+            id: id,
             rootDescriptor: rootDescriptor
-        ) else {
+        ).isEmpty else {
             throw PendingCaptureInboxError.systemCallFailed(
                 name: "create staged capture",
                 code: EEXIST
@@ -125,18 +163,25 @@ struct PendingCaptureInbox: PendingCaptureStoring {
             Darwin.close(rootDescriptor)
         }
 
-        let filenames = try directoryFilenames(
-            rootDescriptor: rootDescriptor
+        let entries = try parsedEntries(rootDescriptor: rootDescriptor)
+        let cleanupOnlyIDs = Set(
+            entries
+                .filter { $0.state.isCleanupOnly }
+                .map(\.id)
         )
         var entriesByID: [UUID: PendingEntry] = [:]
 
-        for filename in filenames {
-            guard let parsed = captureEntry(from: filename) else {
+        for parsed in entries {
+            guard
+                parsed.state == .pending
+                    || parsed.state == .processing,
+                !cleanupOnlyIDs.contains(parsed.id)
+            else {
                 continue
             }
 
             var metadata = stat()
-            let status = filename.withCString {
+            let status = parsed.filename.withCString {
                 Darwin.fstatat(
                     rootDescriptor,
                     $0,
@@ -154,14 +199,16 @@ struct PendingCaptureInbox: PendingCaptureStoring {
             let candidate = PendingEntry(
                 capture: StagedCapture(
                     id: parsed.id,
-                    pngURL: rootURL.appendingPathComponent(filename)
+                    pngURL:
+                        rootURL.appendingPathComponent(parsed.filename)
                 ),
                 state: parsed.state,
                 modifiedSeconds: metadata.st_mtimespec.tv_sec,
                 modifiedNanoseconds: metadata.st_mtimespec.tv_nsec
             )
             if let current = entriesByID[parsed.id],
-               current.state == .processing {
+               current.state == .processing,
+               parsed.state == .pending {
                 continue
             }
             entriesByID[parsed.id] = candidate
@@ -179,6 +226,77 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         }.map(\.capture)
     }
 
+    func cleanupOnlyCaptures() throws -> [PresentedCapture] {
+        let rootDescriptor = try openRoot()
+        defer {
+            Darwin.close(rootDescriptor)
+        }
+
+        let entries = try parsedEntries(rootDescriptor: rootDescriptor)
+        let cleanupOnlyIDs = Set(
+            entries
+                .filter { $0.state.isCleanupOnly }
+                .map(\.id)
+        )
+        for entry in entries where
+            cleanupOnlyIDs.contains(entry.id)
+                && !entry.state.isCleanupOnly {
+            _ = try quarantineAndRemove(
+                entry.filename,
+                id: entry.id,
+                expectedIdentity: nil,
+                rootDescriptor: rootDescriptor
+            )
+        }
+
+        var captures: [PresentedCapture] = []
+        for entry in entries {
+            guard entry.state.isCleanupOnly else {
+                continue
+            }
+
+            var metadata = stat()
+            let status = entry.filename.withCString {
+                Darwin.fstatat(
+                    rootDescriptor,
+                    $0,
+                    &metadata,
+                    AT_SYMLINK_NOFOLLOW
+                )
+            }
+            if status != 0 {
+                if errno == ENOENT {
+                    continue
+                }
+                throw systemCallError("inspect cleanup-only capture")
+            }
+
+            let identity = FileIdentity(metadata)
+            guard validOwnerOnlyRegularFile(metadata) else {
+                _ = try quarantineAndRemove(
+                    entry.filename,
+                    id: entry.id,
+                    expectedIdentity: identity,
+                    rootDescriptor: rootDescriptor
+                )
+                continue
+            }
+            captures.append(
+                PresentedCapture(
+                    id: entry.id,
+                    presentedURL:
+                        rootURL.appendingPathComponent(entry.filename),
+                    fileDevice: identity.device,
+                    fileInode: identity.inode
+                )
+            )
+        }
+        return captures.sorted {
+            $0.presentedURL.lastPathComponent
+                < $1.presentedURL.lastPathComponent
+        }
+    }
+
     func claim(id: UUID) throws -> PendingCaptureClaim {
         let rootDescriptor = try openRoot()
         defer {
@@ -186,67 +304,63 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         }
 
         let pending = pendingFilename(id: id)
-        let processing = processingFilename(id: id)
-        if try entryExists(
-            processing,
+        let existing = try stateEntries(
+            id: id,
             rootDescriptor: rootDescriptor
-        ) {
+        )
+        if existing.contains(where: { $0.state.isCleanupOnly }) {
+            throw PendingCaptureInboxError.captureNotFound
+        }
+        if let processing = existing
+            .filter({ $0.state == .processing })
+            .sorted(by: { $0.filename < $1.filename })
+            .first {
             if try entryExists(
                 pending,
                 rootDescriptor: rootDescriptor
             ) {
-                try removeEntryDurably(
+                _ = try quarantineAndRemove(
                     pending,
-                    rootDescriptor: rootDescriptor,
-                    syncErrorName:
-                        "fsync inbox after duplicate removal"
+                    id: id,
+                    expectedIdentity: nil,
+                    rootDescriptor: rootDescriptor
                 )
             }
-        } else {
-            let renameStatus = pending.withCString { pendingName in
-                processing.withCString { processingName in
-                    Darwin.renameatx_np(
-                        rootDescriptor,
-                        pendingName,
-                        rootDescriptor,
-                        processingName,
-                        UInt32(RENAME_EXCL)
-                    )
-                }
-            }
-            guard renameStatus == 0 else {
-                let code = errno
-                if code == ENOENT {
-                    throw PendingCaptureInboxError.captureNotFound
-                }
-                if code == EEXIST {
-                    if try entryExists(
-                        pending,
-                        rootDescriptor: rootDescriptor
-                    ) {
-                        try removeEntryDurably(
-                            pending,
-                            rootDescriptor: rootDescriptor,
-                            syncErrorName:
-                                "fsync inbox after duplicate removal"
-                        )
-                    }
-                    return try readClaimedCapture(
-                        id: id,
-                        filename: processing,
-                        rootDescriptor: rootDescriptor
-                    )
-                }
-                throw PendingCaptureInboxError.systemCallFailed(
-                    name: "claim pending capture",
-                    code: code
+            for duplicate in existing where
+                duplicate.state == .processing
+                    && duplicate.filename != processing.filename {
+                _ = try quarantineAndRemove(
+                    duplicate.filename,
+                    id: id,
+                    expectedIdentity: nil,
+                    rootDescriptor: rootDescriptor
                 )
             }
-            guard directorySync(rootDescriptor) == 0 else {
-                throw systemCallError("fsync inbox after claim")
-            }
+            return try readClaimedCapture(
+                id: id,
+                filename: processing.filename,
+                rootDescriptor: rootDescriptor
+            )
         }
 
+        let processing = stateFilename(
+            id: id,
+            stateID: stateIDGenerator(),
+            state: .processing
+        )
+        guard renameEntry(rootDescriptor, pending, processing) == 0 else {
+            let code = errno
+            if code == ENOENT {
+                throw PendingCaptureInboxError.captureNotFound
+            }
+            throw PendingCaptureInboxError.systemCallFailed(
+                name: "claim pending capture",
+                code: code
+            )
+        }
+        guard directorySync(rootDescriptor) == 0 else {
+            throw systemCallError("fsync inbox after claim")
+        }
         return try readClaimedCapture(
             id: id,
             filename: processing,
@@ -254,46 +368,117 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         )
     }
 
-    func acknowledge(_ claim: PendingCaptureClaim) throws {
+    func commitPresentation(
+        _ claim: PendingCaptureClaim
+    ) throws -> PresentedCapture {
         let rootDescriptor = try openRoot()
         defer {
             Darwin.close(rootDescriptor)
         }
 
-        let filename = processingFilename(id: claim.id)
-        var metadata = stat()
-        let status = filename.withCString {
-            Darwin.fstatat(
-                rootDescriptor,
-                $0,
-                &metadata,
-                AT_SYMLINK_NOFOLLOW
-            )
-        }
-        guard status == 0 else {
-            if errno == ENOENT {
-                throw PendingCaptureInboxError.captureNotFound
-            }
-            throw systemCallError("inspect acknowledged capture")
-        }
+        let expectedIdentity = FileIdentity(
+            device: claim.fileDevice,
+            inode: claim.fileInode
+        )
+        let processing = claim.processingURL.lastPathComponent
         guard
-            validOwnerOnlyRegularFile(metadata),
-            UInt64(metadata.st_dev) == claim.fileDevice,
-            UInt64(metadata.st_ino) == claim.fileInode
+            let parsedProcessing = captureEntry(from: processing),
+            parsedProcessing.id == claim.id,
+            parsedProcessing.state == .processing,
+            parsedProcessing.filename == processing
         else {
             throw PendingCaptureInboxError.invalidEntry
         }
+        let presented = stateFilename(
+            id: claim.id,
+            stateID: parsedProcessing.stateID,
+            state: .presented
+        )
 
-        guard filename.withCString({
-            Darwin.unlinkat(rootDescriptor, $0, 0)
+        if try !entryExists(
+            processing,
+            rootDescriptor: rootDescriptor
+        ) {
+            if let recovered = try locateEntry(
+                id: claim.id,
+                states: [.presented],
+                identity: expectedIdentity,
+                rootDescriptor: rootDescriptor
+            ) {
+                guard directorySync(rootDescriptor) == 0 else {
+                    throw systemCallError(
+                        "fsync inbox after presented transition"
+                    )
+                }
+                return recovered
+            }
+            throw PendingCaptureInboxError.captureNotFound
+        }
+
+        guard renameEntry(
+            rootDescriptor,
+            processing,
+            presented
+        ) == 0 else {
+            throw systemCallError("commit presented capture")
+        }
+
+        var movedMetadata = stat()
+        guard presented.withCString({
+            Darwin.fstatat(
+                rootDescriptor,
+                $0,
+                &movedMetadata,
+                AT_SYMLINK_NOFOLLOW
+            )
         }) == 0 else {
-            throw systemCallError("remove acknowledged capture")
+            throw systemCallError("verify presented capture")
+        }
+        guard
+            validOwnerOnlyRegularFile(movedMetadata),
+            FileIdentity(movedMetadata) == expectedIdentity
+        else {
+            throw PendingCaptureInboxError.invalidEntry
         }
         guard directorySync(rootDescriptor) == 0 else {
             throw systemCallError(
-                "fsync inbox after acknowledge"
+                "fsync inbox after presented transition"
             )
         }
+
+        return PresentedCapture(
+            id: claim.id,
+            presentedURL: rootURL.appendingPathComponent(presented),
+            fileDevice: expectedIdentity.device,
+            fileInode: expectedIdentity.inode
+        )
+    }
+
+    func cleanupPresented(
+        _ presented: PresentedCapture
+    ) throws -> PresentedCleanupResult {
+        let rootDescriptor = try openRoot()
+        defer {
+            Darwin.close(rootDescriptor)
+        }
+
+        let identity = FileIdentity(
+            device: presented.fileDevice,
+            inode: presented.fileInode
+        )
+        guard let located = try locateCleanupFilename(
+            presented,
+            identity: identity,
+            rootDescriptor: rootDescriptor
+        ) else {
+            return .alreadyAbsent
+        }
+        return try quarantineAndRemove(
+            located,
+            id: presented.id,
+            expectedIdentity: identity,
+            rootDescriptor: rootDescriptor
+        )
     }
 
     private func readClaimedCapture(
@@ -311,11 +496,11 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         guard descriptor >= 0 else {
             let code = errno
             if code == ELOOP {
-                try removeEntryDurably(
+                _ = try quarantineAndRemove(
                     filename,
-                    rootDescriptor: rootDescriptor,
-                    syncErrorName:
-                        "fsync inbox after invalid entry removal"
+                    id: id,
+                    expectedIdentity: nil,
+                    rootDescriptor: rootDescriptor
                 )
                 throw PendingCaptureInboxError.invalidEntry
             }
@@ -329,11 +514,13 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         }
 
         var descriptorIsOpen = true
+        var expectedIdentity: FileIdentity?
         do {
             var metadata = stat()
             guard Darwin.fstat(descriptor, &metadata) == 0 else {
                 throw systemCallError("inspect claimed capture")
             }
+            expectedIdentity = FileIdentity(metadata)
             guard validOwnerOnlyRegularFile(metadata) else {
                 throw PendingCaptureInboxError.invalidEntry
             }
@@ -391,11 +578,11 @@ struct PendingCaptureInbox: PendingCaptureStoring {
             case PendingCaptureInboxError.invalidEntry,
                  PendingCaptureInboxError.invalidPNG,
                  PendingCaptureInboxError.imageTooLarge:
-                try removeEntryDurably(
+                _ = try quarantineAndRemove(
                     filename,
-                    rootDescriptor: rootDescriptor,
-                    syncErrorName:
-                        "fsync inbox after rejected capture"
+                    id: id,
+                    expectedIdentity: expectedIdentity,
+                    rootDescriptor: rootDescriptor
                 )
             default:
                 break
@@ -516,8 +703,13 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         "\(id.uuidString).png"
     }
 
-    private func processingFilename(id: UUID) -> String {
-        "\(id.uuidString).processing"
+    private func stateFilename(
+        id: UUID,
+        stateID: UUID,
+        state: PendingEntryState
+    ) -> String {
+        precondition(state != .pending)
+        return "\(id.uuidString).\(stateID.uuidString).\(state.rawValue)"
     }
 
     private func directoryFilenames(
@@ -563,50 +755,268 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         return filenames
     }
 
+    private func parsedEntries(
+        rootDescriptor: Int32
+    ) throws -> [ParsedInboxEntry] {
+        try directoryFilenames(rootDescriptor: rootDescriptor)
+            .compactMap(captureEntry(from:))
+    }
+
+    private func stateEntries(
+        id: UUID,
+        rootDescriptor: Int32
+    ) throws -> [ParsedInboxEntry] {
+        try parsedEntries(rootDescriptor: rootDescriptor)
+            .filter { $0.id == id }
+    }
+
     private func captureEntry(
         from filename: String
-    ) -> (id: UUID, state: PendingEntryState)? {
-        let state: PendingEntryState
-        let suffix: String
+    ) -> ParsedInboxEntry? {
         if filename.hasSuffix(".png") {
-            state = .pending
-            suffix = ".png"
-        } else if filename.hasSuffix(".processing") {
-            state = .processing
-            suffix = ".processing"
-        } else {
-            return nil
+            guard
+                let id = UUID(
+                    uuidString:
+                        String(filename.dropLast(".png".count))
+                ),
+                filename == pendingFilename(id: id)
+            else {
+                return nil
+            }
+            return ParsedInboxEntry(
+                id: id,
+                stateID: Self.pendingStateID,
+                state: .pending,
+                filename: filename
+            )
         }
 
+        let components = filename.split(
+            separator: ".",
+            omittingEmptySubsequences: false
+        )
         guard
-            let id = UUID(
-                uuidString: String(filename.dropLast(suffix.count))
+            components.count == 3,
+            let id = UUID(uuidString: String(components[0])),
+            let stateID = UUID(uuidString: String(components[1])),
+            let state = PendingEntryState(
+                rawValue: String(components[2])
             ),
-            filename
-                == (state == .pending
-                    ? pendingFilename(id: id)
-                    : processingFilename(id: id))
+            state != .pending,
+            filename == stateFilename(
+                id: id,
+                stateID: stateID,
+                state: state
+            )
         else {
             return nil
         }
-        return (id, state)
+        return ParsedInboxEntry(
+            id: id,
+            stateID: stateID,
+            state: state,
+            filename: filename
+        )
     }
 
-    private func removeEntryDurably(
-        _ filename: String,
-        rootDescriptor: Int32,
-        syncErrorName: String
-    ) throws {
-        guard filename.withCString({
-            Darwin.unlinkat(rootDescriptor, $0, 0)
-        }) == 0 else {
-            if errno == ENOENT {
-                return
+    private func locateEntry(
+        id: UUID,
+        states: Set<PendingEntryState>,
+        identity: FileIdentity,
+        rootDescriptor: Int32
+    ) throws -> PresentedCapture? {
+        for entry in try stateEntries(
+            id: id,
+            rootDescriptor: rootDescriptor
+        ) where states.contains(entry.state) {
+            var metadata = stat()
+            let status = entry.filename.withCString {
+                Darwin.fstatat(
+                    rootDescriptor,
+                    $0,
+                    &metadata,
+                    AT_SYMLINK_NOFOLLOW
+                )
             }
-            throw systemCallError("remove inbox entry")
+            if status != 0 {
+                if errno == ENOENT {
+                    continue
+                }
+                throw systemCallError("inspect recovered capture")
+            }
+            guard
+                validOwnerOnlyRegularFile(metadata),
+                FileIdentity(metadata) == identity
+            else {
+                continue
+            }
+            return PresentedCapture(
+                id: id,
+                presentedURL:
+                    rootURL.appendingPathComponent(entry.filename),
+                fileDevice: identity.device,
+                fileInode: identity.inode
+            )
+        }
+        return nil
+    }
+
+    private func locateCleanupFilename(
+        _ presented: PresentedCapture,
+        identity: FileIdentity,
+        rootDescriptor: Int32
+    ) throws -> String? {
+        let preferred = presented.presentedURL.lastPathComponent
+        if
+            let parsed = captureEntry(from: preferred),
+            parsed.id == presented.id,
+            parsed.state.isCleanupOnly,
+            try entryHasIdentity(
+                preferred,
+                identity: identity,
+                rootDescriptor: rootDescriptor
+            )
+        {
+            return preferred
+        }
+
+        return try stateEntries(
+            id: presented.id,
+            rootDescriptor: rootDescriptor
+        )
+        .filter { $0.state.isCleanupOnly }
+        .first {
+            try entryHasIdentity(
+                $0.filename,
+                identity: identity,
+                rootDescriptor: rootDescriptor
+            )
+        }?.filename
+    }
+
+    private func entryHasIdentity(
+        _ filename: String,
+        identity: FileIdentity,
+        rootDescriptor: Int32
+    ) throws -> Bool {
+        var metadata = stat()
+        let status = filename.withCString {
+            Darwin.fstatat(
+                rootDescriptor,
+                $0,
+                &metadata,
+                AT_SYMLINK_NOFOLLOW
+            )
+        }
+        if status != 0 {
+            if errno == ENOENT {
+                return false
+            }
+            throw systemCallError("inspect cleanup path")
+        }
+        return FileIdentity(metadata) == identity
+    }
+
+    private func quarantineAndRemove(
+        _ filename: String,
+        id: UUID,
+        expectedIdentity: FileIdentity?,
+        rootDescriptor: Int32
+    ) throws -> PresentedCleanupResult {
+        var sourceMetadata = stat()
+        let sourceStatus = filename.withCString {
+            Darwin.fstatat(
+                rootDescriptor,
+                $0,
+                &sourceMetadata,
+                AT_SYMLINK_NOFOLLOW
+            )
+        }
+        if sourceStatus != 0 {
+            if errno == ENOENT {
+                return .alreadyAbsent
+            }
+            throw systemCallError("inspect quarantined capture")
+        }
+        let sourceIdentity = FileIdentity(sourceMetadata)
+        let quarantine = stateFilename(
+            id: id,
+            stateID: stateIDGenerator(),
+            state: .quarantine
+        )
+        let renameStatus = renameEntry(
+            rootDescriptor,
+            filename,
+            quarantine
+        )
+        if renameStatus != 0 {
+            if errno == ENOENT {
+                return .alreadyAbsent
+            }
+            throw systemCallError("quarantine capture")
+        }
+
+        var movedMetadata = stat()
+        guard quarantine.withCString({
+            Darwin.fstatat(
+                rootDescriptor,
+                $0,
+                &movedMetadata,
+                AT_SYMLINK_NOFOLLOW
+            )
+        }) == 0 else {
+            throw systemCallError("verify quarantined capture")
+        }
+        let movedIdentity = FileIdentity(movedMetadata)
+        guard
+            movedMetadata.st_uid == getuid(),
+            movedIdentity == sourceIdentity,
+            expectedIdentity == nil
+                || movedIdentity == expectedIdentity
+        else {
+            throw PendingCaptureInboxError.invalidEntry
         }
         guard directorySync(rootDescriptor) == 0 else {
-            throw systemCallError(syncErrorName)
+            throw systemCallError(
+                "fsync inbox after quarantine transition"
+            )
+        }
+        guard unlinkEntry(rootDescriptor, quarantine) == 0 else {
+            if errno == ENOENT {
+                return .alreadyAbsent
+            }
+            throw systemCallError("remove quarantined capture")
+        }
+        guard directorySync(rootDescriptor) == 0 else {
+            return .removedAwaitingDurability
+        }
+        return .removed
+    }
+
+    private static func renameExclusive(
+        _ directory: Int32,
+        _ source: String,
+        _ destination: String
+    ) -> Int32 {
+        source.withCString { sourceName in
+            destination.withCString { destinationName in
+                Darwin.renameatx_np(
+                    directory,
+                    sourceName,
+                    directory,
+                    destinationName,
+                    UInt32(RENAME_EXCL)
+                )
+            }
+        }
+    }
+
+    private static func unlink(
+        _ directory: Int32,
+        _ filename: String
+    ) -> Int32 {
+        filename.withCString {
+            Darwin.unlinkat(directory, $0, 0)
         }
     }
 
@@ -682,6 +1092,10 @@ struct PendingCaptureInbox: PendingCaptureStoring {
             .appendingPathComponent("Inbox", isDirectory: true)
     }
 
+    private static let pendingStateID = UUID(
+        uuidString: "00000000-0000-0000-0000-000000000000"
+    )!
+
     private static func systemCallError(
         _ name: String
     ) -> PendingCaptureInboxError {
@@ -698,9 +1112,37 @@ struct PendingCaptureInbox: PendingCaptureStoring {
     }
 }
 
-private enum PendingEntryState {
+private enum PendingEntryState: String, Hashable {
     case pending
     case processing
+    case presented
+    case quarantine
+
+    var isCleanupOnly: Bool {
+        self == .presented || self == .quarantine
+    }
+}
+
+private struct ParsedInboxEntry {
+    let id: UUID
+    let stateID: UUID
+    let state: PendingEntryState
+    let filename: String
+}
+
+private struct FileIdentity: Equatable {
+    let device: UInt64
+    let inode: UInt64
+
+    init(device: UInt64, inode: UInt64) {
+        self.device = device
+        self.inode = inode
+    }
+
+    init(_ metadata: stat) {
+        device = UInt64(metadata.st_dev)
+        inode = UInt64(metadata.st_ino)
+    }
 }
 
 private struct PendingEntry {

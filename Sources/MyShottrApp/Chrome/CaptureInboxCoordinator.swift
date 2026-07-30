@@ -44,8 +44,8 @@ final class CaptureInboxCoordinator: NSObject {
     private let now: () -> Date
     private let notificationAPI: CaptureReadyNotificationAPI
     private let reportError: (any Error) -> Void
-    private var presentedAwaitingAcknowledgment:
-        [UUID: PendingCaptureClaim] = [:]
+    private var presentedStates:
+        [UUID: PresentedInMemoryState] = [:]
     private var isObserving = false
 
     init(
@@ -89,27 +89,45 @@ final class CaptureInboxCoordinator: NSObject {
 
     func consumePendingCaptures() throws {
         var firstError: (any Error)?
-        for staged in try inbox.pendingCaptures() {
-            do {
-                try consume(id: staged.id)
-            } catch {
-                if firstError == nil {
-                    firstError = error
+
+        do {
+            for presented in try inbox.cleanupOnlyCaptures() {
+                do {
+                    _ = try inbox.cleanupPresented(presented)
+                } catch {
+                    if firstError == nil {
+                        firstError = error
+                    }
                 }
             }
+        } catch {
+            firstError = error
         }
+
+        do {
+            for staged in try inbox.pendingCaptures() {
+                do {
+                    try consume(id: staged.id)
+                } catch {
+                    if firstError == nil {
+                        firstError = error
+                    }
+                }
+            }
+        } catch {
+            if firstError == nil {
+                firstError = error
+            }
+        }
+
         if let firstError {
             throw firstError
         }
     }
 
     func consume(id: UUID) throws {
-        if let presentedClaim =
-            presentedAwaitingAcknowledgment[id] {
-            try inbox.acknowledge(presentedClaim)
-            presentedAwaitingAcknowledgment.removeValue(
-                forKey: id
-            )
+        if presentedStates[id] != nil {
+            try finishPresentedCapture(id: id)
             return
         }
 
@@ -128,9 +146,26 @@ final class CaptureInboxCoordinator: NSObject {
             now: now()
         )
         try windows.present(project: project)
-        presentedAwaitingAcknowledgment[id] = claim
-        try inbox.acknowledge(claim)
-        presentedAwaitingAcknowledgment.removeValue(forKey: id)
+        presentedStates[id] = .awaitingCommit(claim)
+        try finishPresentedCapture(id: id)
+    }
+
+    private func finishPresentedCapture(id: UUID) throws {
+        guard let state = presentedStates[id] else {
+            return
+        }
+
+        let presented: PresentedCapture
+        switch state {
+        case .awaitingCommit(let claim):
+            presented = try inbox.commitPresentation(claim)
+            presentedStates[id] = .awaitingCleanup(presented)
+        case .awaitingCleanup(let capture):
+            presented = capture
+        }
+
+        _ = try inbox.cleanupPresented(presented)
+        presentedStates.removeValue(forKey: id)
     }
 
     func handleCaptureReadyNotification(_ notification: Notification) {
@@ -159,4 +194,9 @@ final class CaptureInboxCoordinator: NSObject {
     ) {
         handleCaptureReadyNotification(notification)
     }
+}
+
+private enum PresentedInMemoryState {
+    case awaitingCommit(PendingCaptureClaim)
+    case awaitingCleanup(PresentedCapture)
 }
