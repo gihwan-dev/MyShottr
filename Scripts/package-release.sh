@@ -15,6 +15,23 @@ require_command() {
     || fail "required command '${command_name}' is unavailable"
 }
 
+verify_no_distribution_signature() {
+  local target_path="$1"
+  local label="$2"
+  local signature_details=""
+
+  if signature_details="$(
+    codesign --display --verbose=4 "${target_path}" 2>&1
+  )"; then
+    [[ "${signature_details}" == *"Signature=adhoc"* ]] \
+      || fail "${label} has an unexpected non-ad-hoc signature"
+    [[ "${signature_details}" != *$'\nAuthority='* ]] \
+      || fail "${label} unexpectedly has a signing authority"
+    [[ "${signature_details}" == *"TeamIdentifier=not set"* ]] \
+      || fail "${label} unexpectedly has a signing team"
+  fi
+}
+
 VERSION="${1:-}"
 if [[ ! "${VERSION}" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
   echo 'version must match [0-9]+\.[0-9]+\.[0-9]+' >&2
@@ -108,7 +125,7 @@ if (manifest.version !== version) {
 NODE
 
 for command_name in \
-  pnpm xcodegen xcodebuild ditto shasum plutil codesign find touch \
+  pnpm xcodegen xcodebuild ditto shasum plutil codesign spctl find touch \
   mktemp mkdir mv rm; do
   require_command "${command_name}"
 done
@@ -169,12 +186,12 @@ BUILT_EXTENSION="${REPO_ROOT}/Packages/chrome-extension/dist"
 [[ -f "${BUILT_EXTENSION}/service-worker.js" ]] \
   || fail "built Chrome service worker is missing"
 
-if codesign --display --verbose=2 "${BUILT_APP}" >/dev/null 2>&1; then
-  fail "Release app is unexpectedly signed"
-fi
-if codesign --display --verbose=2 \
-  "${BUILT_APP}/Contents/Helpers/MyShottrNativeHost" >/dev/null 2>&1; then
-  fail "embedded Native Messaging helper is unexpectedly signed"
+verify_no_distribution_signature "${BUILT_APP}" "Release app"
+verify_no_distribution_signature \
+  "${BUILT_APP}/Contents/Helpers/MyShottrNativeHost" \
+  "embedded Native Messaging helper"
+if spctl --assess --type execute "${BUILT_APP}" >/dev/null 2>&1; then
+  fail "unsigned and unnotarized Release app was unexpectedly accepted by Gatekeeper"
 fi
 
 STAGED_APP="${STAGING_ROOT}/MyShottr.app"
@@ -217,4 +234,5 @@ mv "${PACKAGE_ROOT}" "${EXPECTED_OUTPUT_ROOT}"
 
 echo
 echo "Release artifacts: ${EXPECTED_OUTPUT_ROOT}"
-echo "WARNING: MyShottr ${VERSION} is intentionally unsigned and unnotarized."
+echo "WARNING: MyShottr ${VERSION} has no Developer ID identity and is not notarized."
+echo "Link-time ad-hoc executable signatures may be present."
