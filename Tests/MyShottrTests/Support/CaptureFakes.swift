@@ -60,9 +60,13 @@ struct StubNewProjectFactory: NewProjectCreating {
 
 @MainActor
 final class SpyDocumentWindowPresenter: DocumentWindowPresenting {
+    var presentationError: (any Error)?
     private(set) var presentedProjects: [MyShottrProject] = []
 
-    func present(project: MyShottrProject) {
+    func present(project: MyShottrProject) throws {
+        if let presentationError {
+            throw presentationError
+        }
         presentedProjects.append(project)
     }
 }
@@ -109,6 +113,7 @@ enum CapturePipelineTestError: Error, Equatable {
     case selection
     case capture
     case projectCreation
+    case presentation
 }
 
 @MainActor

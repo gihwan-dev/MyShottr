@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 protocol DocumentWindowPresenting: AnyObject {
-    func present(project: MyShottrProject)
+    func present(project: MyShottrProject) throws
 }
 
 @MainActor
@@ -52,7 +52,7 @@ final class RegionCaptureCoordinator {
                 artifact: artifact,
                 now: now()
             )
-            windows?.present(project: project)
+            try windows?.present(project: project)
             return nil
         } catch {
             return error

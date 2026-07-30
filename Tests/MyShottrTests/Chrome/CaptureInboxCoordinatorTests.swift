@@ -19,6 +19,8 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
 
         try coordinator.consume(id: ChromeFixtures.captureID)
 
+        XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(inbox.acknowledgedIDs, [ChromeFixtures.captureID])
         XCTAssertEqual(
             factory.requests,
             [
@@ -71,11 +73,94 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
 
         try coordinator.consumePendingCaptures()
 
-        XCTAssertEqual(inbox.consumedIDs, [first.id, second.id])
+        XCTAssertEqual(inbox.claimedIDs, [first.id, second.id])
+        XCTAssertEqual(inbox.acknowledgedIDs, [first.id, second.id])
         XCTAssertEqual(
             windows.presentedProjects.map(\.manifest.documentId),
             [first.id, second.id]
         )
+    }
+
+    func testProjectFactoryFailureLeavesClaimUnacknowledged() {
+        let inbox = StubPendingCaptureInbox()
+        let windows = SpyDocumentWindowPresenter()
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: ThrowingNewProjectFactory(
+                error: .projectCreation
+            ),
+            windows: windows
+        )
+
+        XCTAssertThrowsError(
+            try coordinator.consume(id: ChromeFixtures.captureID)
+        ) {
+            XCTAssertEqual(
+                $0 as? CapturePipelineTestError,
+                .projectCreation
+            )
+        }
+        XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
+        XCTAssertTrue(inbox.acknowledgeAttempts.isEmpty)
+        XCTAssertTrue(windows.presentedProjects.isEmpty)
+        XCTAssertNotNil(inbox.dataByID[ChromeFixtures.captureID])
+    }
+
+    func testWindowPresentationFailureLeavesClaimUnacknowledged() {
+        let inbox = StubPendingCaptureInbox()
+        let windows = SpyDocumentWindowPresenter()
+        windows.presentationError = CapturePipelineTestError.presentation
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: StubNewProjectFactory(),
+            windows: windows
+        )
+
+        XCTAssertThrowsError(
+            try coordinator.consume(id: ChromeFixtures.captureID)
+        ) {
+            XCTAssertEqual(
+                $0 as? CapturePipelineTestError,
+                .presentation
+            )
+        }
+        XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
+        XCTAssertTrue(inbox.acknowledgeAttempts.isEmpty)
+        XCTAssertTrue(windows.presentedProjects.isEmpty)
+        XCTAssertNotNil(inbox.dataByID[ChromeFixtures.captureID])
+    }
+
+    func testAckFailureRetriesAckWithoutPresentingDuplicateWindow() throws {
+        let inbox = StubPendingCaptureInbox()
+        inbox.acknowledgeError = ChromeFixtureError.acknowledgment
+        let factory = SpyChromeNewProjectFactory()
+        let windows = SpyDocumentWindowPresenter()
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: factory,
+            windows: windows
+        )
+
+        XCTAssertThrowsError(
+            try coordinator.consume(id: ChromeFixtures.captureID)
+        ) {
+            XCTAssertEqual(
+                $0 as? ChromeFixtureError,
+                .acknowledgment
+            )
+        }
+        inbox.acknowledgeError = nil
+
+        try coordinator.consume(id: ChromeFixtures.captureID)
+
+        XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(
+            inbox.acknowledgeAttempts,
+            [ChromeFixtures.captureID, ChromeFixtures.captureID]
+        )
+        XCTAssertEqual(inbox.acknowledgedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(factory.requests.count, 1)
+        XCTAssertEqual(windows.presentedProjects.count, 1)
     }
 
     func testCaptureReadyNotificationConsumesOnlyCanonicalUUIDObject() throws {
@@ -94,8 +179,59 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(inbox.consumedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(inbox.acknowledgedIDs, [ChromeFixtures.captureID])
         XCTAssertEqual(windows.presentedProjects.count, 1)
+    }
+
+    func testUnknownCaptureNotificationDoesNotReportError() {
+        let inbox = StubPendingCaptureInbox(dataByID: [:])
+        let windows = SpyDocumentWindowPresenter()
+        var reportedErrors: [any Error] = []
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: StubNewProjectFactory(),
+            windows: windows,
+            reportError: { reportedErrors.append($0) }
+        )
+
+        coordinator.handleCaptureReadyNotification(
+            Notification(
+                name: CaptureInboxCoordinator.captureReadyNotification,
+                object: ChromeFixtures.captureID.uuidString
+            )
+        )
+
+        XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
+        XCTAssertTrue(reportedErrors.isEmpty)
+        XCTAssertTrue(windows.presentedProjects.isEmpty)
+    }
+
+    func testGenuineCaptureNotificationFailureIsReported() {
+        let inbox = StubPendingCaptureInbox()
+        inbox.claimErrorByID[ChromeFixtures.captureID] =
+            PendingCaptureInboxError.invalidPNG
+        let windows = SpyDocumentWindowPresenter()
+        var reportedErrors: [any Error] = []
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: StubNewProjectFactory(),
+            windows: windows,
+            reportError: { reportedErrors.append($0) }
+        )
+
+        coordinator.handleCaptureReadyNotification(
+            Notification(
+                name: CaptureInboxCoordinator.captureReadyNotification,
+                object: ChromeFixtures.captureID.uuidString
+            )
+        )
+
+        XCTAssertEqual(
+            reportedErrors.first as? PendingCaptureInboxError,
+            .invalidPNG
+        )
+        XCTAssertTrue(windows.presentedProjects.isEmpty)
     }
 
     func testCaptureReadyNotificationRejectsPathsAndUserInfo() {
@@ -127,7 +263,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
             )
         )
 
-        XCTAssertTrue(inbox.consumedIDs.isEmpty)
+        XCTAssertTrue(inbox.claimedIDs.isEmpty)
         XCTAssertTrue(windows.presentedProjects.isEmpty)
     }
 }

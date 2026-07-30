@@ -1,13 +1,6 @@
 import Foundation
-import ImageIO
-import UniformTypeIdentifiers
 
 struct HostRunner {
-    private static let maximumImageLength = 45 * 1024 * 1024
-    private static let maximumPixelDimension: UInt64 = 32_768
-    private static let maximumPixelCount: UInt64 = 64 * 1024 * 1024
-    private static let maximumDecodedImageBytes: UInt64 = 512 * 1024 * 1024
-    private static let worstCaseDecodedBytesPerPixel: UInt64 = 8
     private static let allowedMessageKeys: Set<String> = [
         "protocolVersion",
         "type",
@@ -70,19 +63,23 @@ struct HostRunner {
         guard let decodedLength = strictBase64DecodedLength(message.dataBase64) else {
             return failure(.invalidImage)
         }
-        guard decodedLength <= Self.maximumImageLength else {
+        guard
+            decodedLength
+                <= SafePNGValidationPolicy.maximumImageLength
+        else {
             return failure(.imageTooLarge)
         }
         guard let imageData = Data(base64Encoded: message.dataBase64) else {
             return failure(.invalidImage)
         }
-        switch validatePNG(imageData) {
-        case .valid:
-            break
-        case .invalid:
+        do {
+            _ = try SafePNGValidationPolicy.validate(imageData)
+        } catch SafePNGValidationError.invalidPNG {
             return failure(.invalidImage)
-        case .tooLarge:
+        } catch SafePNGValidationError.imageTooLarge {
             return failure(.imageTooLarge)
+        } catch {
+            return failure(.invalidImage)
         }
 
         let captureID: UUID
@@ -154,57 +151,6 @@ struct HostRunner {
         }
     }
 
-    private func validatePNG(_ data: Data) -> PNGValidationResult {
-        guard
-            let source = CGImageSourceCreateWithData(data as CFData, nil),
-            let sourceType = CGImageSourceGetType(source),
-            sourceType as String == UTType.png.identifier,
-            CGImageSourceGetCount(source) == 1,
-            let properties = CGImageSourceCopyPropertiesAtIndex(
-                source,
-                0,
-                nil
-            ) as? [CFString: Any],
-            let widthNumber = properties[kCGImagePropertyPixelWidth] as? NSNumber,
-            let heightNumber = properties[kCGImagePropertyPixelHeight] as? NSNumber,
-            widthNumber.int64Value > 0,
-            heightNumber.int64Value > 0
-        else {
-            return .invalid
-        }
-
-        let width = widthNumber.uint64Value
-        let height = heightNumber.uint64Value
-        guard
-            width <= Self.maximumPixelDimension,
-            height <= Self.maximumPixelDimension
-        else {
-            return .tooLarge
-        }
-
-        let pixelCount = width.multipliedReportingOverflow(by: height)
-        guard
-            !pixelCount.overflow,
-            pixelCount.partialValue <= Self.maximumPixelCount
-        else {
-            return .tooLarge
-        }
-        let decodedByteCount = pixelCount.partialValue.multipliedReportingOverflow(
-            by: Self.worstCaseDecodedBytesPerPixel
-        )
-        guard
-            !decodedByteCount.overflow,
-            decodedByteCount.partialValue <= Self.maximumDecodedImageBytes
-        else {
-            return .tooLarge
-        }
-
-        guard CGImageSourceCreateImageAtIndex(source, 0, nil) != nil else {
-            return .invalid
-        }
-        return .valid
-    }
-
     private func failure(_ code: NativeHostErrorCode) -> NativeHostReply {
         NativeHostReply(ok: false, captureId: nil, code: code)
     }
@@ -215,10 +161,4 @@ struct HostRunner {
         }
         try? FileHandle.standardError.write(contentsOf: data)
     }
-}
-
-private enum PNGValidationResult {
-    case invalid
-    case tooLarge
-    case valid
 }

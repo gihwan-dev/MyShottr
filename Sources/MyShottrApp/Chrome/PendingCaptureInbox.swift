@@ -6,10 +6,19 @@ struct StagedCapture: Equatable, Sendable {
     let pngURL: URL
 }
 
+struct PendingCaptureClaim: Equatable, Sendable {
+    let id: UUID
+    let pngData: Data
+    let processingURL: URL
+    let fileDevice: UInt64
+    let fileInode: UInt64
+}
+
 protocol PendingCaptureStoring: Sendable {
     func stage(pngData: Data) throws -> StagedCapture
     func pendingCaptures() throws -> [StagedCapture]
-    func consume(id: UUID) throws -> Data
+    func claim(id: UUID) throws -> PendingCaptureClaim
+    func acknowledge(_ claim: PendingCaptureClaim) throws
 }
 
 enum PendingCaptureInboxError: Error, Equatable {
@@ -22,24 +31,25 @@ enum PendingCaptureInboxError: Error, Equatable {
 }
 
 struct PendingCaptureInbox: PendingCaptureStoring {
-    private static let maximumImageLength = 45 * 1024 * 1024
-
     let rootURL: URL
+
     private let idGenerator: @Sendable () -> UUID
+    private let directorySync: @Sendable (Int32) -> Int32
 
     init(
         root: URL = PendingCaptureInbox.defaultRootURL,
-        idGenerator: @escaping @Sendable () -> UUID = UUID.init
+        idGenerator: @escaping @Sendable () -> UUID = UUID.init,
+        directorySync:
+            @escaping @Sendable (Int32) -> Int32 = Darwin.fsync
     ) throws {
         rootURL = root.standardizedFileURL
         self.idGenerator = idGenerator
+        self.directorySync = directorySync
         try createAndValidateRoot()
     }
 
     func stage(pngData: Data) throws -> StagedCapture {
-        guard pngData.count <= Self.maximumImageLength else {
-            throw PendingCaptureInboxError.imageTooLarge
-        }
+        try validatePNG(pngData)
 
         let rootDescriptor = try openRoot()
         defer {
@@ -47,7 +57,18 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         }
 
         let id = idGenerator()
-        let filename = captureFilename(id: id)
+        let filename = pendingFilename(id: id)
+        let processing = processingFilename(id: id)
+        guard try !entryExists(
+            processing,
+            rootDescriptor: rootDescriptor
+        ) else {
+            throw PendingCaptureInboxError.systemCallFailed(
+                name: "create staged capture",
+                code: EEXIST
+            )
+        }
+
         let descriptor = filename.withCString {
             Darwin.openat(
                 rootDescriptor,
@@ -75,14 +96,8 @@ struct PendingCaptureInbox: PendingCaptureStoring {
             guard closeStatus == 0 else {
                 throw systemCallError("close staged capture")
             }
-
-            do {
-                _ = try PNGMetadata.read(from: pngData)
-            } catch {
-                throw PendingCaptureInboxError.invalidPNG
-            }
-            guard Darwin.fsync(rootDescriptor) == 0 else {
-                throw systemCallError("fsync inbox")
+            guard directorySync(rootDescriptor) == 0 else {
+                throw systemCallError("fsync inbox after stage")
             }
 
             ownsFile = false
@@ -98,7 +113,7 @@ struct PendingCaptureInbox: PendingCaptureStoring {
                 filename.withCString {
                     _ = Darwin.unlinkat(rootDescriptor, $0, 0)
                 }
-                _ = Darwin.fsync(rootDescriptor)
+                _ = directorySync(rootDescriptor)
             }
             throw error
         }
@@ -113,10 +128,10 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         let filenames = try directoryFilenames(
             rootDescriptor: rootDescriptor
         )
-        var entries: [PendingEntry] = []
+        var entriesByID: [UUID: PendingEntry] = [:]
 
         for filename in filenames {
-            guard let id = captureID(from: filename) else {
+            guard let parsed = captureEntry(from: filename) else {
                 continue
             }
 
@@ -135,36 +150,157 @@ struct PendingCaptureInbox: PendingCaptureStoring {
                 }
                 throw systemCallError("inspect pending capture")
             }
-            entries.append(
-                PendingEntry(
-                    capture: StagedCapture(
-                        id: id,
-                        pngURL: rootURL.appendingPathComponent(filename)
-                    ),
-                    modifiedSeconds: metadata.st_mtimespec.tv_sec,
-                    modifiedNanoseconds: metadata.st_mtimespec.tv_nsec
-                )
+
+            let candidate = PendingEntry(
+                capture: StagedCapture(
+                    id: parsed.id,
+                    pngURL: rootURL.appendingPathComponent(filename)
+                ),
+                state: parsed.state,
+                modifiedSeconds: metadata.st_mtimespec.tv_sec,
+                modifiedNanoseconds: metadata.st_mtimespec.tv_nsec
             )
+            if let current = entriesByID[parsed.id],
+               current.state == .processing {
+                continue
+            }
+            entriesByID[parsed.id] = candidate
         }
 
-        return entries.sorted {
+        return entriesByID.values.sorted {
             if $0.modifiedSeconds != $1.modifiedSeconds {
                 return $0.modifiedSeconds < $1.modifiedSeconds
             }
             if $0.modifiedNanoseconds != $1.modifiedNanoseconds {
                 return $0.modifiedNanoseconds < $1.modifiedNanoseconds
             }
-            return $0.capture.id.uuidString < $1.capture.id.uuidString
+            return $0.capture.id.uuidString
+                < $1.capture.id.uuidString
         }.map(\.capture)
     }
 
-    func consume(id: UUID) throws -> Data {
+    func claim(id: UUID) throws -> PendingCaptureClaim {
         let rootDescriptor = try openRoot()
         defer {
             Darwin.close(rootDescriptor)
         }
 
-        let filename = captureFilename(id: id)
+        let pending = pendingFilename(id: id)
+        let processing = processingFilename(id: id)
+        if try entryExists(
+            processing,
+            rootDescriptor: rootDescriptor
+        ) {
+            if try entryExists(
+                pending,
+                rootDescriptor: rootDescriptor
+            ) {
+                try removeEntryDurably(
+                    pending,
+                    rootDescriptor: rootDescriptor,
+                    syncErrorName:
+                        "fsync inbox after duplicate removal"
+                )
+            }
+        } else {
+            let renameStatus = pending.withCString { pendingName in
+                processing.withCString { processingName in
+                    Darwin.renameatx_np(
+                        rootDescriptor,
+                        pendingName,
+                        rootDescriptor,
+                        processingName,
+                        UInt32(RENAME_EXCL)
+                    )
+                }
+            }
+            guard renameStatus == 0 else {
+                let code = errno
+                if code == ENOENT {
+                    throw PendingCaptureInboxError.captureNotFound
+                }
+                if code == EEXIST {
+                    if try entryExists(
+                        pending,
+                        rootDescriptor: rootDescriptor
+                    ) {
+                        try removeEntryDurably(
+                            pending,
+                            rootDescriptor: rootDescriptor,
+                            syncErrorName:
+                                "fsync inbox after duplicate removal"
+                        )
+                    }
+                    return try readClaimedCapture(
+                        id: id,
+                        filename: processing,
+                        rootDescriptor: rootDescriptor
+                    )
+                }
+                throw PendingCaptureInboxError.systemCallFailed(
+                    name: "claim pending capture",
+                    code: code
+                )
+            }
+            guard directorySync(rootDescriptor) == 0 else {
+                throw systemCallError("fsync inbox after claim")
+            }
+        }
+
+        return try readClaimedCapture(
+            id: id,
+            filename: processing,
+            rootDescriptor: rootDescriptor
+        )
+    }
+
+    func acknowledge(_ claim: PendingCaptureClaim) throws {
+        let rootDescriptor = try openRoot()
+        defer {
+            Darwin.close(rootDescriptor)
+        }
+
+        let filename = processingFilename(id: claim.id)
+        var metadata = stat()
+        let status = filename.withCString {
+            Darwin.fstatat(
+                rootDescriptor,
+                $0,
+                &metadata,
+                AT_SYMLINK_NOFOLLOW
+            )
+        }
+        guard status == 0 else {
+            if errno == ENOENT {
+                throw PendingCaptureInboxError.captureNotFound
+            }
+            throw systemCallError("inspect acknowledged capture")
+        }
+        guard
+            validOwnerOnlyRegularFile(metadata),
+            UInt64(metadata.st_dev) == claim.fileDevice,
+            UInt64(metadata.st_ino) == claim.fileInode
+        else {
+            throw PendingCaptureInboxError.invalidEntry
+        }
+
+        guard filename.withCString({
+            Darwin.unlinkat(rootDescriptor, $0, 0)
+        }) == 0 else {
+            throw systemCallError("remove acknowledged capture")
+        }
+        guard directorySync(rootDescriptor) == 0 else {
+            throw systemCallError(
+                "fsync inbox after acknowledge"
+            )
+        }
+    }
+
+    private func readClaimedCapture(
+        id: UUID,
+        filename: String,
+        rootDescriptor: Int32
+    ) throws -> PendingCaptureClaim {
         let descriptor = filename.withCString {
             Darwin.openat(
                 rootDescriptor,
@@ -175,14 +311,19 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         guard descriptor >= 0 else {
             let code = errno
             if code == ELOOP {
-                removeEntry(filename, from: rootDescriptor)
+                try removeEntryDurably(
+                    filename,
+                    rootDescriptor: rootDescriptor,
+                    syncErrorName:
+                        "fsync inbox after invalid entry removal"
+                )
                 throw PendingCaptureInboxError.invalidEntry
             }
             if code == ENOENT {
                 throw PendingCaptureInboxError.captureNotFound
             }
             throw PendingCaptureInboxError.systemCallFailed(
-                name: "open pending capture",
+                name: "open claimed capture",
                 code: code
             )
         }
@@ -191,19 +332,15 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         do {
             var metadata = stat()
             guard Darwin.fstat(descriptor, &metadata) == 0 else {
-                throw systemCallError("inspect pending capture")
+                throw systemCallError("inspect claimed capture")
             }
-            guard
-                metadata.st_mode & S_IFMT == S_IFREG,
-                metadata.st_uid == getuid(),
-                metadata.st_nlink == 1,
-                metadata.st_mode & 0o777 == 0o600
-            else {
+            guard validOwnerOnlyRegularFile(metadata) else {
                 throw PendingCaptureInboxError.invalidEntry
             }
             guard
                 metadata.st_size > 0,
-                metadata.st_size <= Self.maximumImageLength
+                metadata.st_size
+                    <= SafePNGValidationPolicy.maximumImageLength
             else {
                 throw PendingCaptureInboxError.imageTooLarge
             }
@@ -212,32 +349,68 @@ struct PendingCaptureInbox: PendingCaptureStoring {
                 from: descriptor,
                 expectedLength: Int(metadata.st_size)
             )
+            try validatePNG(data)
+
+            var pathMetadata = stat()
+            guard filename.withCString({
+                Darwin.fstatat(
+                    rootDescriptor,
+                    $0,
+                    &pathMetadata,
+                    AT_SYMLINK_NOFOLLOW
+                )
+            }) == 0 else {
+                throw systemCallError("reinspect claimed capture")
+            }
+            guard
+                validOwnerOnlyRegularFile(pathMetadata),
+                pathMetadata.st_dev == metadata.st_dev,
+                pathMetadata.st_ino == metadata.st_ino
+            else {
+                throw PendingCaptureInboxError.invalidEntry
+            }
+
             let closeStatus = Darwin.close(descriptor)
             descriptorIsOpen = false
             guard closeStatus == 0 else {
-                throw systemCallError("close pending capture")
+                throw systemCallError("close claimed capture")
             }
-            guard filename.withCString({
-                Darwin.unlinkat(rootDescriptor, $0, 0)
-            }) == 0 else {
-                throw systemCallError("remove consumed capture")
-            }
-            guard Darwin.fsync(rootDescriptor) == 0 else {
-                throw systemCallError("fsync inbox")
-            }
-
-            do {
-                _ = try PNGMetadata.read(from: data)
-            } catch {
-                throw PendingCaptureInboxError.invalidPNG
-            }
-            return data
+            return PendingCaptureClaim(
+                id: id,
+                pngData: data,
+                processingURL:
+                    rootURL.appendingPathComponent(filename),
+                fileDevice: UInt64(metadata.st_dev),
+                fileInode: UInt64(metadata.st_ino)
+            )
         } catch {
             if descriptorIsOpen {
                 Darwin.close(descriptor)
             }
-            removeEntry(filename, from: rootDescriptor)
+            switch error {
+            case PendingCaptureInboxError.invalidEntry,
+                 PendingCaptureInboxError.invalidPNG,
+                 PendingCaptureInboxError.imageTooLarge:
+                try removeEntryDurably(
+                    filename,
+                    rootDescriptor: rootDescriptor,
+                    syncErrorName:
+                        "fsync inbox after rejected capture"
+                )
+            default:
+                break
+            }
             throw error
+        }
+    }
+
+    private func validatePNG(_ data: Data) throws {
+        do {
+            _ = try SafePNGValidationPolicy.validate(data)
+        } catch SafePNGValidationError.invalidPNG {
+            throw PendingCaptureInboxError.invalidPNG
+        } catch SafePNGValidationError.imageTooLarge {
+            throw PendingCaptureInboxError.imageTooLarge
         }
     }
 
@@ -308,8 +481,43 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         return descriptor
     }
 
-    private func captureFilename(id: UUID) -> String {
+    private func entryExists(
+        _ filename: String,
+        rootDescriptor: Int32
+    ) throws -> Bool {
+        var metadata = stat()
+        let status = filename.withCString {
+            Darwin.fstatat(
+                rootDescriptor,
+                $0,
+                &metadata,
+                AT_SYMLINK_NOFOLLOW
+            )
+        }
+        if status == 0 {
+            return true
+        }
+        if errno == ENOENT {
+            return false
+        }
+        throw systemCallError("inspect inbox entry")
+    }
+
+    private func validOwnerOnlyRegularFile(
+        _ metadata: stat
+    ) -> Bool {
+        metadata.st_mode & S_IFMT == S_IFREG
+            && metadata.st_uid == getuid()
+            && metadata.st_nlink == 1
+            && metadata.st_mode & 0o777 == 0o600
+    }
+
+    private func pendingFilename(id: UUID) -> String {
         "\(id.uuidString).png"
+    }
+
+    private func processingFilename(id: UUID) -> String {
+        "\(id.uuidString).processing"
     }
 
     private func directoryFilenames(
@@ -355,27 +563,51 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         return filenames
     }
 
-    private func captureID(from filename: String) -> UUID? {
+    private func captureEntry(
+        from filename: String
+    ) -> (id: UUID, state: PendingEntryState)? {
+        let state: PendingEntryState
+        let suffix: String
+        if filename.hasSuffix(".png") {
+            state = .pending
+            suffix = ".png"
+        } else if filename.hasSuffix(".processing") {
+            state = .processing
+            suffix = ".processing"
+        } else {
+            return nil
+        }
+
         guard
-            filename.hasSuffix(".png"),
             let id = UUID(
-                uuidString: String(filename.dropLast(".png".count))
+                uuidString: String(filename.dropLast(suffix.count))
             ),
-            filename == captureFilename(id: id)
+            filename
+                == (state == .pending
+                    ? pendingFilename(id: id)
+                    : processingFilename(id: id))
         else {
             return nil
         }
-        return id
+        return (id, state)
     }
 
-    private func removeEntry(
+    private func removeEntryDurably(
         _ filename: String,
-        from rootDescriptor: Int32
-    ) {
-        filename.withCString {
-            _ = Darwin.unlinkat(rootDescriptor, $0, 0)
+        rootDescriptor: Int32,
+        syncErrorName: String
+    ) throws {
+        guard filename.withCString({
+            Darwin.unlinkat(rootDescriptor, $0, 0)
+        }) == 0 else {
+            if errno == ENOENT {
+                return
+            }
+            throw systemCallError("remove inbox entry")
         }
-        _ = Darwin.fsync(rootDescriptor)
+        guard directorySync(rootDescriptor) == 0 else {
+            throw systemCallError(syncErrorName)
+        }
     }
 
     private static func writeAll(
@@ -423,12 +655,15 @@ struct PendingCaptureInbox: PendingCaptureStoring {
                 if errno == EINTR {
                     continue
                 }
-                throw systemCallError("read pending capture")
+                throw systemCallError("read claimed capture")
             }
             if count == 0 {
                 break
             }
-            guard data.count + count <= maximumImageLength else {
+            guard
+                data.count + count
+                    <= SafePNGValidationPolicy.maximumImageLength
+            else {
                 throw PendingCaptureInboxError.imageTooLarge
             }
             data.append(buffer, count: count)
@@ -463,8 +698,14 @@ struct PendingCaptureInbox: PendingCaptureStoring {
     }
 }
 
+private enum PendingEntryState {
+    case pending
+    case processing
+}
+
 private struct PendingEntry {
     let capture: StagedCapture
+    let state: PendingEntryState
     let modifiedSeconds: Int
     let modifiedNanoseconds: Int
 }

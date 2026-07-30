@@ -1,3 +1,4 @@
+import Compression
 import Foundation
 @testable import MyShottr
 
@@ -11,6 +12,55 @@ enum ChromeFixtures {
     static let secondCaptureID = UUID(
         uuidString: "1278A262-54A9-4D7D-9AC5-411DA020756C"
     )!
+
+    static func compressibleGrayscalePNG(
+        width: Int,
+        height: Int
+    ) throws -> Data {
+        let rowByteCount = width + 1
+        let raw = [UInt8](
+            repeating: 0,
+            count: rowByteCount * height
+        )
+        let compressedCapacity = max(
+            1_024,
+            raw.count + raw.count / 100 + 64
+        )
+        var compressed = [UInt8](
+            repeating: 0,
+            count: compressedCapacity
+        )
+        let compressedByteCount = raw.withUnsafeBytes { rawBytes in
+            compressed.withUnsafeMutableBytes { compressedBytes in
+                compression_encode_buffer(
+                    compressedBytes.bindMemory(
+                        to: UInt8.self
+                    ).baseAddress!,
+                    compressedCapacity,
+                    rawBytes.bindMemory(to: UInt8.self).baseAddress!,
+                    raw.count,
+                    nil,
+                    COMPRESSION_ZLIB
+                )
+            }
+        }
+        guard compressedByteCount > 0 else {
+            throw ChromeFixtureError.compression
+        }
+
+        var image = Data([137, 80, 78, 71, 13, 10, 26, 10])
+        var header = Data()
+        header.append(bigEndian: UInt32(width))
+        header.append(bigEndian: UInt32(height))
+        header.append(contentsOf: [8, 0, 0, 0, 0])
+        image.appendPNGChunk(type: "IHDR", payload: header)
+        image.appendPNGChunk(
+            type: "IDAT",
+            payload: Data(compressed.prefix(compressedByteCount))
+        )
+        image.appendPNGChunk(type: "IEND", payload: Data())
+        return image
+    }
 
     static func appBundleURL(in root: URL) -> URL {
         root.appendingPathComponent("MyShottr.app", isDirectory: true)
@@ -36,7 +86,11 @@ final class StubPendingCaptureInbox:
 {
     var pending: [StagedCapture]
     var dataByID: [UUID: Data]
-    private(set) var consumedIDs: [UUID] = []
+    var claimErrorByID: [UUID: any Error] = [:]
+    var acknowledgeError: (any Error)?
+    private(set) var claimedIDs: [UUID] = []
+    private(set) var acknowledgeAttempts: [UUID] = []
+    private(set) var acknowledgedIDs: [UUID] = []
 
     init(
         pending: [StagedCapture] = [],
@@ -61,12 +115,32 @@ final class StubPendingCaptureInbox:
         pending
     }
 
-    func consume(id: UUID) throws -> Data {
-        consumedIDs.append(id)
-        guard let data = dataByID.removeValue(forKey: id) else {
-            throw ChromeFixtureError.captureNotFound
+    func claim(id: UUID) throws -> PendingCaptureClaim {
+        claimedIDs.append(id)
+        if let error = claimErrorByID[id] {
+            throw error
         }
-        return data
+        guard let data = dataByID[id] else {
+            throw PendingCaptureInboxError.captureNotFound
+        }
+        return PendingCaptureClaim(
+            id: id,
+            pngData: data,
+            processingURL: URL(
+                fileURLWithPath: "/inbox/\(id.uuidString).processing"
+            ),
+            fileDevice: 1,
+            fileInode: UInt64(abs(id.hashValue))
+        )
+    }
+
+    func acknowledge(_ claim: PendingCaptureClaim) throws {
+        acknowledgeAttempts.append(claim.id)
+        if let acknowledgeError {
+            throw acknowledgeError
+        }
+        acknowledgedIDs.append(claim.id)
+        dataByID.removeValue(forKey: claim.id)
     }
 }
 
@@ -104,6 +178,36 @@ final class SpyChromeNewProjectFactory:
     }
 }
 
-private enum ChromeFixtureError: Error {
-    case captureNotFound
+enum ChromeFixtureError: Error, Equatable {
+    case acknowledgment
+    case compression
+}
+
+private extension Data {
+    mutating func append(bigEndian value: UInt32) {
+        var encoded = value.bigEndian
+        Swift.withUnsafeBytes(of: &encoded) {
+            append(contentsOf: $0)
+        }
+    }
+
+    mutating func appendPNGChunk(type: String, payload: Data) {
+        let typeData = Data(type.utf8)
+        append(bigEndian: UInt32(payload.count))
+        append(typeData)
+        append(payload)
+        append(bigEndian: Self.crc32(typeData + payload))
+    }
+
+    static func crc32(_ data: Data) -> UInt32 {
+        data.reduce(UInt32.max) { crc, byte in
+            var value = crc ^ UInt32(byte)
+            for _ in 0..<8 {
+                value =
+                    (value >> 1)
+                    ^ (value & 1 == 1 ? 0xEDB8_8320 : 0)
+            }
+            return value
+        } ^ UInt32.max
+    }
 }

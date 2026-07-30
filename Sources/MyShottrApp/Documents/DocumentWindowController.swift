@@ -210,7 +210,7 @@ private extension NSToolbarItem.Identifier {
 @MainActor
 protocol EditorWindowControlling: AnyObject {
     var onClose: (() -> Void)? { get set }
-    func presentWindow()
+    func presentWindow() throws
 }
 
 extension DocumentWindowController: EditorWindowControlling {

@@ -109,14 +109,78 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
 
         XCTAssertEqual(events, ["install", "coordinator", "window"])
-        XCTAssertEqual(inbox.consumedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(inbox.acknowledgedIDs, [ChromeFixtures.captureID])
         XCTAssertEqual(delegate.activeDocumentWindowCount, 1)
         XCTAssertEqual(application.activationPolicies, [.accessory, .regular])
         XCTAssertEqual(application.activationCount, 1)
         XCTAssertEqual(window.presentationCount, 1)
     }
 
-    func testPresentingDocumentRetainsWindowAndActivatesRegularApp() {
+    func testRegistrationFailureStillStartsPendingChromeImport() {
+        let application = SpyApplicationLifecycle()
+        let window = SpyEditorWindowController()
+        let inbox = StubPendingCaptureInbox(
+            pending: [
+                StagedCapture(
+                    id: ChromeFixtures.captureID,
+                    pngURL: URL(
+                        fileURLWithPath: "/inbox/\(ChromeFixtures.captureID.uuidString).png"
+                    )
+                ),
+            ]
+        )
+        var reportedErrors: [any Error] = []
+        var events: [String] = []
+        let delegate = AppDelegate(
+            applicationLifecycle: application.lifecycle,
+            documentWindowFactory: { _, _ in
+                events.append("window")
+                return window
+            },
+            nativeMessagingHostInstaller: {
+                events.append("install")
+                throw AppDelegateLifecycleTestError.registration
+            },
+            chromeCaptureCoordinatorFactory: {
+                projectFactory,
+                windows in
+                events.append("coordinator")
+                return CaptureInboxCoordinator(
+                    inbox: inbox,
+                    projectFactory: projectFactory,
+                    windows: windows,
+                    reportError: { reportedErrors.append($0) }
+                )
+            },
+            launchErrorReporter: {
+                events.append("report")
+                reportedErrors.append($0)
+            },
+            hotKeyAPI: makeNoOpHotKeyAPI()
+        )
+
+        delegate.applicationDidFinishLaunching(
+            Notification(
+                name: NSApplication.didFinishLaunchingNotification
+            )
+        )
+
+        XCTAssertEqual(
+            reportedErrors.first as? AppDelegateLifecycleTestError,
+            .registration
+        )
+        XCTAssertEqual(
+            events,
+            ["install", "coordinator", "window", "report"]
+        )
+        XCTAssertEqual(inbox.claimedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(inbox.acknowledgedIDs, [ChromeFixtures.captureID])
+        XCTAssertEqual(delegate.activeDocumentWindowCount, 1)
+        XCTAssertEqual(window.presentationCount, 1)
+    }
+
+    func testPresentingDocumentRetainsWindowAndActivatesRegularApp() throws {
         let application = SpyApplicationLifecycle()
         let window = SpyEditorWindowController()
         let delegate = AppDelegate(
@@ -124,7 +188,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
             documentWindowFactory: { _, _ in window }
         )
 
-        delegate.present(project: ProjectFixtures.project(text: "Capture"))
+        try delegate.present(
+            project: ProjectFixtures.project(text: "Capture")
+        )
 
         XCTAssertEqual(delegate.activeDocumentWindowCount, 1)
         XCTAssertEqual(application.activationPolicies, [.regular])
@@ -132,7 +198,32 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(window.presentationCount, 1)
     }
 
-    func testClosingLastDocumentReturnsToAccessoryPolicy() {
+    func testPresentationFailureDoesNotRetainOrActivateWindow() {
+        let application = SpyApplicationLifecycle()
+        let window = SpyEditorWindowController()
+        window.presentationError =
+            AppDelegateLifecycleTestError.presentation
+        let delegate = AppDelegate(
+            applicationLifecycle: application.lifecycle,
+            documentWindowFactory: { _, _ in window }
+        )
+
+        XCTAssertThrowsError(
+            try delegate.present(
+                project: ProjectFixtures.project(text: "Capture")
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? AppDelegateLifecycleTestError,
+                .presentation
+            )
+        }
+        XCTAssertEqual(delegate.activeDocumentWindowCount, 0)
+        XCTAssertTrue(application.activationPolicies.isEmpty)
+        XCTAssertEqual(application.activationCount, 0)
+    }
+
+    func testClosingLastDocumentReturnsToAccessoryPolicy() throws {
         let application = SpyApplicationLifecycle()
         let firstWindow = SpyEditorWindowController()
         let secondWindow = SpyEditorWindowController()
@@ -144,8 +235,12 @@ final class AppDelegateLifecycleTests: XCTestCase {
             applicationLifecycle: application.lifecycle,
             documentWindowFactory: { _, _ in windows.removeFirst() }
         )
-        delegate.present(project: ProjectFixtures.project(text: "First"))
-        delegate.present(project: ProjectFixtures.project(text: "Second"))
+        try delegate.present(
+            project: ProjectFixtures.project(text: "First")
+        )
+        try delegate.present(
+            project: ProjectFixtures.project(text: "Second")
+        )
 
         firstWindow.close()
 
@@ -181,6 +276,11 @@ private enum StubProjectStoreError: Error {
     case unexpectedSave
 }
 
+private enum AppDelegateLifecycleTestError: Error, Equatable {
+    case presentation
+    case registration
+}
+
 private func makeNoOpHotKeyAPI() -> GlobalHotKeyAPI {
     GlobalHotKeyAPI(
         installEventHandler: { _, _, outputHandler in
@@ -212,9 +312,13 @@ private func makeEmptyChromeCoordinator(
 @MainActor
 private final class SpyEditorWindowController: EditorWindowControlling {
     var onClose: (() -> Void)?
+    var presentationError: (any Error)?
     private(set) var presentationCount = 0
 
-    func presentWindow() {
+    func presentWindow() throws {
+        if let presentationError {
+            throw presentationError
+        }
         presentationCount += 1
     }
 

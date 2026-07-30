@@ -33,6 +33,7 @@ final class AppDelegate:
         _ projectFactory: any NewProjectCreating,
         _ windows: any DocumentWindowPresenting
     ) throws -> CaptureInboxCoordinator
+    typealias LaunchErrorReporter = (any Error) -> Void
 
     private let dependencies: AppDependencies
     private let applicationLifecycle: ApplicationLifecycle
@@ -41,6 +42,7 @@ final class AppDelegate:
         NativeMessagingHostInstaller
     private let chromeCaptureCoordinatorFactory:
         ChromeCaptureCoordinatorFactory
+    private let launchErrorReporter: LaunchErrorReporter
     private let hotKeyAPI: GlobalHotKeyAPI
     private var documentWindows: [any EditorWindowControlling] = []
     private var captureCoordinator: RegionCaptureCoordinator?
@@ -92,6 +94,10 @@ final class AppDelegate:
                     windows: windows
                 )
             },
+        launchErrorReporter:
+            @escaping LaunchErrorReporter = {
+                NSAlert(error: $0).runModal()
+            },
         hotKeyAPI: GlobalHotKeyAPI = .live
     ) {
         self.dependencies = dependencies
@@ -101,6 +107,7 @@ final class AppDelegate:
             nativeMessagingHostInstaller
         self.chromeCaptureCoordinatorFactory =
             chromeCaptureCoordinatorFactory
+        self.launchErrorReporter = launchErrorReporter
         self.hotKeyAPI = hotKeyAPI
         super.init()
     }
@@ -114,8 +121,15 @@ final class AppDelegate:
         )
         captureCoordinator = coordinator
 
+        var registrationError: (any Error)?
         do {
             try nativeMessagingHostInstaller()
+        } catch {
+            registrationError = error
+        }
+
+        var chromeStartupError: (any Error)?
+        do {
             let chromeCoordinator = try chromeCaptureCoordinatorFactory(
                 dependencies.projectFactory,
                 self
@@ -123,7 +137,14 @@ final class AppDelegate:
             chromeCaptureCoordinator = chromeCoordinator
             try chromeCoordinator.start()
         } catch {
-            NSAlert(error: error).runModal()
+            chromeStartupError = error
+        }
+
+        if let registrationError {
+            launchErrorReporter(registrationError)
+        }
+        if let chromeStartupError {
+            launchErrorReporter(chromeStartupError)
         }
 
         do {
@@ -153,8 +174,8 @@ final class AppDelegate:
         for url in urls { openProject(at: url) }
     }
 
-    func present(project: MyShottrProject) {
-        openDocument(project: project, projectURL: nil)
+    func present(project: MyShottrProject) throws {
+        try openDocument(project: project, projectURL: nil)
     }
 
     private func captureArea() {
@@ -191,7 +212,7 @@ final class AppDelegate:
     private func openProject(at url: URL) {
         do {
             let project = try dependencies.projectStore.load(from: url)
-            openDocument(project: project, projectURL: url)
+            try openDocument(project: project, projectURL: url)
         } catch {
             NSAlert(error: error).runModal()
         }
@@ -200,31 +221,27 @@ final class AppDelegate:
     private func openDocument(
         project: MyShottrProject,
         projectURL: URL?
-    ) {
-        do {
-            let controller = try documentWindowFactory(
-                project,
-                projectURL
-            )
-            controller.onClose = { [weak self, weak controller] in
-                guard let self, let controller else {
-                    return
-                }
-                self.documentWindows.removeAll {
-                    $0 === controller
-                }
-                if self.documentWindows.isEmpty {
-                    self.applicationLifecycle.setActivationPolicy(
-                        .accessory
-                    )
-                }
+    ) throws {
+        let controller = try documentWindowFactory(
+            project,
+            projectURL
+        )
+        controller.onClose = { [weak self, weak controller] in
+            guard let self, let controller else {
+                return
             }
-            documentWindows.append(controller)
-            applicationLifecycle.setActivationPolicy(.regular)
-            applicationLifecycle.activate()
-            controller.presentWindow()
-        } catch {
-            NSAlert(error: error).runModal()
+            self.documentWindows.removeAll {
+                $0 === controller
+            }
+            if self.documentWindows.isEmpty {
+                self.applicationLifecycle.setActivationPolicy(
+                    .accessory
+                )
+            }
         }
+        try controller.presentWindow()
+        documentWindows.append(controller)
+        applicationLifecycle.setActivationPolicy(.regular)
+        applicationLifecycle.activate()
     }
 }

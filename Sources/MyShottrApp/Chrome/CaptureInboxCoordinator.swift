@@ -44,6 +44,8 @@ final class CaptureInboxCoordinator: NSObject {
     private let now: () -> Date
     private let notificationAPI: CaptureReadyNotificationAPI
     private let reportError: (any Error) -> Void
+    private var presentedAwaitingAcknowledgment:
+        [UUID: PendingCaptureClaim] = [:]
     private var isObserving = false
 
     init(
@@ -102,21 +104,33 @@ final class CaptureInboxCoordinator: NSObject {
     }
 
     func consume(id: UUID) throws {
+        if let presentedClaim =
+            presentedAwaitingAcknowledgment[id] {
+            try inbox.acknowledge(presentedClaim)
+            presentedAwaitingAcknowledgment.removeValue(
+                forKey: id
+            )
+            return
+        }
+
         guard let windows else {
             throw CaptureInboxCoordinatorError.windowPresenterUnavailable
         }
-        let pngData = try inbox.consume(id: id)
+        let claim = try inbox.claim(id: id)
         let artifact = try CaptureArtifact(
             id: id,
             sourceKind: .chromeVisibleViewport,
-            pngData: pngData,
+            pngData: claim.pngData,
             scale: nil
         )
         let project = try projectFactory.make(
             artifact: artifact,
             now: now()
         )
-        windows.present(project: project)
+        try windows.present(project: project)
+        presentedAwaitingAcknowledgment[id] = claim
+        try inbox.acknowledge(claim)
+        presentedAwaitingAcknowledgment.removeValue(forKey: id)
     }
 
     func handleCaptureReadyNotification(_ notification: Notification) {
@@ -132,6 +146,8 @@ final class CaptureInboxCoordinator: NSObject {
 
         do {
             try consume(id: id)
+        } catch PendingCaptureInboxError.captureNotFound {
+            return
         } catch {
             reportError(error)
         }

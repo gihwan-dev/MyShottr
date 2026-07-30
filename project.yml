@@ -18,6 +18,7 @@ targets:
         link: false
     sources:
       - Sources/MyShottrApp
+      - Sources/MyShottrShared
       - path: Resources/Assets.xcassets
         buildPhase: resources
       - path: Config/chrome-extension-key.b64
@@ -87,6 +88,7 @@ targets:
     platform: macOS
     sources:
       - Sources/MyShottrNativeHost
+      - Sources/MyShottrShared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.myshottr.native-host
@@ -98,6 +100,7 @@ targets:
       - path: Sources/MyShottrNativeHost
         excludes:
           - main.swift
+      - Sources/MyShottrShared
     dependencies:
       - target: MyShottrNativeHost
 schemes:

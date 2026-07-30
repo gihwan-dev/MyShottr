@@ -165,6 +165,27 @@ final class RegionCaptureCoordinatorTests: XCTestCase {
         XCTAssertTrue(windows.presentedProjects.isEmpty)
     }
 
+    func testWindowPresentationFailureIsReturned() async throws {
+        let windows = SpyDocumentWindowPresenter()
+        windows.presentationError = CapturePipelineTestError.presentation
+        let coordinator = RegionCaptureCoordinator(
+            selector: FakeRegionSelector(
+                result: .confirmed(CaptureFixtures.selection)
+            ),
+            capturer: FakeScreenCapturer(result: try artifact()),
+            projectFactory: StubNewProjectFactory(),
+            windows: windows
+        )
+
+        let error = await coordinator.captureArea()
+
+        XCTAssertEqual(
+            error as? CapturePipelineTestError,
+            .presentation
+        )
+        XCTAssertTrue(windows.presentedProjects.isEmpty)
+    }
+
     private func artifact() throws -> CaptureArtifact {
         try CaptureArtifact(
             id: artifactID,
