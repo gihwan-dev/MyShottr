@@ -89,6 +89,10 @@ describe("runCaptureAction", () => {
     ["INVALID_IMAGE", "MyShottr could not read the captured PNG."],
     ["IMAGE_TOO_LARGE", "Capture is too large for MyShottr."],
     ["STAGING_FAILED", "MyShottr could not import the capture."],
+    [
+      "APP_ACTIVATION_FAILED",
+      "Capture saved. Open MyShottr to import.",
+    ],
   ] as const)(
     "shows the bounded helper failure %s instead of reporting success",
     async (code, title) => {

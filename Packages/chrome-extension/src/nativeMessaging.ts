@@ -11,6 +11,7 @@ export const NATIVE_HOST_ERROR_CODES = [
   "INVALID_IMAGE",
   "IMAGE_TOO_LARGE",
   "STAGING_FAILED",
+  "APP_ACTIVATION_FAILED",
 ] as const;
 
 export type NativeHostErrorCode = (typeof NATIVE_HOST_ERROR_CODES)[number];

@@ -43,6 +43,11 @@ emits the other six codes. A helper failure reply contains only `ok` and
 `code`, stays below the 1 MiB reply limit, and never includes a raw activation
 or staging error.
 
+`APP_ACTIVATION_FAILED` means the PNG is already durably staged for MyShottr's
+next launch scan. The extension shows an `ERR` badge with the bounded title
+`Capture saved. Open MyShottr to import.` It does not resend the capture or
+expose the helper's activation diagnostic.
+
 Run the combined product gate:
 
 ```bash

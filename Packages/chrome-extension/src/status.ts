@@ -10,6 +10,7 @@ export type CaptureErrorCode =
   | "UNSUPPORTED_CAPTURE_MODE";
 
 const FAILURE_TITLES: Record<CaptureErrorCode, string> = {
+  APP_ACTIVATION_FAILED: "Capture saved. Open MyShottr to import.",
   CAPTURE_FAILED: "MyShottr could not capture this page.",
   CAPTURE_TOO_LARGE: "Capture is too large for MyShottr.",
   HOST_UNAVAILABLE: "Open MyShottr once, then retry.",

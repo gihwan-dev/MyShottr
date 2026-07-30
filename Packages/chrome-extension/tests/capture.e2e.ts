@@ -8,6 +8,8 @@ type TestSeamSnapshot = {
 
 type TestSeam = {
   runCaptureAction(): Promise<TestSeamSnapshot>;
+  setNextNativeReply(reply: unknown): void;
+  snapshot(): TestSeamSnapshot;
 };
 
 test("loads the built MV3 extension with only approved permissions", async ({
@@ -70,5 +72,56 @@ test("invokes the captureVisibleTab seam exactly once for each action", async ({
   expect(second).toEqual({
     captureVisibleTabInvocationCount: 2,
     nativeMessageInvocationCount: 2,
+  });
+});
+
+test("shows the actionable durable-capture activation failure", async ({
+  serviceWorker,
+}) => {
+  await expect
+    .poll(() =>
+      serviceWorker.evaluate(
+        () => "__myshottrE2E" in globalThis,
+      )
+    )
+    .toBe(true);
+
+  const result = await serviceWorker.evaluate(async () => {
+    const seam = (
+      globalThis as typeof globalThis & { __myshottrE2E: TestSeam }
+    ).__myshottrE2E;
+    seam.setNextNativeReply({
+      ok: false,
+      code: "APP_ACTIVATION_FAILED",
+    });
+
+    let code: string | undefined;
+    try {
+      await seam.runCaptureAction();
+    } catch (error) {
+      if (
+        typeof error === "object"
+        && error !== null
+        && "code" in error
+        && typeof error.code === "string"
+      ) {
+        code = error.code;
+      }
+    }
+
+    return {
+      code,
+      title: await chrome.action.getTitle({}),
+      snapshot: seam.snapshot(),
+    };
+  });
+
+  expect(result).toEqual({
+    code: "APP_ACTIVATION_FAILED",
+    title: "Capture saved. Open MyShottr to import.",
+    snapshot: {
+      captureVisibleTabInvocationCount: 1,
+      nativeMessageInvocationCount: 1,
+    },
   });
 });

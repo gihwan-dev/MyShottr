@@ -7,6 +7,10 @@ import type { BrowserCaptureMode } from "./service-worker";
 
 const TEST_PNG_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const DEFAULT_NATIVE_CAPTURE_REPLY = {
+  ok: true,
+  captureId: "12345678-1234-1234-1234-123456789ABC",
+} as const;
 
 type TestSeamSnapshot = {
   captureVisibleTabInvocationCount: number;
@@ -18,6 +22,12 @@ type RunCaptureAction = (mode?: BrowserCaptureMode) => Promise<void>;
 export function installE2ETestSeam(runCaptureAction: RunCaptureAction): void {
   let captureVisibleTabInvocationCount = 0;
   let nativeMessageInvocationCount = 0;
+  let nextNativeReply: unknown = DEFAULT_NATIVE_CAPTURE_REPLY;
+
+  const snapshot = (): TestSeamSnapshot => ({
+    captureVisibleTabInvocationCount,
+    nativeMessageInvocationCount,
+  });
 
   setCaptureVisibleTabForTesting(async (options) => {
     if (options.format !== "png") {
@@ -29,10 +39,9 @@ export function installE2ETestSeam(runCaptureAction: RunCaptureAction): void {
   setSendNativeMessageForTesting(async (hostName, message) => {
     assertNativeMessage(hostName, message);
     nativeMessageInvocationCount += 1;
-    return {
-      ok: true,
-      captureId: "12345678-1234-1234-1234-123456789ABC",
-    };
+    const reply = nextNativeReply;
+    nextNativeReply = DEFAULT_NATIVE_CAPTURE_REPLY;
+    return reply;
   });
 
   Object.defineProperty(globalThis, "__myshottrE2E", {
@@ -42,10 +51,13 @@ export function installE2ETestSeam(runCaptureAction: RunCaptureAction): void {
     value: {
       async runCaptureAction(): Promise<TestSeamSnapshot> {
         await runCaptureAction();
-        return {
-          captureVisibleTabInvocationCount,
-          nativeMessageInvocationCount,
-        };
+        return snapshot();
+      },
+      setNextNativeReply(reply: unknown): void {
+        nextNativeReply = reply;
+      },
+      snapshot(): TestSeamSnapshot {
+        return snapshot();
       },
     },
   });

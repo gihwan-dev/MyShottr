@@ -43,6 +43,7 @@ describe("sendCaptureToNativeHost", () => {
     "INVALID_IMAGE",
     "IMAGE_TOO_LARGE",
     "STAGING_FAILED",
+    "APP_ACTIVATION_FAILED",
   ])("surfaces the bounded helper failure %s", async (code) => {
     sendNativeMessage.mockResolvedValue({ ok: false, code });
 
