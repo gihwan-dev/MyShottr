@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { EditorDocument } from "./elements";
 
 const PaletteColorSchema = z.enum(["#000000", "#FF4D4F", "#1677FF", "#FADB14"]);
 const StrokeWidthSchema = z.union([z.literal(2), z.literal(4), z.literal(8)]);
@@ -96,13 +97,26 @@ export const EditorDefaultsSchema = z.object({
   opacity: OpacitySchema,
 }).strict();
 
-export const EditorDocumentSchema = z.object({
-  schemaVersion: z.literal(1),
+const PresentationSchema = z.object({
+  type: z.literal("none"),
+}).strict();
+
+const documentBody = {
   sourcePixelWidth: FiniteNumberSchema.positive(),
   sourcePixelHeight: FiniteNumberSchema.positive(),
   elements: z.array(EditorElementSchema),
   defaults: EditorDefaultsSchema,
-}).strict().superRefine((document, context) => {
+};
+
+const LegacyEditorDocumentSchema = z.object({
+  schemaVersion: z.literal(1),
+  ...documentBody,
+}).strict();
+
+function validateUniqueElementIdentity(
+  document: { elements: Array<{ id: string; zIndex: number }> },
+  context: z.RefinementCtx,
+): void {
   const ids = new Set<string>();
   const zIndices = new Set<number>();
 
@@ -125,4 +139,23 @@ export const EditorDocumentSchema = z.object({
     }
     zIndices.add(element.zIndex);
   });
-});
+}
+
+export const EditorDocumentSchema = z.object({
+  schemaVersion: z.literal(2),
+  ...documentBody,
+  presentation: PresentationSchema,
+}).strict().superRefine(validateUniqueElementIdentity);
+
+export function parseEditorDocument(input: unknown): EditorDocument {
+  const current = EditorDocumentSchema.safeParse(input);
+  if (current.success) return current.data;
+
+  const legacy = LegacyEditorDocumentSchema.safeParse(input);
+  if (!legacy.success) throw current.error;
+  return EditorDocumentSchema.parse({
+    ...legacy.data,
+    schemaVersion: 2,
+    presentation: { type: "none" },
+  });
+}

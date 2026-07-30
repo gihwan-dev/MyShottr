@@ -30,10 +30,11 @@ describe("canvas element bounds", () => {
 
   it("keeps history usable after an opposite-edge transformer attempt", () => {
     const history = createHistoryStore({
-      schemaVersion: 1,
+      schemaVersion: 2,
       sourcePixelWidth: 100,
       sourcePixelHeight: 100,
       elements: [{ ...fixtureRect(), width: 20, height: 20 }],
+      presentation: { type: "none" },
       defaults: {
         color: "#1677FF",
         strokeWidth: 4,

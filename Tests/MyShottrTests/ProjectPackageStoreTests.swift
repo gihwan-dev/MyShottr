@@ -9,7 +9,9 @@ final class ProjectPackageStoreTests: TemporaryDirectoryTestCase {
 
         try ProjectPackageStore().save(project, to: url)
 
-        XCTAssertEqual(try ProjectPackageStore().load(from: url), project)
+        let loadedProject = try ProjectPackageStore().load(from: url)
+        XCTAssertEqual(loadedProject, project)
+        XCTAssertEqual(try annotationSchemaVersion(loadedProject.annotationJSON), 2)
         XCTAssertEqual(
             try FileManager.default.contentsOfDirectory(atPath: url.path).sorted(),
             ["document.json", "manifest.json", "original.png"]
@@ -60,7 +62,7 @@ final class ProjectPackageStoreTests: TemporaryDirectoryTestCase {
     func testRejectsDocumentWithUnsupportedSchemaVersion() throws {
         let url = try ProjectFixtures.package()
         defer { try? FileManager.default.removeItem(at: url) }
-        try Data("{\"schemaVersion\":2}".utf8).write(to: url.appendingPathComponent("document.json"))
+        try Data("{\"schemaVersion\":3}".utf8).write(to: url.appendingPathComponent("document.json"))
 
         XCTAssertThrowsError(try ProjectPackageStore().load(from: url)) {
             XCTAssertEqual($0 as? ProjectPackageError, .invalidAnnotationJSON)
@@ -86,5 +88,26 @@ final class ProjectPackageStoreTests: TemporaryDirectoryTestCase {
         try ProjectPackageStore().save(replacementProject, to: url)
 
         XCTAssertEqual(try ProjectPackageStore().load(from: url), replacementProject)
+    }
+
+    func testLoadsSchemaOneAsSchemaTwoAndSavesOnlySchemaTwo() throws {
+        let packageURL = try ProjectFixtures.package()
+        defer { try? FileManager.default.removeItem(at: packageURL) }
+        try ProjectFixtures.annotationJSON(schemaVersion: 1)
+            .write(to: packageURL.appendingPathComponent("document.json"))
+
+        let store = ProjectPackageStore()
+        let loaded = try store.load(from: packageURL)
+        XCTAssertEqual(try annotationSchemaVersion(loaded.annotationJSON), 2)
+
+        let savedURL = temporaryDirectory.appendingPathComponent("Migrated.myshottr")
+        try store.save(loaded, to: savedURL)
+        let saved = try Data(contentsOf: savedURL.appendingPathComponent("document.json"))
+        XCTAssertEqual(try annotationSchemaVersion(saved), 2)
+    }
+
+    private func annotationSchemaVersion(_ data: Data) throws -> Int {
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return try XCTUnwrap(object["schemaVersion"] as? Int)
     }
 }

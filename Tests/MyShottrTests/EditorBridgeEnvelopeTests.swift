@@ -42,10 +42,11 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
     func testRejectsUnknownElementsWithoutOpeningTheDocument() throws {
         let session = DocumentSession()
         let project = try project(annotationDocument: [
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "sourcePixelWidth": 2,
             "sourcePixelHeight": 2,
             "elements": [["type": "video"]],
+            "presentation": ["type": "none"],
             "defaults": [:],
         ])
 
@@ -60,10 +61,11 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
     func testRejectsDimensionMismatchWithoutInstallingAnyElements() throws {
         let session = DocumentSession()
         let project = try project(annotationDocument: [
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "sourcePixelWidth": 3,
             "sourcePixelHeight": 2,
             "elements": [],
+            "presentation": ["type": "none"],
             "defaults": [:],
         ])
 
@@ -184,7 +186,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
 
     private func validDocument() -> [String: Any] {
         [
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "sourcePixelWidth": 2,
             "sourcePixelHeight": 2,
             "elements": [[
@@ -193,6 +195,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
                 "zIndex": 0, "seed": 1, "strokeColor": "#1677FF", "strokeWidth": 4,
                 "fillColor": NSNull(), "roughness": 1,
             ]],
+            "presentation": ["type": "none"],
             "defaults": ["color": "#1677FF", "strokeWidth": 4, "textSize": 24, "roughness": 1, "opacity": 1],
         ]
     }

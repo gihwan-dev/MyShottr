@@ -342,10 +342,11 @@ final class EditorWebViewRuntimeTests: XCTestCase {
 
     private func validProject() throws -> MyShottrProject {
         let annotationJSON = try JSONSerialization.data(withJSONObject: [
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "sourcePixelWidth": 2,
             "sourcePixelHeight": 2,
             "elements": [],
+            "presentation": ["type": "none"],
             "defaults": ["color": "#1677FF", "strokeWidth": 4, "textSize": 24, "roughness": 1, "opacity": 1],
         ])
         return MyShottrProject(

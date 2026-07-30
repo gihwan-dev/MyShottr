@@ -11,10 +11,11 @@ export const DEFAULT_EDITOR_DEFAULTS: EditorDefaults = {
 
 export function createEmptyDocument(): EditorDocument {
   return EditorDocumentSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourcePixelWidth: 1,
     sourcePixelHeight: 1,
     elements: [],
+    presentation: { type: "none" },
     defaults: DEFAULT_EDITOR_DEFAULTS,
   });
 }

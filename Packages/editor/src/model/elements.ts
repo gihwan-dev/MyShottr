@@ -97,12 +97,15 @@ export type CreationGesture =
   | { kind: "point"; point: Point };
 
 export type EditorDocument = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   sourcePixelWidth: number;
   sourcePixelHeight: number;
   elements: EditorElement[];
+  presentation: Presentation;
   defaults: EditorDefaults;
 };
+
+export type Presentation = { type: "none" };
 
 export type EditorCommand =
   | { type: "create"; element: EditorElement }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { allElementFixtures, fixtureDocument, fixtureRect } from "../test/fixtures";
-import { EditorDocumentSchema, EditorElementSchema } from "./schema";
+import { EditorDocumentSchema, EditorElementSchema, parseEditorDocument } from "./schema";
 
 describe("EditorDocumentSchema", () => {
   it("rejects an unknown element type", () => {
@@ -33,5 +33,32 @@ describe("EditorDocumentSchema", () => {
     expect(() => EditorDocumentSchema.parse(fixtureDocument({
       elements: [fixtureRect(), { ...fixtureRect(), zIndex: 1 }],
     }))).toThrow();
+  });
+
+  it("migrates a schema-1 document to presentation none", () => {
+    const legacy = {
+      ...fixtureDocument(),
+      schemaVersion: 1,
+    };
+    delete (legacy as Record<string, unknown>).presentation;
+
+    expect(parseEditorDocument(legacy)).toMatchObject({
+      schemaVersion: 2,
+      presentation: { type: "none" },
+    });
+  });
+
+  it("rejects an unsupported newer document", () => {
+    expect(() => parseEditorDocument({
+      ...fixtureDocument(),
+      schemaVersion: 3,
+    })).toThrow();
+  });
+
+  it("requires presentation none in schema 2", () => {
+    expect(() => EditorDocumentSchema.parse({
+      ...fixtureDocument(),
+      presentation: { type: "desktopMockup" },
+    })).toThrow();
   });
 });

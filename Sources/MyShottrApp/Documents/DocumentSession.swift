@@ -95,13 +95,15 @@ final class DocumentSession {
         }
         guard manifest.formatVersion == ProjectManifest.currentFormatVersion,
               let document = object as? [String: Any],
-              Set(document.keys) == ["schemaVersion", "sourcePixelWidth", "sourcePixelHeight", "elements", "defaults"],
-              let schemaVersion = integer(document["schemaVersion"]), schemaVersion == 1,
+              Set(document.keys) == ["schemaVersion", "sourcePixelWidth", "sourcePixelHeight", "elements", "presentation", "defaults"],
+              let schemaVersion = integer(document["schemaVersion"]), schemaVersion == 2,
               let sourcePixelWidth = integer(document["sourcePixelWidth"]),
               let sourcePixelHeight = integer(document["sourcePixelHeight"]),
               sourcePixelWidth == manifest.sourcePixelWidth,
               sourcePixelHeight == manifest.sourcePixelHeight,
               let elements = document["elements"] as? [[String: Any]],
+              let presentation = document["presentation"] as? [String: Any],
+              Set(presentation.keys) == ["type"], presentation["type"] as? String == "none",
               let defaults = document["defaults"] as? [String: Any],
               validateDefaults(defaults)
         else {

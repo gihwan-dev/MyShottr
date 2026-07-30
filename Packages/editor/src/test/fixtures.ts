@@ -136,10 +136,11 @@ export function fixtureDocument(
   overrides: Partial<EditorDocument> = {},
 ): EditorDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourcePixelWidth: 1440,
     sourcePixelHeight: 900,
     elements: [fixtureRect()],
+    presentation: { type: "none" },
     defaults,
     ...overrides,
   };

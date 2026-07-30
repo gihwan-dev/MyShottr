@@ -4,6 +4,15 @@ import XCTest
 
 enum ProjectFixtures {
     static let pngData = try! Data(contentsOf: fixtureURL())
+    static var editorDefaults: [String: Any] {
+        [
+            "color": "#1677FF",
+            "strokeWidth": 4,
+            "textSize": 24,
+            "roughness": 1,
+            "opacity": 1,
+        ]
+    }
 
     static func sampleProject() throws -> MyShottrProject {
         project(text: "Sample annotation")
@@ -19,10 +28,10 @@ enum ProjectFixtures {
             sourcePixelHeight: 2,
             sourceKind: .screenRegion
         )
-        let annotationJSON = try! JSONSerialization.data(withJSONObject: [
-            "schemaVersion": 1,
-            "text": text,
-        ])
+        let annotationJSON = try! JSONSerialization.data(
+            withJSONObject: editorDocument(text: text),
+            options: [.sortedKeys]
+        )
 
         return MyShottrProject(
             manifest: manifest,
@@ -56,6 +65,41 @@ enum ProjectFixtures {
         try project.annotationJSON.write(to: packageURL.appendingPathComponent("document.json"))
 
         return packageURL
+    }
+
+    static func annotationJSON(schemaVersion: Int) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
+            "schemaVersion": schemaVersion,
+            "sourcePixelWidth": 2,
+            "sourcePixelHeight": 2,
+            "elements": [],
+            "defaults": editorDefaults,
+        ])
+    }
+
+    private static func editorDocument(text: String) -> [String: Any] {
+        [
+            "schemaVersion": 2,
+            "sourcePixelWidth": 2,
+            "sourcePixelHeight": 2,
+            "elements": [[
+                "id": "text-1",
+                "type": "text",
+                "x": 0,
+                "y": 0,
+                "width": 0,
+                "height": 0,
+                "rotation": 0,
+                "opacity": 1,
+                "zIndex": 0,
+                "seed": 1,
+                "text": text,
+                "color": "#1677FF",
+                "fontSize": 24,
+            ]],
+            "presentation": ["type": "none"],
+            "defaults": editorDefaults,
+        ]
     }
 
     private static func fixtureURL() throws -> URL {

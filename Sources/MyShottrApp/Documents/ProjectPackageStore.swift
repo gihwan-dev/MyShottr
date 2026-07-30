@@ -44,9 +44,15 @@ struct ProjectPackageStore: ProjectPackageStoring {
         }
 
         let documentURL = url.appendingPathComponent("document.json")
+        let storedAnnotationJSON: Data
+        do {
+            storedAnnotationJSON = try Data(contentsOf: documentURL)
+        } catch {
+            throw ProjectPackageError.invalidAnnotationJSON
+        }
         let annotationJSON: Data
         do {
-            annotationJSON = try Data(contentsOf: documentURL)
+            annotationJSON = try EditorDocumentMigrator.migrate(storedAnnotationJSON)
         } catch {
             throw ProjectPackageError.invalidAnnotationJSON
         }
@@ -67,6 +73,14 @@ struct ProjectPackageStore: ProjectPackageStoring {
     }
 
     func save(_ project: MyShottrProject, to url: URL) throws {
+        let annotationJSON: Data
+        do {
+            annotationJSON = try EditorDocumentMigrator.migrate(project.annotationJSON)
+        } catch {
+            throw ProjectPackageError.invalidAnnotationJSON
+        }
+        try validateAnnotationJSON(annotationJSON)
+
         let fileManager = FileManager.default
         let temporaryDirectory = url.deletingLastPathComponent().appendingPathComponent(
             ".\(url.lastPathComponent).\(UUID().uuidString).tmp",
@@ -82,7 +96,7 @@ struct ProjectPackageStore: ProjectPackageStoring {
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(project.manifest).write(to: temporaryDirectory.appendingPathComponent("manifest.json"))
         try project.originalPNG.write(to: temporaryDirectory.appendingPathComponent("original.png"))
-        try project.annotationJSON.write(to: temporaryDirectory.appendingPathComponent("document.json"))
+        try annotationJSON.write(to: temporaryDirectory.appendingPathComponent("document.json"))
 
         _ = try load(from: temporaryDirectory)
 
@@ -115,8 +129,10 @@ struct ProjectPackageStore: ProjectPackageStoring {
         }
 
         guard let document = object as? [String: Any],
-              let schemaVersion = document["schemaVersion"] as? Int,
-              schemaVersion == 1
+              Set(document.keys) == ["schemaVersion", "sourcePixelWidth", "sourcePixelHeight", "elements", "presentation", "defaults"],
+              let schemaVersion = document["schemaVersion"] as? Int, schemaVersion == 2,
+              let presentation = document["presentation"] as? [String: Any],
+              Set(presentation.keys) == ["type"], presentation["type"] as? String == "none"
         else {
             throw ProjectPackageError.invalidAnnotationJSON
         }

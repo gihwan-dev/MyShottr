@@ -95,7 +95,11 @@ extension EditorBridgeEnvelope where MessageType == EditorToNativeMessageType, P
             guard exact([]) else { throw EditorBridgeEnvelopeError.malformedMessage }
         case .annotationSnapshot:
             guard exact(["document"]), case let .object(document)? = payload["document"],
-                  Set(document.keys) == ["schemaVersion", "sourcePixelWidth", "sourcePixelHeight", "elements", "defaults"]
+                  Set(document.keys) == ["schemaVersion", "sourcePixelWidth", "sourcePixelHeight", "elements", "presentation", "defaults"],
+                  integer(document["schemaVersion"]) == 2,
+                  case let .object(presentation)? = document["presentation"],
+                  Set(presentation.keys) == ["type"],
+                  case let .string(presentationType)? = presentation["type"], presentationType == "none"
             else { throw EditorBridgeEnvelopeError.malformedMessage }
         case .compositeChunk:
             guard exact(["requestId", "index", "total", "dataBase64"]),
