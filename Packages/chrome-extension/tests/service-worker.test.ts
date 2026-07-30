@@ -95,4 +95,24 @@ describe("runCaptureAction", () => {
     });
     expect(JSON.stringify(setTitle.mock.calls)).not.toContain("host not found");
   });
+
+  it("consumes expected action-listener rejections after showing status", async () => {
+    captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
+    sendNativeMessage.mockRejectedValue(new Error("host not found"));
+    await loadServiceWorker();
+    const onClicked = onClickedAddListener.mock.calls[0]?.[0] as
+      | (() => void)
+      | undefined;
+
+    expect(onClicked).toBeTypeOf("function");
+    expect(onClicked?.()).toBeUndefined();
+
+    await vi.waitFor(() => {
+      expect(setTitle).toHaveBeenCalledWith({
+        title: "MyShottr capture failed: HOST_UNAVAILABLE",
+      });
+    });
+    expect(captureVisibleTab).toHaveBeenCalledTimes(1);
+    expect(sendNativeMessage).toHaveBeenCalledTimes(1);
+  });
 });

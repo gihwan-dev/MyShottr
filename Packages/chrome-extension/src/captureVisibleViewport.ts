@@ -3,6 +3,13 @@ import { CaptureActionError, toCaptureActionError } from "./status";
 const MAX_CAPTURE_BYTES = 45 * 1024 * 1024;
 const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
 
+type CaptureVisibleTabOperation = (
+  options: chrome.tabs.CaptureVisibleTabOptions,
+) => Promise<string>;
+
+let captureVisibleTab: CaptureVisibleTabOperation = (options) =>
+  chrome.tabs.captureVisibleTab(options);
+
 export type CaptureMessage = {
   protocolVersion: 1;
   type: "capture";
@@ -15,7 +22,7 @@ export async function captureVisibleViewport(): Promise<CaptureMessage> {
   let dataUrl: string;
 
   try {
-    dataUrl = await chrome.tabs.captureVisibleTab({ format: "png" });
+    dataUrl = await captureVisibleTab({ format: "png" });
   } catch (error) {
     throw toCaptureActionError(error, "CAPTURE_FAILED");
   }
@@ -40,6 +47,12 @@ export async function captureVisibleViewport(): Promise<CaptureMessage> {
     mimeType: "image/png",
     dataBase64,
   };
+}
+
+export function setCaptureVisibleTabForTesting(
+  operation: CaptureVisibleTabOperation,
+): void {
+  captureVisibleTab = operation;
 }
 
 function estimateDecodedByteCount(dataBase64: string): number {

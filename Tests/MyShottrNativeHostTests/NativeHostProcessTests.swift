@@ -1,7 +1,69 @@
+import Darwin
 import Foundation
 import XCTest
 
 final class NativeHostProcessTests: XCTestCase {
+    func testExecutableStagesOneOwnerOnlyPNGInInjectedInbox() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "MyShottrNativeHostProcessTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let inboxURL = temporaryDirectory
+            .appendingPathComponent("Inbox", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        let result = try runHost(
+            inputData: HostFixtures.framed(
+                try HostFixtures.protocolMessage()
+            ),
+            environment: [
+                NativeHostTestEnvironment.inboxPathKey: inboxURL.path,
+            ]
+        )
+
+        XCTAssertEqual(result.terminationStatus, 0)
+        let reply = try HostFixtures.decodedReply(from: result.replyData)
+        XCTAssertTrue(reply.ok)
+        XCTAssertNil(reply.code)
+        let captureID: UUID = try XCTUnwrap(reply.captureId)
+        XCTAssertTrue(result.errorData.isEmpty)
+
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: inboxURL,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(
+            entries.map(\.lastPathComponent),
+            ["\(captureID.uuidString).png"]
+        )
+        let inboxAttributes = try FileManager.default.attributesOfItem(
+            atPath: inboxURL.path
+        )
+        let captureAttributes = try FileManager.default.attributesOfItem(
+            atPath: entries[0].path
+        )
+        XCTAssertEqual(
+            (inboxAttributes[.posixPermissions] as? NSNumber)?.intValue,
+            0o700
+        )
+        XCTAssertEqual(
+            (captureAttributes[.posixPermissions] as? NSNumber)?.intValue,
+            0o600
+        )
+        XCTAssertEqual(
+            (captureAttributes[.ownerAccountID] as? NSNumber)?.uint32Value,
+            getuid()
+        )
+        XCTAssertEqual(try Data(contentsOf: entries[0]), HostFixtures.validPNG)
+    }
+
     func testExecutableRejectsDuplicateMemberAsInvalidMessage() throws {
         let result = try runHost(
             inputData: HostFixtures.framed(
@@ -44,7 +106,8 @@ final class NativeHostProcessTests: XCTestCase {
     }
 
     private func runHost(
-        inputData: Data
+        inputData: Data,
+        environment: [String: String] = [:]
     ) throws -> (
         terminationStatus: Int32,
         replyData: Data,
@@ -61,6 +124,8 @@ final class NativeHostProcessTests: XCTestCase {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = error
+        process.environment = ProcessInfo.processInfo.environment
+            .merging(environment) { _, injected in injected }
 
         try process.run()
         try input.fileHandleForWriting.write(contentsOf: inputData)

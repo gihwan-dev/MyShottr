@@ -1,7 +1,4 @@
 import Foundation
 
-let runner = HostRunner(
-    staging: HostInboxStore(),
-    activator: AppActivator()
-)
+let runner = NativeHostRuntime.makeRunner()
 runner.run(input: .standardInput, output: .standardOutput)
