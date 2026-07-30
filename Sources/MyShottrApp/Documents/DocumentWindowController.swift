@@ -23,6 +23,42 @@ final class DocumentTerminationResolutionGate {
 }
 
 @MainActor
+final class RecoveryCleanupRetryCoordinator {
+    private let operation: RecoveryCleanupOperation
+    private let presenter: any UserFacingErrorPresenting
+    private weak var window: NSWindow?
+
+    init(
+        operation: RecoveryCleanupOperation,
+        presenter: any UserFacingErrorPresenting,
+        window: NSWindow?
+    ) {
+        self.operation = operation
+        self.presenter = presenter
+        self.window = window
+    }
+
+    func present() {
+        presenter.present(
+            .recoveryCleanupAfterSave,
+            from: window,
+            retry: {
+                [self] in
+                retry()
+            }
+        )
+    }
+
+    private func retry() {
+        do {
+            try operation.perform()
+        } catch {
+            present()
+        }
+    }
+}
+
+@MainActor
 final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     private let session: DocumentSession
     private let editorWebView: EditorWebView
@@ -319,9 +355,14 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                     modificationRevision
             )
             window?.title = url.deletingPathExtension().lastPathComponent
-            if completion
-                == .savedRecoveryCleanupPending {
-                presentRecoveryCleanupWarning()
+            if case let .savedRecoveryCleanupPending(
+                cleanupOperation
+            ) = completion {
+                RecoveryCleanupRetryCoordinator(
+                    operation: cleanupOperation,
+                    presenter: errorPresenter,
+                    window: window
+                ).present()
             }
             return true
         } catch {
@@ -357,41 +398,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
     @discardableResult
     func present(_ error: MyShottrUserFacingError) -> Bool {
-        present(
-            error,
-            retrySameOperation: nil
-        )
-    }
-
-    @discardableResult
-    func present(
-        _ error: MyShottrUserFacingError,
-        retrySameOperation: (() -> Void)?
-    ) -> Bool {
         errorPresenter.present(
             error,
-            from: window,
-            retrySameOperation: retrySameOperation
+            from: window
         )
         return true
-    }
-
-    private func presentRecoveryCleanupWarning() {
-        present(
-            .recoveryCleanupAfterSave,
-            retrySameOperation: {
-                [weak self] in
-                self?.retryRecoveryCleanup()
-            }
-        )
-    }
-
-    private func retryRecoveryCleanup() {
-        do {
-            try session.retryPendingRecoveryCleanup()
-        } catch {
-            presentRecoveryCleanupWarning()
-        }
     }
 }
 

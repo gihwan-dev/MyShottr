@@ -83,7 +83,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         )
     }
 
-    func testStartReportsOneTypedErrorAndStillImportsOtherValidCapture() {
+    func testStartReportsOneBatchAfterImportingOtherValidCapture() {
         let invalid = StagedCapture(
             id: ChromeFixtures.captureID,
             pngURL: URL(fileURLWithPath: "/inbox/invalid.png")
@@ -103,11 +103,14 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
             PendingCaptureInboxError.invalidPNG
         let windows = SpyDocumentWindowPresenter()
         var reportedErrors: [MyShottrUserFacingError] = []
+        var importedCountWhenReported = 0
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
             projectFactory: StubNewProjectFactory(),
             windows: windows,
             reportError: {
+                importedCountWhenReported =
+                    windows.presentedProjects.count
                 reportedErrors.append($0)
             }
         )
@@ -118,61 +121,154 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         XCTAssertEqual(reportedErrors.count, 1)
         XCTAssertEqual(
             reportedErrors.first?.viewModel.title,
-            "Chrome Capture Image Is Invalid"
+            "Chrome Capture Import Finished with Issues"
         )
+        XCTAssertEqual(
+            reportedErrors.first?.viewModel.message,
+            "1 capture was not imported. All other valid captures "
+                + "were imported before this summary was shown."
+        )
+        XCTAssertEqual(importedCountWhenReported, 1)
         XCTAssertEqual(
             windows.presentedProjects.map(\.manifest.documentId),
             [valid.id]
         )
     }
 
-    func testLaunchScanReportsEveryInvalidItemAndStillImportsValidItem() {
-        let firstInvalid = StagedCapture(
-            id: ChromeFixtures.captureID,
-            pngURL: URL(fileURLWithPath: "/inbox/invalid-1.png")
-        )
-        let secondInvalid = StagedCapture(
-            id: ChromeFixtures.stateID,
-            pngURL: URL(fileURLWithPath: "/inbox/invalid-2.png")
-        )
-        let valid = StagedCapture(
-            id: ChromeFixtures.secondCaptureID,
-            pngURL: URL(fileURLWithPath: "/inbox/valid.png")
-        )
+    func testLaunchScanReportsOneBoundedBatchAfterAllValidImports() {
+        let ids = (1...9).map {
+            UUID(
+                uuidString: String(
+                    format:
+                        "00000000-0000-4000-8000-%012d",
+                    $0
+                )
+            )!
+        }
+        let staged = ids.map {
+            StagedCapture(
+                id: $0,
+                pngURL: URL(
+                    fileURLWithPath:
+                        "/inbox/\($0.uuidString).png"
+                )
+            )
+        }
         let inbox = StubPendingCaptureInbox(
-            pending: [firstInvalid, secondInvalid, valid],
+            pending: staged,
             dataByID: [
-                firstInvalid.id: ProjectFixtures.pngData,
-                secondInvalid.id: ProjectFixtures.pngData,
-                valid.id: ProjectFixtures.pngData,
+                ids[0]: ProjectFixtures.pngData,
+                ids[1]: ProjectFixtures.pngData,
+                ids[2]: ProjectFixtures.pngData,
+                ids[3]: ProjectFixtures.pngData,
+                ids[4]: ProjectFixtures.pngData,
+                ids[5]: ProjectFixtures.pngData,
+                ids[6]: ProjectFixtures.pngData,
+                ids[7]: ProjectFixtures.pngData,
+                ids[8]: ProjectFixtures.pngData,
             ]
         )
-        inbox.claimErrorByID[firstInvalid.id] =
-            PendingCaptureInboxError.invalidPNG
-        inbox.claimErrorByID[secondInvalid.id] =
-            PendingCaptureInboxError.imageTooLarge
+        for id in ids.prefix(6) {
+            inbox.claimErrorByID[id] =
+                PendingCaptureInboxError.invalidPNG
+        }
+        inbox.commitErrorByID[ids[7]] =
+            ChromeFixtureError.commit
         let windows = SpyDocumentWindowPresenter()
         var reported: [MyShottrUserFacingError] = []
+        var presentedCountWhenReported = 0
+        var cleanedCountWhenReported = 0
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
             projectFactory: StubNewProjectFactory(),
             windows: windows,
-            reportError: { reported.append($0) }
+            reportError: {
+                presentedCountWhenReported =
+                    windows.presentedProjects.count
+                cleanedCountWhenReported =
+                    inbox.cleanedIDs.count
+                reported.append($0)
+            }
         )
 
         coordinator.start()
         coordinator.stop()
 
-        XCTAssertEqual(
-            reported.map(\.viewModel.title),
-            [
-                "Chrome Capture Image Is Invalid",
-                "Chrome Capture Is Too Large",
-            ]
+        XCTAssertEqual(reported.count, 1)
+        let viewModel = try? XCTUnwrap(
+            reported.first?.viewModel
         )
         XCTAssertEqual(
+            viewModel?.title,
+            "Chrome Capture Import Finished with Issues"
+        )
+        XCTAssertEqual(
+            viewModel?.message,
+            "6 captures were not imported. 1 opened document still "
+                + "needs inbox commit or cleanup. All other valid "
+                + "captures were imported before this summary was shown."
+        )
+        XCTAssertLessThan(viewModel?.message.count ?? .max, 320)
+        for id in ids {
+            XCTAssertFalse(
+                viewModel?.message.contains(id.uuidString)
+                    ?? true
+            )
+        }
+        XCTAssertEqual(presentedCountWhenReported, 3)
+        XCTAssertEqual(cleanedCountWhenReported, 2)
+        XCTAssertEqual(
             windows.presentedProjects.map(\.manifest.documentId),
-            [valid.id]
+            [ids[6], ids[7], ids[8]]
+        )
+        XCTAssertEqual(
+            inbox.cleanedIDs,
+            [ids[6], ids[8]]
+        )
+    }
+
+    func testLaunchScanFailureClaimsOnlyDiscoveredValidImports() {
+        let valid = StagedCapture(
+            id: ChromeFixtures.captureID,
+            pngURL: URL(
+                fileURLWithPath: "/inbox/valid.png"
+            )
+        )
+        let inbox = StubPendingCaptureInbox(
+            pending: [valid]
+        )
+        inbox.cleanupScanError = ChromeFixtureError.cleanup
+        let windows = SpyDocumentWindowPresenter()
+        var reported: [MyShottrUserFacingError] = []
+        var importedCountWhenReported = 0
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: StubNewProjectFactory(),
+            windows: windows,
+            reportError: {
+                importedCountWhenReported =
+                    windows.presentedProjects.count
+                reported.append($0)
+            }
+        )
+
+        coordinator.consumePendingCaptures()
+
+        XCTAssertEqual(importedCountWhenReported, 1)
+        XCTAssertEqual(reported.count, 1)
+        let message = reported.first?.viewModel.message ?? ""
+        XCTAssertTrue(
+            message.contains(
+                "1 inbox scan phase could not be completed"
+            )
+        )
+        XCTAssertTrue(
+            message.contains(
+                "valid captures that were discovered"
+            )
+        )
+        XCTAssertFalse(
+            message.contains("All other valid captures")
         )
     }
 
@@ -207,10 +303,12 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         }
         XCTAssertEqual(
             error.viewModel.title,
-            "Chrome Capture Could Not Be Opened"
+            "Chrome Capture Import Finished with Issues"
         )
         XCTAssertTrue(
-            error.viewModel.message.contains("was not imported")
+            error.viewModel.message.contains(
+                "1 capture was not imported"
+            )
         )
         XCTAssertTrue(windows.presentedProjects.isEmpty)
     }
@@ -246,15 +344,17 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         }
         XCTAssertEqual(
             error.viewModel.title,
-            "Chrome Capture Opened; Inbox Commit Failed"
+            "Chrome Capture Import Finished with Issues"
         )
         XCTAssertTrue(
             error.viewModel.message.contains(
-                "document opened"
+                "1 opened document"
             )
         )
         XCTAssertTrue(
-            error.viewModel.message.contains("retry")
+            error.viewModel.message.contains(
+                "commit or cleanup"
+            )
         )
         XCTAssertFalse(
             error.viewModel.message.contains("not imported")

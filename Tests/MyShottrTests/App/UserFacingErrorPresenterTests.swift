@@ -331,7 +331,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             MyShottrUserFacingError.projectSave.viewModel.primaryAction,
             .dismiss
         )
-        let cleanupWarning = MyShottrUserFacingError
+        let cleanupWarning = RetryableUserFacingError
             .recoveryCleanupAfterSave
             .viewModel
         XCTAssertEqual(
@@ -834,7 +834,8 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         )
     }
 
-    func testQueuedRetryClosureReleasesAfterItsAction() {
+    func testQueuedRetryAfterWindowCloseIsActionableExactlyOnceAndReleases()
+    {
         let recorder = AlertPresentationRecorder()
         let presenter = UserFacingErrorPresenter(
             presentation: recorder.api,
@@ -850,7 +851,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         presenter.present(
             .recoveryCleanupAfterSave,
             from: window,
-            retrySameOperation: { [owner] in
+            retry: { [owner] in
                 _ = owner
                 retryCount += 1
             }
@@ -858,16 +859,36 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         owner = nil
         XCTAssertNotNil(ownerReference.value)
 
-        recorder.completeSheet(
-            with: .alertFirstButtonReturn
+        NotificationCenter.default.post(
+            name: NSWindow.willCloseNotification,
+            object: window
         )
-        XCTAssertNotNil(ownerReference.value)
         recorder.completeSheet(
             with: .alertFirstButtonReturn
         )
 
         XCTAssertEqual(retryCount, 1)
+        XCTAssertEqual(
+            recorder.modalAlerts.map(\.messageText),
+            ["Document Saved; Recovery Cleanup Failed"]
+        )
         XCTAssertNil(ownerReference.value)
+    }
+
+    func testClosedWindowRegistryPrunesDeallocatedTombstones() {
+        let registry = WeakWindowRegistry()
+        weak var releasedWindow: NSWindow?
+
+        autoreleasepool {
+            let window = NSWindow()
+            releasedWindow = window
+            registry.insert(window)
+            XCTAssertTrue(registry.contains(window))
+        }
+
+        XCTAssertNil(releasedWindow)
+        registry.prune()
+        XCTAssertTrue(registry.isEmpty)
     }
 }
 

@@ -56,33 +56,60 @@ final class DocumentWindowControllerCommandTests: XCTestCase {
         XCTAssertEqual(presenter.windowWasProvided, [true])
     }
 
-    func testRecoveryCleanupWarningForwardsItsSameRetryClosure()
+    func testRecoveryCleanupRetrySurvivesWindowCloseAndRequeuesOnFailure()
         throws
     {
         let presenter = SpyUserFacingErrorPresenter()
-        let controller = try DocumentWindowController(
-            project: ProjectFixtures.project(
-                text: "Saved cleanup warning"
-            ),
-            projectURL: nil,
-            errorPresenter: presenter
-        )
-        var retryCount = 0
+        let recoveryStore = SpyRecoveryStore()
+        recoveryStore.removeErrors = [
+            .removeFailed(ProjectFixtures.documentID),
+            nil,
+        ]
+        var operation: RecoveryCleanupOperation? =
+            RecoveryCleanupOperation(
+                store: recoveryStore,
+                documentID: ProjectFixtures.documentID
+            )
+        weak var releasedOperation = operation
+        var window: NSWindow? = NSWindow()
+        RecoveryCleanupRetryCoordinator(
+            operation: try XCTUnwrap(operation),
+            presenter: presenter,
+            window: window
+        ).present()
+        operation = nil
 
-        controller.present(
-            .recoveryCleanupAfterSave,
-            retrySameOperation: {
-                retryCount += 1
-            }
+        NotificationCenter.default.post(
+            name: NSWindow.willCloseNotification,
+            object: window
         )
+        window = nil
+        XCTAssertNotNil(releasedOperation)
+
+        presenter.performNextRetry()
 
         XCTAssertEqual(
             presenter.presentedViewModels.map(\.primaryAction),
-            [.retrySameOperation]
+            [.retrySameOperation, .retrySameOperation]
         )
-        XCTAssertEqual(presenter.retryActions.count, 1)
-        presenter.retryActions[0]?()
-        XCTAssertEqual(retryCount, 1)
+        XCTAssertEqual(presenter.windowWasProvided.count, 2)
+        XCTAssertNotNil(releasedOperation)
+
+        presenter.performNextRetry()
+
+        XCTAssertEqual(
+            recoveryStore.removedDocumentIDs,
+            [ProjectFixtures.documentID]
+        )
+        XCTAssertEqual(
+            recoveryStore.removeAttempts,
+            [
+                ProjectFixtures.documentID,
+                ProjectFixtures.documentID,
+            ]
+        )
+        XCTAssertTrue(presenter.retryActions.isEmpty)
+        XCTAssertNil(releasedOperation)
     }
 }
 
@@ -94,16 +121,28 @@ private final class SpyUserFacingErrorPresenter:
         [UserFacingErrorViewModel] = []
     private(set) var windowWasProvided: [Bool] = []
     private(set) var retryActions: [
-        (() -> Void)?
+        () -> Void
     ] = []
 
     func present(
         _ error: MyShottrUserFacingError,
-        from window: NSWindow?,
-        retrySameOperation: (() -> Void)?
+        from window: NSWindow?
     ) {
         presentedViewModels.append(error.viewModel)
         windowWasProvided.append(window != nil)
-        retryActions.append(retrySameOperation)
+    }
+
+    func present(
+        _ error: RetryableUserFacingError,
+        from window: NSWindow?,
+        retry: @escaping () -> Void
+    ) {
+        presentedViewModels.append(error.viewModel)
+        windowWasProvided.append(window != nil)
+        retryActions.append(retry)
+    }
+
+    func performNextRetry() {
+        retryActions.removeFirst()()
     }
 }

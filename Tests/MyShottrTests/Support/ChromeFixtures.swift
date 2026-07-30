@@ -93,7 +93,11 @@ final class StubPendingCaptureInbox:
     var pending: [StagedCapture]
     var cleanupOnly: [PresentedCapture] = []
     var dataByID: [UUID: Data]
+    var pendingScanError: (any Error)?
+    var cleanupScanError: (any Error)?
     var claimErrorByID: [UUID: any Error] = [:]
+    var commitErrorByID: [UUID: any Error] = [:]
+    var cleanupErrorByID: [UUID: any Error] = [:]
     var commitError: (any Error)?
     var cleanupError: (any Error)?
     private(set) var claimedIDs: [UUID] = []
@@ -122,11 +126,17 @@ final class StubPendingCaptureInbox:
     }
 
     func pendingCaptures() throws -> [StagedCapture] {
-        pending
+        if let pendingScanError {
+            throw pendingScanError
+        }
+        return pending
     }
 
     func cleanupOnlyCaptures() throws -> [PresentedCapture] {
-        cleanupOnly
+        if let cleanupScanError {
+            throw cleanupScanError
+        }
+        return cleanupOnly
     }
 
     func claim(id: UUID) throws -> PendingCaptureClaim {
@@ -154,6 +164,9 @@ final class StubPendingCaptureInbox:
         _ claim: PendingCaptureClaim
     ) throws -> PresentedCapture {
         commitAttempts.append(claim.id)
+        if let error = commitErrorByID[claim.id] {
+            throw error
+        }
         if let commitError {
             throw commitError
         }
@@ -174,6 +187,9 @@ final class StubPendingCaptureInbox:
         _ presented: PresentedCapture
     ) throws -> PresentedCleanupResult {
         cleanupAttempts.append(presented.id)
+        if let error = cleanupErrorByID[presented.id] {
+            throw error
+        }
         if let cleanupError {
             throw cleanupError
         }

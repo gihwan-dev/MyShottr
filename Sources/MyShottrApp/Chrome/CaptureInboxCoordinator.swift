@@ -40,6 +40,31 @@ enum ChromeCaptureImportError: Error, Equatable {
     case scanFailed
 }
 
+struct ChromeCaptureImportBatchSummary: Equatable {
+    private(set) var notImportedCount = 0
+    private(set) var openedPendingCount = 0
+    private(set) var scanFailureCount = 0
+
+    init(failures: [ChromeCaptureImportError]) {
+        for failure in failures {
+            switch failure {
+            case .validation,
+                 .validationFailed,
+                 .projectCreationFailed,
+                 .windowPresenterUnavailable,
+                 .windowPresentationFailed:
+                notImportedCount += 1
+            case .durableCommitFailedAfterOpen,
+                 .cleanupFailedAfterOpen,
+                 .cleanupFailedAfterPriorOpen:
+                openedPendingCount += 1
+            case .scanFailed:
+                scanFailureCount += 1
+            }
+        }
+    }
+}
+
 @MainActor
 final class CaptureInboxCoordinator: NSObject {
     static let captureReadyNotification = Notification.Name(
@@ -100,20 +125,19 @@ final class CaptureInboxCoordinator: NSObject {
     }
 
     func consumePendingCaptures() {
+        var failures: [ChromeCaptureImportError] = []
         do {
             for presented in try inbox.cleanupOnlyCaptures() {
                 do {
                     _ = try inbox.cleanupPresented(presented)
                 } catch {
-                    reportError(
-                        .chromeImport(
-                            .cleanupFailedAfterPriorOpen
-                        )
+                    failures.append(
+                        .cleanupFailedAfterPriorOpen
                     )
                 }
             }
         } catch {
-            reportError(.chromeImport(.scanFailed))
+            failures.append(.scanFailed)
         }
 
         do {
@@ -121,15 +145,23 @@ final class CaptureInboxCoordinator: NSObject {
                 do {
                     try consume(id: staged.id)
                 } catch let error as ChromeCaptureImportError {
-                    reportError(.chromeImport(error))
+                    failures.append(error)
                 } catch {
-                    reportError(
-                        .chromeImport(.validationFailed)
-                    )
+                    failures.append(.validationFailed)
                 }
             }
         } catch {
-            reportError(.chromeImport(.scanFailed))
+            failures.append(.scanFailed)
+        }
+
+        if !failures.isEmpty {
+            reportError(
+                .chromeImportBatch(
+                    ChromeCaptureImportBatchSummary(
+                        failures: failures
+                    )
+                )
+            )
         }
     }
 

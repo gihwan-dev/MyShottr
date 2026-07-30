@@ -5,22 +5,49 @@ import Foundation
 protocol UserFacingErrorPresenting {
     func present(
         _ error: MyShottrUserFacingError,
+        from window: NSWindow?
+    )
+    func present(
+        _ error: RetryableUserFacingError,
         from window: NSWindow?,
-        retrySameOperation: (() -> Void)?
+        retry: @escaping () -> Void
     )
 }
 
 @MainActor
-extension UserFacingErrorPresenting {
-    func present(
-        _ error: MyShottrUserFacingError,
-        from window: NSWindow?
-    ) {
-        present(
-            error,
-            from: window,
-            retrySameOperation: nil
-        )
+final class WeakWindowRegistry {
+    private final class WeakWindow {
+        weak var value: NSWindow?
+
+        init(_ value: NSWindow) {
+            self.value = value
+        }
+    }
+
+    private var entries: [
+        ObjectIdentifier: WeakWindow
+    ] = [:]
+
+    var isEmpty: Bool {
+        entries.isEmpty
+    }
+
+    func insert(_ window: NSWindow) {
+        prune()
+        entries[ObjectIdentifier(window)] =
+            WeakWindow(window)
+    }
+
+    func contains(_ window: NSWindow) -> Bool {
+        prune()
+        return entries[ObjectIdentifier(window)]?
+            .value === window
+    }
+
+    func prune() {
+        entries = entries.filter {
+            $0.value.value != nil
+        }
     }
 }
 
@@ -96,9 +123,20 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
         }
     }
 
-    private struct AlertRequest {
-        let viewModel: UserFacingErrorViewModel
-        let retrySameOperation: (() -> Void)?
+    private enum AlertRequest {
+        case standard(UserFacingErrorViewModel)
+        case retry(
+            UserFacingErrorViewModel,
+            operation: () -> Void
+        )
+
+        var viewModel: UserFacingErrorViewModel {
+            switch self {
+            case .standard(let viewModel),
+                 .retry(let viewModel, _):
+                return viewModel
+            }
+        }
     }
 
     private struct WindowAlertQueue {
@@ -111,8 +149,7 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
     private let actions: UserFacingErrorActions
     private var windowQueues:
         [ObjectIdentifier: WindowAlertQueue] = [:]
-    private var closedWindows:
-        [ObjectIdentifier: WeakWindow] = [:]
+    private let closedWindows = WeakWindowRegistry()
     private var modalQueue: [AlertRequest] = []
     private var modalIsPresenting = false
     private nonisolated(unsafe) var windowCloseObserver:
@@ -151,13 +188,43 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
 
     func present(
         _ error: MyShottrUserFacingError,
-        from window: NSWindow?,
-        retrySameOperation: (() -> Void)?
+        from window: NSWindow?
     ) {
-        let request = AlertRequest(
-            viewModel: error.viewModel,
-            retrySameOperation: retrySameOperation
+        let viewModel = error.viewModel
+        precondition(
+            viewModel.primaryAction != .retrySameOperation,
+            "Retryable errors require a concrete retry operation."
         )
+        route(
+            .standard(viewModel),
+            from: window
+        )
+    }
+
+    func present(
+        _ error: RetryableUserFacingError,
+        from window: NSWindow?,
+        retry: @escaping () -> Void
+    ) {
+        let viewModel = error.viewModel
+        precondition(
+            viewModel.primaryAction == .retrySameOperation,
+            "Retry presentation requires the retry action."
+        )
+        route(
+            .retry(
+                viewModel,
+                operation: retry
+            ),
+            from: window
+        )
+    }
+
+    private func route(
+        _ request: AlertRequest,
+        from window: NSWindow?
+    ) {
+        closedWindows.prune()
         if let window,
            !isClosed(window) {
             enqueue(request, for: window)
@@ -170,6 +237,7 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
         _ request: AlertRequest,
         for window: NSWindow
     ) {
+        closedWindows.prune()
         let identifier = ObjectIdentifier(window)
         var queue =
             windowQueues[identifier]
@@ -192,6 +260,7 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
     private func startNextSheet(
         for identifier: ObjectIdentifier
     ) {
+        closedWindows.prune()
         guard var queue = windowQueues[identifier],
               queue.isPresenting,
               !queue.pending.isEmpty
@@ -200,7 +269,7 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
             return
         }
 
-        if closedWindows[identifier]?.value != nil
+        if queue.window.value.map(closedWindows.contains) == true
             || queue.window.value == nil {
             let pending = queue.pending
             windowQueues.removeValue(forKey: identifier)
@@ -251,11 +320,13 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
     }
 
     private func enqueueModal(_ request: AlertRequest) {
+        closedWindows.prune()
         modalQueue.append(request)
         drainModalQueue()
     }
 
     private func drainModalQueue() {
+        closedWindows.prune()
         guard !modalIsPresenting else {
             return
         }
@@ -279,28 +350,20 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
         guard response == .alertFirstButtonReturn else {
             return
         }
-        perform(
-            request.viewModel.primaryAction,
-            retrySameOperation:
-                request.retrySameOperation
-        )
+        switch request {
+        case .standard(let viewModel):
+            perform(viewModel.primaryAction)
+        case .retry(_, let operation):
+            operation()
+        }
     }
 
     private func windowDidClose(_ window: NSWindow) {
-        let identifier = ObjectIdentifier(window)
-        closedWindows[identifier] = WeakWindow(window)
+        closedWindows.insert(window)
     }
 
     private func isClosed(_ window: NSWindow) -> Bool {
-        let identifier = ObjectIdentifier(window)
-        guard let reference = closedWindows[identifier] else {
-            return false
-        }
-        guard let closedWindow = reference.value else {
-            closedWindows.removeValue(forKey: identifier)
-            return false
-        }
-        return closedWindow === window
+        closedWindows.contains(window)
     }
 
     private func makeAlert(
@@ -334,8 +397,7 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
     }
 
     private func perform(
-        _ action: UserFacingErrorAction,
-        retrySameOperation: (() -> Void)?
+        _ action: UserFacingErrorAction
     ) {
         switch action {
         case .dismiss:
@@ -345,7 +407,9 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
         case .openChromeSetupInstructions:
             actions.openChromeSetupInstructions()
         case .retrySameOperation:
-            retrySameOperation?()
+            preconditionFailure(
+                "Retry actions must carry a concrete operation."
+            )
         }
     }
 }

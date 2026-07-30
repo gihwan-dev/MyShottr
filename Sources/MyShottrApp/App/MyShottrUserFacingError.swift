@@ -23,6 +23,24 @@ enum ChromeNativeHostUserFacingError: Error, Equatable {
     case appActivationFailed
 }
 
+enum RetryableUserFacingError: Error {
+    case recoveryCleanupAfterSave
+
+    var viewModel: UserFacingErrorViewModel {
+        switch self {
+        case .recoveryCleanupAfterSave:
+            return UserFacingErrorViewModel(
+                title: "Document Saved; Recovery Cleanup Failed",
+                message:
+                    "The document was saved to the selected destination, "
+                    + "but its local crash recovery entry could not be "
+                    + "removed.",
+                primaryAction: .retrySameOperation
+            )
+        }
+    }
+}
+
 enum UserFacingErrorContext {
     case capture
     case chromeImport
@@ -44,12 +62,12 @@ enum MyShottrUserFacingError: Error {
     case chromeRegistration(NativeMessagingRegistrarError)
     case inbox(PendingCaptureInboxError)
     case chromeImport(ChromeCaptureImportError)
+    case chromeImportBatch(ChromeCaptureImportBatchSummary)
     case chromeImportUnavailable
     case editorBridge(EditorBridgeError)
     case editorProtocol(EditorBridgeEnvelopeError)
     case project(ProjectPackageError)
     case projectSave
-    case recoveryCleanupAfterSave
     case pngExport
     case clipboard(PNGClipboardWriterError)
     case compositeTransfer(CompositeTransferError)
@@ -184,6 +202,8 @@ enum MyShottrUserFacingError: Error {
             return Self.inboxViewModel(error)
         case .chromeImport(let error):
             return Self.chromeImportViewModel(error)
+        case .chromeImportBatch(let summary):
+            return Self.chromeImportBatchViewModel(summary)
         case .chromeImportUnavailable:
             return UserFacingErrorViewModel(
                 title: "Chrome Capture Could Not Be Opened",
@@ -205,15 +225,6 @@ enum MyShottrUserFacingError: Error {
                     "Your document is still open and marked as modified. "
                     + "The selected destination was not replaced.",
                 primaryAction: .dismiss
-            )
-        case .recoveryCleanupAfterSave:
-            return UserFacingErrorViewModel(
-                title: "Document Saved; Recovery Cleanup Failed",
-                message:
-                    "The document was saved to the selected destination, "
-                    + "but its local crash recovery entry could not be "
-                    + "removed.",
-                primaryAction: .retrySameOperation
             )
         case .pngExport:
             return UserFacingErrorViewModel(
@@ -614,6 +625,51 @@ enum MyShottrUserFacingError: Error {
                 primaryAction: .dismiss
             )
         }
+    }
+
+    private static func chromeImportBatchViewModel(
+        _ summary: ChromeCaptureImportBatchSummary
+    ) -> UserFacingErrorViewModel {
+        var phases: [String] = []
+        if summary.notImportedCount > 0 {
+            phases.append(
+                summary.notImportedCount == 1
+                    ? "1 capture was not imported."
+                    : "\(summary.notImportedCount) captures were not imported."
+            )
+        }
+        if summary.openedPendingCount > 0 {
+            phases.append(
+                summary.openedPendingCount == 1
+                    ? "1 opened document still needs inbox commit or cleanup."
+                    : "\(summary.openedPendingCount) opened documents still "
+                        + "need inbox commit or cleanup."
+            )
+        }
+        if summary.scanFailureCount > 0 {
+            phases.append(
+                summary.scanFailureCount == 1
+                    ? "1 inbox scan phase could not be completed."
+                    : "\(summary.scanFailureCount) inbox scan phases could "
+                        + "not be completed."
+            )
+        }
+        if summary.scanFailureCount > 0 {
+            phases.append(
+                "Any valid captures that were discovered were imported "
+                    + "before this summary was shown."
+            )
+        } else {
+            phases.append(
+                "All other valid captures were imported before this summary "
+                    + "was shown."
+            )
+        }
+        return UserFacingErrorViewModel(
+            title: "Chrome Capture Import Finished with Issues",
+            message: phases.joined(separator: " "),
+            primaryAction: .dismiss
+        )
     }
 
     private static func editorBridgeViewModel(

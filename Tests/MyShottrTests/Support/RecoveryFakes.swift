@@ -58,6 +58,8 @@ final class SpyRecoveryStore: RecoveryStoring, @unchecked Sendable {
 
     var writes: [Write] = []
     var removedDocumentIDs: [UUID] = []
+    var removeAttempts: [UUID] = []
+    var removeErrors: [RecoveryStoreError?] = []
     var stagedDiscardBatches: [[UUID]] = []
     var attemptedDiscardBatches: [[UUID]] = []
     var projects: [RecoveredProject] = []
@@ -76,6 +78,11 @@ final class SpyRecoveryStore: RecoveryStoring, @unchecked Sendable {
     }
 
     func remove(documentId: UUID) throws {
+        removeAttempts.append(documentId)
+        if !removeErrors.isEmpty,
+           let error = removeErrors.removeFirst() {
+            throw error
+        }
         if let error { throw error }
         removedDocumentIDs.append(documentId)
         projects.removeAll { $0.documentId == documentId }

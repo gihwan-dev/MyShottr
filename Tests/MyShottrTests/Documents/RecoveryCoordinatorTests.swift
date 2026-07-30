@@ -353,24 +353,33 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
             session.projectForSave()
         )
 
-        XCTAssertEqual(
-            result,
-            .savedRecoveryCleanupPending
-        )
+        guard case let .savedRecoveryCleanupPending(
+            cleanupOperation
+        ) = result else {
+            return XCTFail(
+                "Expected a stable recovery cleanup operation"
+            )
+        }
         XCTAssertFalse(session.isModified)
         XCTAssertEqual(
-            session.pendingRecoveryCleanupDocumentID,
+            cleanupOperation.documentID,
             ProjectFixtures.documentID
         )
 
         session.close()
+        recoveryStore.error = nil
+        try cleanupOperation.perform()
 
-        XCTAssertNil(
-            session.pendingRecoveryCleanupDocumentID
+        XCTAssertEqual(
+            recoveryStore.removedDocumentIDs,
+            [ProjectFixtures.documentID]
         )
+        XCTAssertFalse(cleanupOperation.isPending)
     }
 
-    func testPendingRecoveryCleanupRetriesTheSameRemoval() throws {
+    func testPendingRecoveryCleanupPerformsTheSameRemovalAtMostOnce()
+        throws
+    {
         let recoveryStore = SpyRecoveryStore()
         let session = DocumentSession(
             recoveryStore: recoveryStore,
@@ -385,19 +394,26 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         recoveryStore.error = .removeFailed(
             ProjectFixtures.documentID
         )
-        XCTAssertEqual(
-            try session.completeSave(session.projectForSave()),
-            .savedRecoveryCleanupPending
+        let completion = try session.completeSave(
+            session.projectForSave()
         )
+        guard case let .savedRecoveryCleanupPending(
+            cleanupOperation
+        ) = completion else {
+            return XCTFail(
+                "Expected a stable recovery cleanup operation"
+            )
+        }
         recoveryStore.error = nil
 
-        try session.retryPendingRecoveryCleanup()
+        try cleanupOperation.perform()
+        try cleanupOperation.perform()
 
         XCTAssertEqual(
             recoveryStore.removedDocumentIDs,
             [ProjectFixtures.documentID]
         )
-        XCTAssertNil(session.pendingRecoveryCleanupDocumentID)
+        XCTAssertFalse(cleanupOperation.isPending)
         XCTAssertFalse(session.isModified)
     }
 
