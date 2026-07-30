@@ -7,29 +7,35 @@ enum DocumentSessionError: Error, Equatable {
     case recoverySnapshotUnavailable
 }
 
-@MainActor
-final class RecoveryCleanupOperation {
-    let documentID: UUID
-    private var store: (any RecoveryStoring)?
-    private(set) var isPending = true
+final class RecoveryCleanupOperation: @unchecked Sendable {
+    let documentIDs: [UUID]
+    private let lock = NSLock()
+    private var cleanup: (@Sendable () throws -> Void)?
 
     init(
-        store: any RecoveryStoring,
-        documentID: UUID
+        documentIDs: [UUID],
+        cleanup: @escaping @Sendable () throws -> Void
     ) {
-        self.store = store
-        self.documentID = documentID
+        self.documentIDs = documentIDs.sorted {
+            $0.uuidString < $1.uuidString
+        }
+        self.cleanup = cleanup
+    }
+
+    var isPending: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cleanup != nil
     }
 
     func perform() throws {
-        guard isPending,
-              let store
-        else {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let cleanup else {
             return
         }
-        try store.remove(documentId: documentID)
-        isPending = false
-        self.store = nil
+        try cleanup()
+        self.cleanup = nil
     }
 }
 
@@ -203,8 +209,17 @@ final class DocumentSession {
         if changed { isModified = true }
     }
 
-    func projectForSave() throws -> MyShottrProject {
+    func projectForSave(
+        annotationJSON: Data? = nil
+    ) throws -> MyShottrProject {
         guard var project else { throw DocumentSessionError.noOpenDocument }
+        if let annotationJSON {
+            try validate(
+                annotationJSON: annotationJSON,
+                for: project.manifest
+            )
+            project.annotationJSON = annotationJSON
+        }
         project.manifest.updatedAt = .now
         return project
     }
@@ -229,14 +244,15 @@ final class DocumentSession {
         guard let recoveryStore else {
             return .saved
         }
-        let cleanupOperation = RecoveryCleanupOperation(
-            store: recoveryStore,
-            documentID: savedProject.manifest.documentId
-        )
-        do {
-            try cleanupOperation.perform()
+        switch try recoveryStore.remove(
+            documentId: savedProject.manifest.documentId
+        ) {
+        case .noRecovery, .committed:
             return .saved
-        } catch {
+        case let .committedAwaitingDurability(
+            cleanupOperation
+        ),
+        let .committedCleanupPending(cleanupOperation):
             return .savedRecoveryCleanupPending(
                 cleanupOperation
             )

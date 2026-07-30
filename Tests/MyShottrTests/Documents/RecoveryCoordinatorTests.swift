@@ -345,9 +345,15 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         try session.applySnapshot(
             ProjectFixtures.project(text: "changed").annotationJSON
         )
-        recoveryStore.error = .removeFailed(
-            ProjectFixtures.documentID
+        let cleanup = RecoveryCleanupAttemptSpy()
+        let pendingOperation = cleanup.operation(
+            documentIDs: [
+                ProjectFixtures.documentID,
+            ]
         )
+        recoveryStore.removeResults = [
+            .committedCleanupPending(pendingOperation),
+        ]
 
         let result = try session.completeSave(
             session.projectForSave()
@@ -362,18 +368,14 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         }
         XCTAssertFalse(session.isModified)
         XCTAssertEqual(
-            cleanupOperation.documentID,
-            ProjectFixtures.documentID
+            cleanupOperation.documentIDs,
+            [ProjectFixtures.documentID]
         )
 
         session.close()
-        recoveryStore.error = nil
         try cleanupOperation.perform()
 
-        XCTAssertEqual(
-            recoveryStore.removedDocumentIDs,
-            [ProjectFixtures.documentID]
-        )
+        XCTAssertEqual(cleanup.attemptCount, 1)
         XCTAssertFalse(cleanupOperation.isPending)
     }
 
@@ -391,9 +393,15 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         try session.applySnapshot(
             ProjectFixtures.project(text: "saved").annotationJSON
         )
-        recoveryStore.error = .removeFailed(
-            ProjectFixtures.documentID
+        let cleanup = RecoveryCleanupAttemptSpy()
+        let pendingOperation = cleanup.operation(
+            documentIDs: [
+                ProjectFixtures.documentID,
+            ]
         )
+        recoveryStore.removeResults = [
+            .committedCleanupPending(pendingOperation),
+        ]
         let completion = try session.completeSave(
             session.projectForSave()
         )
@@ -404,15 +412,10 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
                 "Expected a stable recovery cleanup operation"
             )
         }
-        recoveryStore.error = nil
-
         try cleanupOperation.perform()
         try cleanupOperation.perform()
 
-        XCTAssertEqual(
-            recoveryStore.removedDocumentIDs,
-            [ProjectFixtures.documentID]
-        )
+        XCTAssertEqual(cleanup.attemptCount, 1)
         XCTAssertFalse(cleanupOperation.isPending)
         XCTAssertFalse(session.isModified)
     }

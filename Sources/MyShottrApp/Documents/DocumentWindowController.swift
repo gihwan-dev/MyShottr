@@ -1,6 +1,12 @@
 import AppKit
 import UniformTypeIdentifiers
 
+enum DocumentPendingChangesDecision {
+    case save
+    case discard
+    case cancel
+}
+
 @MainActor
 final class DocumentTerminationResolutionGate {
     private var inFlight: Task<Bool, Never>?
@@ -68,6 +74,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private var projectURL: URL?
     private var closeAfterPrompt = false
     private var discardRecoveryOnApprovedTermination = false
+    private let annotationSnapshotProvider:
+        (@MainActor () async throws -> Data)?
+    private let pendingChangesDecisionProvider:
+        (@MainActor () async -> DocumentPendingChangesDecision)?
+    private let closeWindow: (@MainActor () -> Void)?
     private let terminationResolutionGate =
         DocumentTerminationResolutionGate()
     var onClose: (() -> Void)?
@@ -81,21 +92,38 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         recoveryStore: (any RecoveryStoring)? = nil,
         isRecoveredDocument: Bool = false,
         errorPresenter: any UserFacingErrorPresenting =
-            UserFacingErrorPresenter.shared
+            UserFacingErrorPresenter.shared,
+        testSession: DocumentSession? = nil,
+        annotationSnapshotProvider:
+            (@MainActor () async throws -> Data)? = nil,
+        pendingChangesDecisionProvider:
+            (@MainActor () async -> DocumentPendingChangesDecision)? =
+                nil,
+        closeWindow: (@MainActor () -> Void)? = nil
     ) throws {
-        let resolvedRecoveryStore: any RecoveryStoring
-        if let recoveryStore {
-            resolvedRecoveryStore = recoveryStore
+        let session: DocumentSession
+        if let testSession {
+            session = testSession
         } else {
-            resolvedRecoveryStore = try RecoveryStore()
+            let resolvedRecoveryStore: any RecoveryStoring
+            if let recoveryStore {
+                resolvedRecoveryStore = recoveryStore
+            } else {
+                resolvedRecoveryStore = try RecoveryStore()
+            }
+            session = DocumentSession(
+                recoveryStore: resolvedRecoveryStore
+            )
         }
-        let session = DocumentSession(
-            recoveryStore: resolvedRecoveryStore
-        )
         self.session = session
         self.editorWebView = EditorWebView(session: session, preferences: preferences)
         self.projectStore = projectStore
         self.errorPresenter = errorPresenter
+        self.annotationSnapshotProvider =
+            annotationSnapshotProvider
+        self.pendingChangesDecisionProvider =
+            pendingChangesDecisionProvider
+        self.closeWindow = closeWindow
         self.representedDocumentID =
             project.manifest.documentId
         self.projectURL = projectURL
@@ -153,7 +181,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         if isRecoveredDocument {
             session.prepareForRecoveryRestore()
         }
-        try editorWebView.load(project: project)
+        if testSession == nil {
+            try editorWebView.load(project: project)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -170,7 +200,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                 do {
                     try finalizePendingTermination()
                     closeAfterPrompt = true
-                    window?.performClose(nil)
+                    if let closeWindow {
+                        closeWindow()
+                    } else {
+                        window?.performClose(nil)
+                    }
                 } catch {
                     present(
                         .wrapping(error, context: .recovery)
@@ -198,6 +232,28 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         else {
             return true
         }
+        let decision: DocumentPendingChangesDecision
+        if let pendingChangesDecisionProvider {
+            decision = await pendingChangesDecisionProvider()
+        } else {
+            decision = await presentPendingChangesAlert(
+                for: window
+            )
+        }
+        switch decision {
+        case .save:
+            return await saveProject()
+        case .discard:
+            discardRecoveryOnApprovedTermination = true
+            return true
+        case .cancel:
+            return false
+        }
+    }
+
+    private func presentPendingChangesAlert(
+        for window: NSWindow
+    ) async -> DocumentPendingChangesDecision {
         return await withCheckedContinuation {
             continuation in
             let alert = NSAlert()
@@ -208,24 +264,14 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             alert.addButton(withTitle: "Discard")
             alert.addButton(withTitle: "Cancel")
             alert.beginSheetModal(for: window) {
-                [weak self] response in
-                guard let self else {
-                    continuation.resume(returning: false)
-                    return
-                }
+                response in
                 switch response {
                 case .alertFirstButtonReturn:
-                    Task { @MainActor in
-                        continuation.resume(
-                            returning: await self.saveProject()
-                        )
-                    }
+                    continuation.resume(returning: .save)
                 case .alertSecondButtonReturn:
-                    self.discardRecoveryOnApprovedTermination =
-                        true
-                    continuation.resume(returning: true)
+                    continuation.resume(returning: .discard)
                 default:
-                    continuation.resume(returning: false)
+                    continuation.resume(returning: .cancel)
                 }
             }
         }
@@ -336,10 +382,18 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         do {
             let modificationRevision =
                 session.modificationRevision
-            let annotationJSON =
-                try await editorWebView.requestAnnotationSnapshot()
-            try session.install(annotationJSON: annotationJSON)
-            let project = try session.projectForSave()
+            let annotationJSON: Data
+            if let annotationSnapshotProvider {
+                annotationJSON =
+                    try await annotationSnapshotProvider()
+            } else {
+                annotationJSON =
+                    try await editorWebView
+                        .requestAnnotationSnapshot()
+            }
+            let project = try session.projectForSave(
+                annotationJSON: annotationJSON
+            )
             let url: URL
             if let projectURL {
                 url = projectURL
@@ -363,6 +417,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                     presenter: errorPresenter,
                     window: window
                 ).present()
+            }
+            if case .savedWithNewerChanges = completion {
+                return false
             }
             return true
         } catch {

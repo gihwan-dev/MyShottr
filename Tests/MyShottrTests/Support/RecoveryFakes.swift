@@ -60,6 +60,7 @@ final class SpyRecoveryStore: RecoveryStoring, @unchecked Sendable {
     var removedDocumentIDs: [UUID] = []
     var removeAttempts: [UUID] = []
     var removeErrors: [RecoveryStoreError?] = []
+    var removeResults: [RecoveryDiscardStageResult] = []
     var stagedDiscardBatches: [[UUID]] = []
     var attemptedDiscardBatches: [[UUID]] = []
     var projects: [RecoveredProject] = []
@@ -77,15 +78,22 @@ final class SpyRecoveryStore: RecoveryStoring, @unchecked Sendable {
         )
     }
 
-    func remove(documentId: UUID) throws {
+    @discardableResult
+    func remove(
+        documentId: UUID
+    ) throws -> RecoveryDiscardStageResult {
         removeAttempts.append(documentId)
         if !removeErrors.isEmpty,
            let error = removeErrors.removeFirst() {
             throw error
         }
         if let error { throw error }
+        let result = removeResults.isEmpty
+            ? .committed
+            : removeResults.removeFirst()
         removedDocumentIDs.append(documentId)
         projects.removeAll { $0.documentId == documentId }
+        return result
     }
 
     @discardableResult
@@ -118,6 +126,36 @@ final class SpyRecoveryStore: RecoveryStoring, @unchecked Sendable {
             projects: projects,
             issues: issues
         )
+    }
+}
+
+final class RecoveryCleanupAttemptSpy: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failuresRemaining: Int
+    private(set) var attemptCount = 0
+
+    init(failuresRemaining: Int = 0) {
+        self.failuresRemaining = failuresRemaining
+    }
+
+    func operation(
+        documentIDs: [UUID]
+    ) -> RecoveryCleanupOperation {
+        RecoveryCleanupOperation(
+            documentIDs: documentIDs
+        ) { [self] in
+            try perform()
+        }
+    }
+
+    private func perform() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        attemptCount += 1
+        if failuresRemaining > 0 {
+            failuresRemaining -= 1
+            throw RecoveryTestError.expected
+        }
     }
 }
 

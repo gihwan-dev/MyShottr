@@ -6,7 +6,10 @@ protocol RecoveryStoring: Sendable {
         _ project: MyShottrProject,
         documentId: UUID
     ) throws
-    func remove(documentId: UUID) throws
+    @discardableResult
+    func remove(
+        documentId: UUID
+    ) throws -> RecoveryDiscardStageResult
     @discardableResult
     func stageDiscard(
         documentIds: [UUID]
@@ -14,10 +17,39 @@ protocol RecoveryStoring: Sendable {
     func scanRecoverableProjects() throws -> RecoveryScanResult
 }
 
-enum RecoveryDiscardStageResult: Equatable, Sendable {
+enum RecoveryDiscardStageResult: Sendable {
     case noRecovery
     case committed
-    case committedAwaitingDurability
+    case committedAwaitingDurability(
+        RecoveryCleanupOperation
+    )
+    case committedCleanupPending(
+        RecoveryCleanupOperation
+    )
+}
+
+extension RecoveryDiscardStageResult: Equatable {
+    static func == (
+        lhs: RecoveryDiscardStageResult,
+        rhs: RecoveryDiscardStageResult
+    ) -> Bool {
+        switch (lhs, rhs) {
+        case (.noRecovery, .noRecovery),
+             (.committed, .committed):
+            return true
+        case let (
+            .committedAwaitingDurability(left),
+            .committedAwaitingDurability(right)
+        ),
+        let (
+            .committedCleanupPending(left),
+            .committedCleanupPending(right)
+        ):
+            return left === right
+        default:
+            return false
+        }
+    }
 }
 
 struct RecoveredProject: Equatable, Sendable {
@@ -53,6 +85,7 @@ struct RecoveryScanResult: Equatable, Sendable {
 
 struct RecoveryStoreFileSystem: Sendable {
     let moveItem: @Sendable (URL, URL) throws -> Void
+    let removeItem: @Sendable (URL) throws -> Void
     let synchronizeDirectory: @Sendable (URL) throws -> Void
 
     static let live = RecoveryStoreFileSystem(
@@ -61,6 +94,9 @@ struct RecoveryStoreFileSystem: Sendable {
                 at: $0,
                 to: $1
             )
+        },
+        removeItem: {
+            try FileManager.default.removeItem(at: $0)
         },
         synchronizeDirectory: { directory in
             let descriptor = directory.path.withCString {
@@ -164,8 +200,11 @@ struct RecoveryStore: RecoveryStoring {
         }
     }
 
-    func remove(documentId: UUID) throws {
-        _ = try stageDiscard(documentIds: [documentId])
+    @discardableResult
+    func remove(
+        documentId: UUID
+    ) throws -> RecoveryDiscardStageResult {
+        try stageDiscard(documentIds: [documentId])
     }
 
     @discardableResult
@@ -277,9 +316,29 @@ struct RecoveryStore: RecoveryStoring {
 
         do {
             try fileSystem.synchronizeDirectory(root)
+        } catch {
+            return .committedAwaitingDurability(
+                makeCommittedCleanupOperation(
+                    at: committedURL,
+                    documentIDs: movedDocumentIDs,
+                    synchronizeCommitFirst: true
+                )
+            )
+        }
+
+        let cleanupOperation =
+            makeCommittedCleanupOperation(
+                at: committedURL,
+                documentIDs: movedDocumentIDs,
+                synchronizeCommitFirst: false
+            )
+        do {
+            try cleanupOperation.perform()
             return .committed
         } catch {
-            return .committedAwaitingDurability
+            return .committedCleanupPending(
+                cleanupOperation
+            )
         }
     }
 
@@ -481,23 +540,73 @@ struct RecoveryStore: RecoveryStoring {
                     documentIDs: documentIDs
                 )
             case .committed:
-                _ = try discardTransactionDocumentIDs(
+                let documentIDs =
+                    try discardTransactionDocumentIDs(
                     at: transaction.url
                 )
-                do {
-                    try FileManager.default.removeItem(
-                        at: transaction.url
-                    )
-                    try fileSystem
-                        .synchronizeDirectory(root)
-                } catch {
+                try makeCommittedCleanupOperation(
+                    at: transaction.url,
+                    documentIDs: documentIDs,
+                    synchronizeCommitFirst: true
+                ).perform()
+            }
+        }
+    }
+
+    private func makeCommittedCleanupOperation(
+        at transactionURL: URL,
+        documentIDs: [UUID],
+        synchronizeCommitFirst: Bool
+    ) -> RecoveryCleanupOperation {
+        RecoveryCleanupOperation(
+            documentIDs: documentIDs
+        ) {
+            try cleanCommittedDiscardTransaction(
+                at: transactionURL,
+                expectedDocumentIDs: documentIDs,
+                synchronizeCommitFirst:
+                    synchronizeCommitFirst
+            )
+        }
+    }
+
+    private func cleanCommittedDiscardTransaction(
+        at transactionURL: URL,
+        expectedDocumentIDs: [UUID],
+        synchronizeCommitFirst: Bool
+    ) throws {
+        do {
+            if synchronizeCommitFirst {
+                try fileSystem.synchronizeDirectory(root)
+            }
+            if FileManager.default.fileExists(
+                atPath: transactionURL.path
+            ) {
+                try validateDiscardTransactionDirectory(
+                    transactionURL
+                )
+                let sortedExpectedDocumentIDs =
+                    expectedDocumentIDs.sorted {
+                        $0.uuidString < $1.uuidString
+                    }
+                guard try discardTransactionDocumentIDs(
+                    at: transactionURL
+                ) == sortedExpectedDocumentIDs else {
                     throw RecoveryStoreError
-                        .discardCleanupFailed(
-                            transaction.url
-                                .lastPathComponent
+                        .invalidDiscardTransactionPath(
+                            transactionURL.lastPathComponent
                         )
                 }
+                try fileSystem.removeItem(transactionURL)
             }
+            try fileSystem.synchronizeDirectory(root)
+        } catch let error as RecoveryStoreError {
+            throw error
+        } catch {
+            throw RecoveryStoreError
+                .discardCleanupFailed(
+                    transactionURL.lastPathComponent
+                )
         }
     }
 
@@ -526,7 +635,7 @@ struct RecoveryStore: RecoveryStoring {
             try fileSystem.moveItem(source, destination)
         }
         try fileSystem.synchronizeDirectory(root)
-        try FileManager.default.removeItem(at: transactionURL)
+        try fileSystem.removeItem(transactionURL)
         try fileSystem.synchronizeDirectory(root)
     }
 

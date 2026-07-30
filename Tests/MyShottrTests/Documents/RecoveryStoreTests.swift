@@ -56,11 +56,158 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
             documentId: ProjectFixtures.documentID
         )
 
-        try store.remove(documentId: ProjectFixtures.documentID)
-
-        XCTAssertTrue(
-            try store.scanRecoverableProjects().projects.isEmpty
+        let result = try store.remove(
+            documentId: ProjectFixtures.documentID
         )
+
+        XCTAssertEqual(result, .committed)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: recoveryURL(
+                    for: ProjectFixtures.documentID
+                ).path
+            )
+        )
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(
+                at: temporaryDirectory,
+                includingPropertiesForKeys: nil
+            ).isEmpty,
+            "A successful removal must physically delete its committed tombstone before returning"
+        )
+    }
+
+    func testCommittedCleanupFailureReturnsRetryForOnlyThatTombstone()
+        throws
+    {
+        let fileSystem = CommittedCleanupFailingRecoveryFileSystem(
+            root: temporaryDirectory,
+            failure: .removeCommittedOnce
+        )
+        let store = try makeCleanupFailureStore(
+            fileSystem: fileSystem
+        )
+
+        let result = try store.remove(
+            documentId: ProjectFixtures.documentID
+        )
+
+        guard case let .committedCleanupPending(operation) =
+            result
+        else {
+            return XCTFail(
+                "Expected committed tombstone cleanup to be retryable"
+            )
+        }
+        XCTAssertEqual(
+            operation.documentIDs,
+            [ProjectFixtures.documentID]
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: recoveryURL(
+                    for: ProjectFixtures.documentID
+                ).path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: discardTransactionURL(
+                    state: "committed"
+                ).path
+            )
+        )
+        XCTAssertEqual(fileSystem.rollbackMoveCount, 0)
+
+        try operation.perform()
+
+        XCTAssertFalse(operation.isPending)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: discardTransactionURL(
+                    state: "committed"
+                ).path
+            )
+        )
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(
+                at: temporaryDirectory,
+                includingPropertiesForKeys: nil
+            ).isEmpty
+        )
+    }
+
+    func testCleanupRetryConvergesAfterTombstoneUnlinkRootSyncFailure()
+        throws
+    {
+        let fileSystem = CommittedCleanupFailingRecoveryFileSystem(
+            root: temporaryDirectory,
+            failure: .rootSyncAfterCommittedRemovalOnce
+        )
+        let store = try makeCleanupFailureStore(
+            fileSystem: fileSystem
+        )
+
+        let result = try store.remove(
+            documentId: ProjectFixtures.documentID
+        )
+
+        guard case let .committedCleanupPending(operation) =
+            result
+        else {
+            return XCTFail(
+                "Expected post-unlink durability to be retryable"
+            )
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: discardTransactionURL(
+                    state: "committed"
+                ).path
+            ),
+            "The retry must not depend on payload bytes that were already unlinked"
+        )
+        XCTAssertTrue(operation.isPending)
+        XCTAssertEqual(fileSystem.rollbackMoveCount, 0)
+
+        try operation.perform()
+
+        XCTAssertFalse(operation.isPending)
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(
+                at: temporaryDirectory,
+                includingPropertiesForKeys: nil
+            ).isEmpty
+        )
+    }
+
+    func testRepeatedWriteAndRemoveKeepsRecoveryRootBounded()
+        throws
+    {
+        let store = try RecoveryStore(root: temporaryDirectory)
+
+        for index in 0..<5 {
+            try store.write(
+                RecoveryFixtures.project(
+                    text: "private payload \(index)",
+                    documentID: ProjectFixtures.documentID
+                ),
+                documentId: ProjectFixtures.documentID
+            )
+
+            XCTAssertEqual(
+                try store.remove(
+                    documentId: ProjectFixtures.documentID
+                ),
+                .committed
+            )
+            XCTAssertTrue(
+                try FileManager.default.contentsOfDirectory(
+                    at: temporaryDirectory,
+                    includingPropertiesForKeys: nil
+                ).isEmpty
+            )
+        }
     }
 
     func testBatchDiscardBecomesCleanupOnlyAndIsNeverOffered()
@@ -194,10 +341,12 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
             documentIds: [firstID, secondID]
         )
 
-        XCTAssertEqual(
-            result,
-            .committedAwaitingDurability
-        )
+        guard case .committedAwaitingDurability = result
+        else {
+            return XCTFail(
+                "Expected committed durability retry"
+            )
+        }
         XCTAssertEqual(setup.fileSystem.rollbackMoveCount, 0)
         XCTAssertFalse(
             FileManager.default.fileExists(
@@ -231,12 +380,15 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
         let firstID = ProjectFixtures.documentID
         let secondID = RecoveryFixtures.secondDocumentID
         let setup = try makePostCommitSyncFailingStore()
-        XCTAssertEqual(
-            try setup.store.stageDiscard(
-                documentIds: [firstID, secondID]
-            ),
-            .committedAwaitingDurability
+        let result = try setup.store.stageDiscard(
+            documentIds: [firstID, secondID]
         )
+        guard case .committedAwaitingDurability = result
+        else {
+            return XCTFail(
+                "Expected committed durability retry"
+            )
+        }
 
         let relaunched = try RecoveryStore(
             root: temporaryDirectory
@@ -750,6 +902,29 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
         )
         return (store, fileSystem)
     }
+
+    private func makeCleanupFailureStore(
+        fileSystem: CommittedCleanupFailingRecoveryFileSystem
+    ) throws -> RecoveryStore {
+        let store = try RecoveryStore(
+            root: temporaryDirectory,
+            fileSystem: fileSystem.fileSystem,
+            makeTransactionID: {
+                UUID(
+                    uuidString:
+                        "11111111-1111-4111-8111-111111111111"
+                )!
+            }
+        )
+        try store.write(
+            RecoveryFixtures.project(
+                text: "private recovery payload",
+                documentID: ProjectFixtures.documentID
+            ),
+            documentId: ProjectFixtures.documentID
+        )
+        return store
+    }
 }
 
 private final class FailingRecoveryMoveFileSystem:
@@ -779,6 +954,7 @@ private final class FailingRecoveryMoveFileSystem:
                 }
                 try live.moveItem(source, destination)
             },
+            removeItem: live.removeItem,
             synchronizeDirectory:
                 live.synchronizeDirectory
         )
@@ -787,6 +963,71 @@ private final class FailingRecoveryMoveFileSystem:
 
 private enum RecoveryMoveTestError: Error {
     case expected
+}
+
+private final class CommittedCleanupFailingRecoveryFileSystem:
+    @unchecked Sendable
+{
+    enum Failure: Equatable {
+        case removeCommittedOnce
+        case rootSyncAfterCommittedRemovalOnce
+    }
+
+    private let root: URL
+    private let failure: Failure
+    private var didInjectFailure = false
+    private var didRemoveCommitted = false
+    private(set) var rollbackMoveCount = 0
+
+    init(root: URL, failure: Failure) {
+        self.root = root.standardizedFileURL
+        self.failure = failure
+    }
+
+    var fileSystem: RecoveryStoreFileSystem {
+        let live = RecoveryStoreFileSystem.live
+        return RecoveryStoreFileSystem(
+            moveItem: { [self] source, destination in
+                if source.deletingLastPathComponent()
+                    .lastPathComponent
+                    .hasSuffix(".committed"),
+                   destination.deletingLastPathComponent()
+                    .standardizedFileURL == root
+                {
+                    rollbackMoveCount += 1
+                }
+                try live.moveItem(source, destination)
+            },
+            removeItem: { [self] url in
+                if url.lastPathComponent.hasSuffix(
+                    ".committed"
+                ) {
+                    if failure == .removeCommittedOnce,
+                       !didInjectFailure
+                    {
+                        didInjectFailure = true
+                        throw RecoveryMoveTestError.expected
+                    }
+                    try live.removeItem(url)
+                    didRemoveCommitted = true
+                    return
+                }
+                try live.removeItem(url)
+            },
+            synchronizeDirectory: { [self] directory in
+                if failure
+                    == .rootSyncAfterCommittedRemovalOnce,
+                   didRemoveCommitted,
+                   !didInjectFailure,
+                   directory.standardizedFileURL == root
+                {
+                    didInjectFailure = true
+                    throw RecoveryMoveTestError.expected
+                }
+                try live.synchronizeDirectory(directory)
+            }
+        )
+    }
 }
 
 private final class PostCommitSyncFailingRecoveryFileSystem:
@@ -814,6 +1055,7 @@ private final class PostCommitSyncFailingRecoveryFileSystem:
                 }
                 try live.moveItem(source, destination)
             },
+            removeItem: live.removeItem,
             synchronizeDirectory: {
                 [self] directory in
                 if directory.standardizedFileURL == root,
