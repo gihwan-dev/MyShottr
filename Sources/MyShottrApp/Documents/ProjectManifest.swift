@@ -15,4 +15,5 @@ struct ProjectManifest: Codable, Equatable, Sendable {
     let sourcePixelWidth: Int
     let sourcePixelHeight: Int
     let sourceKind: CaptureSourceKind
+    var sourceScale: Double? = nil
 }

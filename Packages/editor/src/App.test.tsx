@@ -61,14 +61,32 @@ vi.mock("./canvas/EditorCanvas", () => ({
 afterEach(cleanup);
 
 describe("EditorApp", () => {
+  it("publishes selected tools and defaults as preferences without changing the document", () => {
+    const onChange = vi.fn();
+    const onPreferencesChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="arrow"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={onPreferencesChange}
+    />);
+
+    expect(screen.getByRole("button", { name: "Arrow" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
+
+    expect(onPreferencesChange).toHaveBeenLastCalledWith("arrow", expect.objectContaining({ color: "#FF4D4F" }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("shows the eight canvas tools", () => {
-    render(<EditorApp initialDocument={fixtureDocument()} sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} />);
+    render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
 
     expect(within(screen.getByRole("navigation", { name: "Annotation tools" })).getAllByRole("button")).toHaveLength(8);
   });
 
   it("shows rectangle style controls and omits opacity for redaction", () => {
-    render(<EditorApp initialDocument={fixtureDocument()} sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} />);
+    render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Rectangle" }));
     expect(screen.getByLabelText("Color")).toBeTruthy();
@@ -83,7 +101,7 @@ describe("EditorApp", () => {
 
   it("keeps contextual defaults and rectangle fill through commands and undo", () => {
     const changes: EditorDocument[] = [];
-    render(<EditorApp initialDocument={fixtureDocument()} sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(document) => changes.push(document)} />);
+    render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(document) => changes.push(document)} onPreferencesChange={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Rectangle" }));
     fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
@@ -101,7 +119,7 @@ describe("EditorApp", () => {
 
   it("does not publish a document change for no-op undo or redo", () => {
     const onChange = vi.fn();
-    render(<EditorApp initialDocument={fixtureDocument()} sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={onChange} />);
+    render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={onChange} onPreferencesChange={() => {}} />);
 
     fireEvent.keyDown(window, { key: "z", metaKey: true });
     fireEvent.keyDown(window, { key: "y", metaKey: true });
@@ -112,7 +130,7 @@ describe("EditorApp", () => {
   it("publishes the restored document when an active annotation transaction is cancelled", () => {
     const changes: EditorDocument[] = [];
     const initial = fixtureDocument();
-    render(<EditorApp initialDocument={initial} sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(document) => changes.push(document)} />);
+    render(<EditorApp initialDocument={initial} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(document) => changes.push(document)} onPreferencesChange={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Move then cancel" }));
 
@@ -129,7 +147,7 @@ describe("EditorApp", () => {
         { ...fixtureDocument().elements[0], id: "rectangle-102", x: 100, seed: 2, zIndex: 1 },
       ],
     });
-    render(<EditorApp initialDocument={document} sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(next) => changes.push(next)} />);
+    render(<EditorApp initialDocument={document} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(next) => changes.push(next)} onPreferencesChange={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
     fireEvent.keyDown(window, { key: "d", metaKey: true });
@@ -169,6 +187,7 @@ describe("EditorApp", () => {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
         sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
+        initialTool: "selection",
       },
     });
 
@@ -204,6 +223,7 @@ describe("EditorApp", () => {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
         sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
+        initialTool: "selection",
       },
     });
     await screen.findByRole("main", { name: "MyShottr editor" });
@@ -243,6 +263,7 @@ describe("EditorApp", () => {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
         sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
+        initialTool: "selection",
       },
     });
 

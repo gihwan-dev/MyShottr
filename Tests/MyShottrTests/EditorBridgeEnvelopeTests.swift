@@ -3,6 +3,41 @@ import XCTest
 @testable import MyShottr
 
 final class EditorBridgeEnvelopeTests: XCTestCase {
+    func testPreferencesMessagesAcceptOnlyValidatedPayloads() throws {
+        let valid = Data("""
+        {
+          "protocolVersion": 1,
+          "requestId": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+          "type": "editorPreferencesChanged",
+          "payload": {
+            "tool": "arrow",
+            "defaults": {
+              "color": "#1677FF",
+              "strokeWidth": 4,
+              "textSize": 24,
+              "roughness": 1,
+              "opacity": 1
+            }
+          }
+        }
+        """.utf8)
+
+        XCTAssertNoThrow(try EditorToNativeEnvelope.decode(from: valid))
+
+        for payload in [
+            "{\"tool\":\"unknown\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":1,\"opacity\":1}}",
+            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#FFFFFF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":1,\"opacity\":1}}",
+            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":3,\"textSize\":24,\"roughness\":1,\"opacity\":1}}",
+            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":12,\"roughness\":1,\"opacity\":1}}",
+            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":3,\"opacity\":1}}",
+            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":1,\"opacity\":0.6}}",
+            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":1,\"opacity\":1},\"extra\":true}",
+        ] {
+            let envelope = "{\"protocolVersion\":1,\"requestId\":\"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\",\"type\":\"editorPreferencesChanged\",\"payload\":\(payload)}"
+            XCTAssertThrowsError(try EditorToNativeEnvelope.decode(from: Data(envelope.utf8)))
+        }
+    }
+
     func testDecodesV1EditorReadyFixture() throws {
         let fixture = Data("""
         {

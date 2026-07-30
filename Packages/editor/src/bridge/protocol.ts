@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { EditorDocument } from "../model/elements";
-import { EditorDocumentSchema } from "../model/schema";
+import type { EditorDefaults, EditorDocument, EditorTool } from "../model/elements";
+import { EditorDefaultsSchema, EditorDocumentSchema } from "../model/schema";
 
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
@@ -30,6 +30,10 @@ const EnvelopeBaseSchema = z.object({
 
 const EditorReadyPayloadSchema = z.object({}).strict();
 const DocumentChangedPayloadSchema = z.object({}).strict();
+const EditorPreferencesChangedPayloadSchema = z.object({
+  tool: z.enum(["selection", "rectangle", "arrow", "text", "freehand", "highlighter", "redaction", "numberMarker"]),
+  defaults: EditorDefaultsSchema,
+}).strict();
 const AnnotationSnapshotPayloadSchema = z.object({
   document: EditorDocumentSchema,
 }).strict();
@@ -52,6 +56,7 @@ const BridgeErrorPayloadSchema = z.object({
 const EditorToNativeMessageSchema = z.discriminatedUnion("type", [
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("editorReady"), payload: EditorReadyPayloadSchema }).strict(),
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("documentChanged"), payload: DocumentChangedPayloadSchema }).strict(),
+  z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("editorPreferencesChanged"), payload: EditorPreferencesChangedPayloadSchema }).strict(),
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("annotationSnapshot"), payload: AnnotationSnapshotPayloadSchema }).strict(),
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("compositeChunk"), payload: CompositeChunkPayloadSchema }).strict(),
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("compositeCompleted"), payload: CompositeCompletedPayloadSchema }).strict(),
@@ -62,6 +67,7 @@ const LoadDocumentPayloadSchema = z.object({
   documentId: RequestIDSchema,
   sourceImageURL: z.string(),
   annotationDocument: EditorDocumentSchema,
+  initialTool: z.enum(["selection", "rectangle", "arrow", "text", "freehand", "highlighter", "redaction", "numberMarker"]),
 }).strict().superRefine((payload, context) => {
   const expectedURL = `myshottr-editor://editor/document/${payload.documentId}/original.png`;
   if (payload.sourceImageURL !== expectedURL) {
@@ -98,6 +104,7 @@ export type Envelope<T extends string, P> = {
 export type EditorToNativePayloads = {
   editorReady: {};
   documentChanged: {};
+  editorPreferencesChanged: { tool: EditorTool; defaults: EditorDefaults };
   annotationSnapshot: { document: EditorDocument };
   compositeChunk: { requestId: string; index: number; total: number; dataBase64: string };
   compositeCompleted: { requestId: string };
@@ -105,7 +112,7 @@ export type EditorToNativePayloads = {
 };
 
 export type NativeToEditorEnvelope =
-  | Envelope<"loadDocument", { documentId: string; sourceImageURL: string; annotationDocument: EditorDocument }>
+  | Envelope<"loadDocument", { documentId: string; sourceImageURL: string; annotationDocument: EditorDocument; initialTool: EditorTool }>
   | Envelope<"saveCompleted", { requestId: string }>
   | Envelope<"saveFailed", { requestId: string; message: string }>
   | Envelope<"requestComposite", { requestId: string }>

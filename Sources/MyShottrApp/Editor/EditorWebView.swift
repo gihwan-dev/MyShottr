@@ -13,7 +13,7 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
     var onNavigationFinished: (() -> Void)?
     var onNavigationFailure: ((Error) -> Void)?
 
-    convenience init(session: DocumentSession) {
+    convenience init(session: DocumentSession, preferences: any EditorPreferencesStoring = UserDefaultsEditorPreferencesStore()) {
         guard let resourcesURL = Bundle.main.resourceURL
         else {
             preconditionFailure("Bundled editor is missing")
@@ -25,20 +25,22 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
 
         self.init(
             session: session,
-            editorBundleRootURL: editorURL.deletingLastPathComponent()
+            editorBundleRootURL: editorURL.deletingLastPathComponent(),
+            preferences: preferences
         )
     }
 
-    private convenience init(session: DocumentSession, editorBundleRootURL: URL) {
+    private convenience init(session: DocumentSession, editorBundleRootURL: URL, preferences: any EditorPreferencesStoring) {
         self.init(
             session: session,
             editorURL: URL(string: "myshottr-editor://editor/index.html")!,
-            editorBundleRootURL: editorBundleRootURL
+            editorBundleRootURL: editorBundleRootURL,
+            preferences: preferences
         )
     }
 
-    private init(session: DocumentSession, editorURL: URL, editorBundleRootURL: URL) {
-        let bridge = EditorBridge(session: session)
+    private init(session: DocumentSession, editorURL: URL, editorBundleRootURL: URL, preferences: any EditorPreferencesStoring) {
+        let bridge = EditorBridge(session: session, preferences: preferences)
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(
             EditorBundleSchemeHandler(

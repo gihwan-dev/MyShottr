@@ -3,6 +3,7 @@ import XCTest
 @testable import MyShottr
 
 enum ProjectFixtures {
+    static let documentID = UUID(uuidString: "B0B7A25D-D451-43C6-8D6C-2E27D47C89CB")!
     static let pngData = try! Data(contentsOf: fixtureURL())
     static var editorDefaults: [String: Any] {
         [
@@ -21,7 +22,7 @@ enum ProjectFixtures {
     static func project(text: String) -> MyShottrProject {
         let manifest = ProjectManifest(
             formatVersion: ProjectManifest.currentFormatVersion,
-            documentId: UUID(uuidString: "B0B7A25D-D451-43C6-8D6C-2E27D47C89CB")!,
+            documentId: documentID,
             createdAt: Date(timeIntervalSince1970: 1_720_000_000),
             updatedAt: Date(timeIntervalSince1970: 1_720_000_000),
             sourcePixelWidth: 2,

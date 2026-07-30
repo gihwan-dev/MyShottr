@@ -10,10 +10,15 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private var closeAfterPrompt = false
     var onClose: (() -> Void)?
 
-    init(project: MyShottrProject, projectURL: URL?, projectStore: any ProjectPackageStoring = ProjectPackageStore()) throws {
+    init(
+        project: MyShottrProject,
+        projectURL: URL?,
+        projectStore: any ProjectPackageStoring = ProjectPackageStore(),
+        preferences: any EditorPreferencesStoring = UserDefaultsEditorPreferencesStore()
+    ) throws {
         let session = DocumentSession()
         self.session = session
-        self.editorWebView = EditorWebView(session: session)
+        self.editorWebView = EditorWebView(session: session, preferences: preferences)
         self.projectStore = projectStore
         self.projectURL = projectURL
         let window = NSWindow(

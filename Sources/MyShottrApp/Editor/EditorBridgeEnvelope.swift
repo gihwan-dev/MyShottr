@@ -5,7 +5,7 @@ enum NativeToEditorMessageType: String, Codable, Sendable {
 }
 
 enum EditorToNativeMessageType: String, Codable, Sendable {
-    case editorReady, documentChanged, annotationSnapshot
+    case editorReady, documentChanged, editorPreferencesChanged, annotationSnapshot
     case compositeChunk, compositeCompleted, bridgeError
 }
 
@@ -93,6 +93,19 @@ extension EditorBridgeEnvelope where MessageType == EditorToNativeMessageType, P
         switch type {
         case .editorReady, .documentChanged:
             guard exact([]) else { throw EditorBridgeEnvelopeError.malformedMessage }
+        case .editorPreferencesChanged:
+            guard exact(["tool", "defaults"]),
+                  case let .string(tool)? = payload["tool"],
+                  ["selection", "rectangle", "arrow", "text", "freehand", "highlighter", "redaction", "numberMarker"].contains(tool),
+                  case let .object(defaults)? = payload["defaults"],
+                  Set(defaults.keys) == ["color", "strokeWidth", "textSize", "roughness", "opacity"],
+                  case let .string(color)? = defaults["color"],
+                  ["#000000", "#FF4D4F", "#1677FF", "#FADB14"].contains(color),
+                  let strokeWidth = integer(defaults["strokeWidth"]), [2, 4, 8].contains(strokeWidth),
+                  let textSize = integer(defaults["textSize"]), [16, 24, 36].contains(textSize),
+                  let roughness = integer(defaults["roughness"]), [0, 1, 2].contains(roughness),
+                  case let .number(opacity)? = defaults["opacity"], [0.25, 0.5, 0.75, 1].contains(opacity)
+            else { throw EditorBridgeEnvelopeError.malformedMessage }
         case .annotationSnapshot:
             guard exact(["document"]), case let .object(document)? = payload["document"],
                   Set(document.keys) == ["schemaVersion", "sourcePixelWidth", "sourcePixelHeight", "elements", "presentation", "defaults"],

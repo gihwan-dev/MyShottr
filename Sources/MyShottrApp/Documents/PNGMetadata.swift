@@ -7,7 +7,11 @@ struct PNGMetadata: Equatable, Sendable {
     let pixelHeight: Int
 
     static func read(from url: URL) throws -> PNGMetadata {
-        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
+        try read(from: Data(contentsOf: url))
+    }
+
+    static func read(from data: Data) throws -> PNGMetadata {
+        guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil),
               let imageType = CGImageSourceGetType(imageSource),
               imageType as String == UTType.png.identifier,
               let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],

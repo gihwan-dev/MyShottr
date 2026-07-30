@@ -12,6 +12,7 @@ enum EditorBridgeError: Error, Equatable {
 @MainActor
 final class EditorBridge: NSObject, WKScriptMessageHandler {
     private let session: DocumentSession
+    private let preferences: any EditorPreferencesStoring
     private weak var webView: WKWebView?
     private var editorIsReady = false
     private var pendingProject: MyShottrProject?
@@ -32,11 +33,13 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     init(
         session: DocumentSession,
         requestTimeout: Duration = .seconds(10),
+        preferences: any EditorPreferencesStoring = UserDefaultsEditorPreferencesStore(),
         javaScriptEvaluationObserver: ((UUID, @escaping (Error?) -> Void) -> Void)? = nil,
         annotationSnapshotRequestObserver: ((UUID) throws -> Void)? = nil,
         outgoingMessageObserver: ((NativeToEditorEnvelope) -> Void)? = nil
     ) {
         self.session = session
+        self.preferences = preferences
         self.requestTimeout = requestTimeout
         self.annotationSnapshotRequestObserver = annotationSnapshotRequestObserver
         self.javaScriptEvaluationObserver = javaScriptEvaluationObserver
@@ -50,6 +53,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         self.init(
             session: session,
             requestTimeout: .seconds(10),
+            preferences: UserDefaultsEditorPreferencesStore(),
             javaScriptEvaluationObserver: nil,
             annotationSnapshotRequestObserver: nil,
             outgoingMessageObserver: outgoingMessageObserver
@@ -206,6 +210,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             } catch {
                 lastError = .invalidDocument
             }
+        case .editorPreferencesChanged:
+            installPreferences(message)
         case .annotationSnapshot:
             installSnapshot(message)
         case .bridgeError:
@@ -226,6 +232,36 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             installCompositeChunk(message)
         case .compositeCompleted:
             finishComposite(message)
+        }
+    }
+
+    private func installPreferences(_ message: EditorToNativeEnvelope) {
+        guard case let .object(payload) = message.payload,
+              case let .string(tool)? = payload["tool"],
+              case let .object(defaults)? = payload["defaults"],
+              case let .string(color)? = defaults["color"],
+              case let .number(strokeWidth)? = defaults["strokeWidth"],
+              let strokeWidth = Int(exactly: strokeWidth),
+              case let .number(textSize)? = defaults["textSize"],
+              let textSize = Int(exactly: textSize),
+              case let .number(roughness)? = defaults["roughness"],
+              let roughness = Int(exactly: roughness),
+              case let .number(opacity)? = defaults["opacity"]
+        else {
+            lastError = .invalidMessage
+            return
+        }
+        do {
+            try preferences.save(EditorPreferences(
+                tool: tool,
+                color: color,
+                strokeWidth: strokeWidth,
+                textSize: textSize,
+                roughness: roughness,
+                opacity: opacity
+            ))
+        } catch {
+            lastError = .invalidMessage
         }
     }
 
@@ -269,6 +305,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             "documentId": .string(project.manifest.documentId.uuidString),
             "sourceImageURL": .string("myshottr-editor://editor/document/\(project.manifest.documentId.uuidString)/original.png"),
             "annotationDocument": annotationDocument,
+            "initialTool": .string(preferences.load().tool),
         ])
         let requestID = try send(type: .loadDocument, payload: payload)
         pendingLoadRequestID = requestID
@@ -490,7 +527,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         switch type {
         case .annotationSnapshot, .compositeChunk, .compositeCompleted, .bridgeError:
             true
-        case .editorReady, .documentChanged:
+        case .editorReady, .documentChanged, .editorPreferencesChanged:
             false
         }
     }

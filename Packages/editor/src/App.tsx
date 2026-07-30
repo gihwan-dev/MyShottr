@@ -11,23 +11,25 @@ import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
 import { sendComposite } from "./export/sendComposite";
 import { createHistoryStore, type HistoryStore } from "./model/history";
 import { findElement } from "./model/reducer";
-import type { EditorCommand, EditorDocument, EditorTool, PaletteColor, Point } from "./model/elements";
+import type { EditorCommand, EditorDefaults, EditorDocument, EditorTool, PaletteColor, Point } from "./model/elements";
 import "./styles.css";
 
 export type EditorAppProps = {
   initialDocument: EditorDocument;
+  initialTool: EditorTool;
   sourceImageURL: string;
   onChange: (document: EditorDocument) => void;
+  onPreferencesChange: (tool: EditorTool, defaults: EditorDefaults) => void;
 };
 
-export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorAppProps) {
+export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChange, onPreferencesChange }: EditorAppProps) {
   const history = useRef<HistoryStore | undefined>(undefined);
   if (!history.current) history.current = createHistoryStore(initialDocument);
   const defaults = useRef(initialDocument.defaults);
   const selection = useRef(new SelectionController());
   const [document, setDocument] = useState(() => ({ ...history.current!.document, defaults: defaults.current }));
   const [selectedId, setSelectedId] = useState<string>();
-  const [tool, setTool] = useState<EditorTool>("selection");
+  const [tool, setTool] = useState<EditorTool>(initialTool);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [rectangleFillColor, setRectangleFillColor] = useState<PaletteColor | null>(null);
@@ -45,8 +47,9 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
   }, [publishDocument]);
   const setDefaults = useCallback((nextDefaults: EditorDocument["defaults"]) => {
     defaults.current = nextDefaults;
-    publishDocument();
-  }, [publishDocument]);
+    setDocument((current) => ({ ...current, defaults: nextDefaults }));
+    onPreferencesChange(tool, nextDefaults);
+  }, [onPreferencesChange, tool]);
   const select = useCallback((id: string | undefined) => {
     if (id) selection.current.select(id);
     else selection.current.clear();
@@ -55,7 +58,8 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
   const selectTool = useCallback((nextTool: EditorTool) => {
     setTool(nextTool);
     if (nextTool !== "selection") select(undefined);
-  }, [select]);
+    onPreferencesChange(nextTool, defaults.current);
+  }, [onPreferencesChange, select]);
   const duplicateSelection = useCallback(() => {
     if (!selectedId) return;
     const source = findElement(history.current!.document, selectedId);
@@ -132,12 +136,12 @@ export function EditorApp({ initialDocument, sourceImageURL, onChange }: EditorA
 
 export function App() {
   const bridge = useNativeBridge();
-  const [loadedDocument, setLoadedDocument] = useState<{ document: EditorDocument; sourceImageURL: string }>();
-  const loadedDocumentRef = useRef<{ document: EditorDocument; sourceImageURL: string } | undefined>(undefined);
+  const [loadedDocument, setLoadedDocument] = useState<{ document: EditorDocument; sourceImageURL: string; initialTool: EditorTool }>();
+  const loadedDocumentRef = useRef<{ document: EditorDocument; sourceImageURL: string; initialTool: EditorTool } | undefined>(undefined);
 
   useEffect(() => {
     const acceptLoad = async (message: Extract<Parameters<typeof bridge.subscribe>[0] extends (message: infer T) => void ? T : never, { type: "loadDocument" }>) => {
-      const { annotationDocument, sourceImageURL } = message.payload;
+      const { annotationDocument, sourceImageURL, initialTool } = message.payload;
       try {
         const dimensions = await sourceDimensions(sourceImageURL);
         if (dimensions.width !== annotationDocument.sourcePixelWidth || dimensions.height !== annotationDocument.sourcePixelHeight) {
@@ -150,7 +154,7 @@ export function App() {
         });
         return;
       }
-      const nextDocument = { document: annotationDocument, sourceImageURL };
+      const nextDocument = { document: annotationDocument, sourceImageURL, initialTool };
       loadedDocumentRef.current = nextDocument;
       setLoadedDocument(nextDocument);
       await bridge.sendCorrelated(message.requestId, "annotationSnapshot", { document: annotationDocument });
@@ -194,12 +198,16 @@ export function App() {
   return <EditorApp
     key={loadedDocument.sourceImageURL}
     initialDocument={loadedDocument.document}
+    initialTool={loadedDocument.initialTool}
     sourceImageURL={loadedDocument.sourceImageURL}
     onChange={(document) => {
       if (loadedDocumentRef.current) {
         loadedDocumentRef.current = { ...loadedDocumentRef.current, document };
       }
       void bridge.send("documentChanged", {});
+    }}
+    onPreferencesChange={(tool, defaults) => {
+      void bridge.send("editorPreferencesChanged", { tool, defaults });
     }}
   />;
 }
