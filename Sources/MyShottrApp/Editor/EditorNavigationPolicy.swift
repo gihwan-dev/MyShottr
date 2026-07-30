@@ -72,6 +72,7 @@ struct EditorNavigationPolicy: Sendable {
         components.query == nil,
         components.fragment == nil,
         let decodedPath = components.percentEncodedPath.removingPercentEncoding,
+        components.percentEncodedPath == decodedPath,
         isCanonical(path: decodedPath)
         else {
             return nil

@@ -112,6 +112,12 @@ assert(
 );
 
 for (const path of await listFiles(editorDist)) {
+  if (extname(path) === ".js") {
+    const source = await fs.readFile(path, "utf8");
+    assertNoRemoteImport(source, display(path));
+    assertOnlyReviewedBundleURLLiterals(source, display(path));
+    continue;
+  }
   if (extname(path) !== ".css") continue;
   const source = await fs.readFile(path, "utf8");
   assert(
@@ -138,6 +144,10 @@ for (const path of await listFiles(editorSource)) {
 
 const publicManifest = await readManifest(extensionPublicManifest);
 const distManifest = await readManifest(extensionDistManifest);
+const expectedExtensionPageCSP =
+  "default-src 'none'; script-src 'self'; connect-src 'none'; "
+  + "object-src 'none'; base-uri 'none'; frame-src 'none'; "
+  + "img-src 'self'; style-src 'self'";
 for (const [label, manifest] of [
   ["extension source manifest", publicManifest],
   ["built extension manifest", distManifest],
@@ -152,6 +162,7 @@ for (const [label, manifest] of [
     `${label} permissions differ from activeTab + nativeMessaging`,
   );
   for (const forbiddenKey of [
+    "optional_permissions",
     "host_permissions",
     "optional_host_permissions",
     "content_scripts",
@@ -165,6 +176,11 @@ for (const [label, manifest] of [
     manifest.background?.service_worker === "service-worker.js"
       && manifest.background?.type === "module",
     `${label} has an unexpected background entrypoint`,
+  );
+  assert(
+    JSON.stringify(manifest.content_security_policy)
+      === JSON.stringify({ extension_pages: expectedExtensionPageCSP }),
+    `${label} Content Security Policy changed from the local-only contract`,
   );
 }
 
@@ -201,7 +217,45 @@ function assertNoNetworkAPI(source, label) {
     [/\b(?:navigator|window\s*\.\s*navigator)\s*\.\s*sendBeacon\s*\(/, "sendBeacon"],
   ];
   for (const [pattern, name] of forbidden) {
-    assert(!pattern.test(source), `Network API ${name} found in ${label}`);
+    assert(
+      !pattern.test(source),
+      `Direct network API reference ${name} found in ${label}`,
+    );
+  }
+}
+
+function assertNoRemoteImport(source, label) {
+  const remoteImportPatterns = [
+    /\bimport\s*\(\s*["'](?:https?|wss?):\/\//i,
+    /\bimportScripts\s*\(\s*["'](?:https?|wss?):\/\//i,
+    /\brequire\s*\(\s*["'](?:https?|wss?):\/\//i,
+    /\bfrom\s*["'](?:https?|wss?):\/\//i,
+    /sourceMappingURL\s*=\s*(?:https?|wss?):\/\//i,
+  ];
+  for (const pattern of remoteImportPatterns) {
+    assert(!pattern.test(source), `Remote import found in ${label}`);
+  }
+}
+
+function assertOnlyReviewedBundleURLLiterals(source, label) {
+  const reviewedPrefixes = [
+    "https://react.dev/errors/",
+    "http://www.w3.org/",
+    "https://konvajs.org/docs/",
+    "https://github.com/konvajs/react-konva/issues/",
+    "https://konvajs.github.io/docs/",
+    "https://json-schema.org/",
+    "http://json-schema.org/",
+    "http://[${",
+  ];
+  const remoteLiterals = [
+    ...source.matchAll(/(?:https?|wss?):\/\/[^\s"'`<>\\)]+/gi),
+  ].map((match) => match[0]);
+  for (const literal of remoteLiterals) {
+    assert(
+      reviewedPrefixes.some((prefix) => literal.startsWith(prefix)),
+      `Unreviewed remote URL literal found in ${label}: ${literal}`,
+    );
   }
 }
 

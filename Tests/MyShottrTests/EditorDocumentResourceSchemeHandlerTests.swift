@@ -34,8 +34,11 @@ final class EditorDocumentResourceSchemeHandlerTests: XCTestCase {
         XCTAssertTrue(task.callbacksWereOnMainThread)
     }
 
-    func testRejectsUnknownIDsExtraSegmentsNonGETAndTraversalWithoutResolvingBytes() async {
+    func testRejectsUnknownIDsExtraSegmentsNonGETAndTraversalWithoutResolvingBytes() async throws {
         let activeDocumentID = UUID()
+        let firstUUIDByte = try XCTUnwrap(activeDocumentID.uuidString.utf8.first)
+        let encodedUUIDAlias = String(format: "%%%02X", firstUUIDByte)
+            + activeDocumentID.uuidString.dropFirst()
         var resolveCount = 0
         let handler = EditorBundleSchemeHandler(
             rootURL: emptyBundleRoot,
@@ -48,6 +51,9 @@ final class EditorDocumentResourceSchemeHandlerTests: XCTestCase {
             URLRequest(url: resourceURL(documentID: UUID())),
             URLRequest(url: URL(string: "myshottr-editor://editor/document/\(activeDocumentID.uuidString)/original.png/extra")!),
             URLRequest(url: URL(string: "myshottr-editor://editor/document/../original.png")!),
+            URLRequest(url: try XCTUnwrap(URL(
+                string: "myshottr-editor://editor/document/\(encodedUUIDAlias)/original.png"
+            ))),
             URLRequest(url: URL(string: "myshottr-resource://document/\(activeDocumentID.uuidString)/original.png")!),
             request(url: resourceURL(documentID: activeDocumentID), method: "POST"),
         ]

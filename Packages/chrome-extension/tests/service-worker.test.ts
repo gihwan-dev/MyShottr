@@ -10,6 +10,10 @@ const setTitle = vi.fn();
 const onClickedAddListener = vi.fn();
 const onCommandAddListener = vi.fn();
 const captureId = "12345678-1234-1234-1234-123456789ABC";
+const extensionPageCSP =
+  "default-src 'none'; script-src 'self'; connect-src 'none'; "
+  + "object-src 'none'; base-uri 'none'; frame-src 'none'; "
+  + "img-src 'self'; style-src 'self'";
 
 async function loadServiceWorker() {
   return import("../src/service-worker");
@@ -195,9 +199,13 @@ describe("privacy boundary", () => {
     ) as Record<string, unknown>;
 
     expect(manifest.permissions).toEqual(["activeTab", "nativeMessaging"]);
+    expect(manifest).not.toHaveProperty("optional_permissions");
     expect(manifest).not.toHaveProperty("host_permissions");
     expect(manifest).not.toHaveProperty("optional_host_permissions");
     expect(manifest).not.toHaveProperty("content_scripts");
+    expect(manifest.content_security_policy).toEqual({
+      extension_pages: extensionPageCSP,
+    });
 
     for (const { path, source } of sources) {
       expect(source, path).not.toMatch(/\bchrome\s*\.\s*scripting\b/);

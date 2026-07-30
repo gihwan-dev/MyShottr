@@ -203,7 +203,20 @@ final class EditorBundleSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     private nonisolated func resource(for requestURL: URL) -> Resource? {
-        guard let encodedPath = URLComponents(url: requestURL, resolvingAgainstBaseURL: false)?.percentEncodedPath else { return nil }
+        guard let encodedPath = URLComponents(
+            url: requestURL,
+            resolvingAgainstBaseURL: false
+        )?.percentEncodedPath,
+        let decodedPath = encodedPath.removingPercentEncoding,
+        encodedPath == decodedPath,
+        decodedPath.hasPrefix("/"),
+        !decodedPath.contains("\\"),
+        !decodedPath.contains("\0"),
+        !decodedPath.contains("//"),
+        (decodedPath as NSString).standardizingPath == decodedPath
+        else {
+            return nil
+        }
         if encodedPath == "/index.html" {
             return .bundledFile(
                 url: rootURL.appendingPathComponent("index.html"),
@@ -215,7 +228,10 @@ final class EditorBundleSchemeHandler: NSObject, WKURLSchemeHandler {
             return .documentPNG(documentID)
         }
         guard encodedPath.hasPrefix("/assets/"),
-              let filename = String(encodedPath.dropFirst("/assets/".count)).removingPercentEncoding,
+              !encodedPath.dropFirst("/assets/".count).contains("/"),
+              let filename = String(
+                encodedPath.dropFirst("/assets/".count)
+              ).removingPercentEncoding,
               let mimeType = referencedAssets[filename]
         else {
             return nil

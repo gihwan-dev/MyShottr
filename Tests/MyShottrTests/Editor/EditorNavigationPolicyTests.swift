@@ -34,7 +34,7 @@ final class EditorNavigationPolicyTests: XCTestCase {
             .allow
         )
 
-        let deniedURLs = [
+        let deniedURLStrings = [
             "https://example.com",
             "http://localhost:3000",
             "data:text/html,test",
@@ -48,12 +48,20 @@ final class EditorNavigationPolicyTests: XCTestCase {
             "myshottr-editor://editor/index.html?remote=1",
             "myshottr-editor://editor/index.html#fragment",
             "myshottr-editor://editor/assets/unknown.js",
+            "myshottr-editor://editor/assets/%69ndex-AbC_12.js",
             "myshottr-editor://editor/assets/%2E%2E/index-AbC_12.js",
             "myshottr-editor://editor/assets/index-AbC_12.js%2Fextra",
+            "myshottr-editor://editor/index%2Ehtml",
+            "myshottr-editor://editor/document/%41BCDEF12-3456-4789-ABCD-EF1234567890/original.png",
             "myshottr-editor://editor/document/\(documentID.uuidString.lowercased())/original.png",
             "myshottr-editor://editor/document/\(documentID.uuidString)/original.png/extra",
-        ].compactMap(URL.init(string:))
+        ]
+        let deniedURLs = try deniedURLStrings.map {
+            try XCTUnwrap(URL(string: $0), "Invalid URL fixture: \($0)")
+        }
 
+        XCTAssertEqual(deniedURLs.count, deniedURLStrings.count)
+        XCTAssertEqual(deniedURLs.count, 20)
         for url in deniedURLs {
             XCTAssertEqual(policy.decision(for: url), .cancel, url.absoluteString)
         }

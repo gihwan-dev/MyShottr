@@ -12,6 +12,11 @@ type TestSeam = {
   snapshot(): TestSeamSnapshot;
 };
 
+const extensionPageCSP =
+  "default-src 'none'; script-src 'self'; connect-src 'none'; "
+  + "object-src 'none'; base-uri 'none'; frame-src 'none'; "
+  + "img-src 'self'; style-src 'self'";
+
 test("loads the built MV3 extension with only approved permissions", async ({
   extensionId,
   serviceWorker,
@@ -26,8 +31,13 @@ test("loads the built MV3 extension with only approved permissions", async ({
   expect(extensionId).toBe(extensionIdFromPublicKey(key!));
   expect(manifest.manifest_version).toBe(3);
   expect(manifest.permissions).toEqual(["activeTab", "nativeMessaging"]);
+  expect(manifest).not.toHaveProperty("optional_permissions");
   expect(manifest).not.toHaveProperty("host_permissions");
+  expect(manifest).not.toHaveProperty("optional_host_permissions");
   expect(manifest).not.toHaveProperty("content_scripts");
+  expect(manifest.content_security_policy).toEqual({
+    extension_pages: extensionPageCSP,
+  });
 });
 
 function extensionIdFromPublicKey(publicKeyBase64: string): string {
