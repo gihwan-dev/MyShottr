@@ -83,6 +83,8 @@ final class CaptureInboxCoordinator: NSObject {
     private let reportError: (MyShottrUserFacingError) -> Void
     private var presentedStates:
         [UUID: PresentedInMemoryState] = [:]
+    private var inFlightOperations:
+        [UUID: CaptureImportOperation] = [:]
     private var isObserving = false
 
     init(
@@ -172,6 +174,35 @@ final class CaptureInboxCoordinator: NSObject {
     }
 
     func consume(id: UUID) async throws {
+        if let operation = inFlightOperations[id] {
+            _ = await operation.wait()
+            return
+        }
+
+        let operation = CaptureImportOperation()
+        inFlightOperations[id] = operation
+        let result: Result<
+            Void,
+            ChromeCaptureImportError
+        >
+        do {
+            try await performConsume(id: id)
+            result = .success(())
+        } catch let error as ChromeCaptureImportError {
+            result = .failure(error)
+        } catch {
+            result = .failure(.validationFailed)
+        }
+        operation.complete(with: result)
+        if inFlightOperations[id]?.token
+            == operation.token
+        {
+            inFlightOperations.removeValue(forKey: id)
+        }
+        try result.get()
+    }
+
+    private func performConsume(id: UUID) async throws {
         if presentedStates[id] != nil {
             try finishPresentedCapture(id: id)
             return
@@ -300,4 +331,71 @@ final class CaptureInboxCoordinator: NSObject {
 private enum PresentedInMemoryState {
     case awaitingCommit(PendingCaptureClaim)
     case awaitingCleanup(PresentedCapture)
+}
+
+@MainActor
+private final class CaptureImportOperation {
+    let token = UUID()
+
+    private enum State {
+        case pending([
+            CheckedContinuation<
+                Result<
+                    Void,
+                    ChromeCaptureImportError
+                >,
+                Never
+            >
+        ])
+        case completed(
+            Result<
+                Void,
+                ChromeCaptureImportError
+            >
+        )
+    }
+
+    private var state: State = .pending([])
+
+    func wait() async -> Result<
+        Void,
+        ChromeCaptureImportError
+    > {
+        switch state {
+        case .completed(let result):
+            return result
+        case .pending:
+            break
+        }
+
+        return await withCheckedContinuation {
+            continuation in
+            guard case var .pending(waiters) = state
+            else {
+                if case let .completed(result) = state {
+                    continuation.resume(
+                        returning: result
+                    )
+                }
+                return
+            }
+            waiters.append(continuation)
+            state = .pending(waiters)
+        }
+    }
+
+    func complete(
+        with result: Result<
+            Void,
+            ChromeCaptureImportError
+        >
+    ) {
+        guard case let .pending(waiters) = state else {
+            return
+        }
+        state = .completed(result)
+        waiters.forEach {
+            $0.resume(returning: result)
+        }
+    }
 }

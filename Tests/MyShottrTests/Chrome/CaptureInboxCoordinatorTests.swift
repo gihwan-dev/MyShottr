@@ -6,6 +6,239 @@ import XCTest
 final class CaptureInboxCoordinatorTests: XCTestCase {
     private let captureDate = Date(timeIntervalSince1970: 1_745_678_901)
 
+    func testConcurrentScanAndNotificationJoinOneSuccessfulImport()
+        async
+    {
+        let staged = StagedCapture(
+            id: ChromeFixtures.captureID,
+            pngURL: URL(
+                fileURLWithPath: "/inbox/capture.png"
+            )
+        )
+        let inbox = StubPendingCaptureInbox(
+            pending: [staged]
+        )
+        let windows = SpyDocumentWindowPresenter()
+        windows.suspendsPresentation = true
+        var reportedErrors: [MyShottrUserFacingError] = []
+        weak var releasedCoordinator:
+            CaptureInboxCoordinator?
+
+        do {
+            let coordinator = CaptureInboxCoordinator(
+                inbox: inbox,
+                projectFactory: StubNewProjectFactory(),
+                windows: windows,
+                reportError: { reportedErrors.append($0) }
+            )
+            releasedCoordinator = coordinator
+            let scan = Task { @MainActor in
+                await coordinator.consumePendingCaptures()
+            }
+            await windows.waitUntilPresentationStarts()
+            let notification = Task { @MainActor in
+                await coordinator
+                    .handleCaptureReadyNotification(
+                        self.captureReadyNotification()
+                    )
+            }
+            await Task.yield()
+
+            XCTAssertEqual(
+                windows.presentationAttempts.count,
+                1
+            )
+            XCTAssertEqual(
+                inbox.claimedIDs,
+                [ChromeFixtures.captureID]
+            )
+
+            windows.resumePresentation()
+            await scan.value
+            await notification.value
+
+            XCTAssertEqual(windows.presentedProjects.count, 1)
+            XCTAssertEqual(
+                inbox.commitAttempts,
+                [ChromeFixtures.captureID]
+            )
+            XCTAssertEqual(
+                inbox.cleanupAttempts,
+                [ChromeFixtures.captureID]
+            )
+            XCTAssertTrue(reportedErrors.isEmpty)
+
+            await coordinator
+                .handleCaptureReadyNotification(
+                    captureReadyNotification()
+                )
+            XCTAssertEqual(windows.presentedProjects.count, 1)
+            XCTAssertEqual(inbox.commitAttempts.count, 1)
+            XCTAssertEqual(inbox.cleanupAttempts.count, 1)
+            XCTAssertTrue(reportedErrors.isEmpty)
+        }
+
+        await Task.yield()
+        XCTAssertNil(releasedCoordinator)
+    }
+
+    func testConcurrentACKFailureReportsOnceAndAllowsLaterRetry()
+        async throws
+    {
+        let inbox = StubPendingCaptureInbox(
+            pending: [
+                StagedCapture(
+                    id: ChromeFixtures.captureID,
+                    pngURL: URL(
+                        fileURLWithPath:
+                            "/inbox/capture.png"
+                    )
+                ),
+            ]
+        )
+        let windows = SpyDocumentWindowPresenter()
+        windows.suspendsPresentation = true
+        windows.presentationError = EditorBridgeError.timedOut
+        var reportedErrors: [MyShottrUserFacingError] = []
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: StubNewProjectFactory(),
+            windows: windows,
+            reportError: { reportedErrors.append($0) }
+        )
+
+        let scan = Task { @MainActor in
+            await coordinator.consumePendingCaptures()
+        }
+        await windows.waitUntilPresentationStarts()
+        let notification = Task { @MainActor in
+            await coordinator.handleCaptureReadyNotification(
+                self.captureReadyNotification()
+            )
+        }
+        await Task.yield()
+        windows.resumePresentation()
+        await scan.value
+        await notification.value
+
+        XCTAssertEqual(windows.presentationAttempts.count, 1)
+        XCTAssertEqual(
+            inbox.claimedIDs,
+            [ChromeFixtures.captureID]
+        )
+        XCTAssertTrue(inbox.commitAttempts.isEmpty)
+        XCTAssertTrue(inbox.cleanupAttempts.isEmpty)
+        XCTAssertNotNil(
+            inbox.dataByID[ChromeFixtures.captureID]
+        )
+        XCTAssertEqual(reportedErrors.count, 1)
+        XCTAssertEqual(
+            reportedErrors.first?.viewModel.title,
+            "Chrome Capture Import Finished with Issues"
+        )
+
+        windows.presentationError = nil
+        try await coordinator.consume(
+            id: ChromeFixtures.captureID
+        )
+
+        XCTAssertEqual(windows.presentationAttempts.count, 2)
+        XCTAssertEqual(windows.presentedProjects.count, 1)
+        XCTAssertEqual(inbox.commitAttempts.count, 1)
+        XCTAssertEqual(inbox.cleanupAttempts.count, 1)
+        XCTAssertNil(
+            inbox.dataByID[ChromeFixtures.captureID]
+        )
+        XCTAssertEqual(reportedErrors.count, 1)
+    }
+
+    func testSharedCommitFailureRetainsOneStateAndRetryCommitsOnce()
+        async
+    {
+        let inbox = StubPendingCaptureInbox(
+            pending: [
+                StagedCapture(
+                    id: ChromeFixtures.captureID,
+                    pngURL: URL(
+                        fileURLWithPath:
+                            "/inbox/capture.png"
+                    )
+                ),
+            ]
+        )
+        inbox.commitError = ChromeFixtureError.commit
+        let windows = SpyDocumentWindowPresenter()
+        windows.suspendsPresentation = true
+        var reportedErrors: [MyShottrUserFacingError] = []
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: StubNewProjectFactory(),
+            windows: windows,
+            reportError: { reportedErrors.append($0) }
+        )
+
+        let scan = Task { @MainActor in
+            await coordinator.consumePendingCaptures()
+        }
+        await windows.waitUntilPresentationStarts()
+        let notification = Task { @MainActor in
+            await coordinator.handleCaptureReadyNotification(
+                self.captureReadyNotification()
+            )
+        }
+        await Task.yield()
+        windows.resumePresentation()
+        await scan.value
+        await notification.value
+
+        XCTAssertEqual(windows.presentationAttempts.count, 1)
+        XCTAssertEqual(windows.presentedProjects.count, 1)
+        XCTAssertEqual(inbox.commitAttempts.count, 1)
+        XCTAssertTrue(inbox.cleanupAttempts.isEmpty)
+        XCTAssertEqual(reportedErrors.count, 1)
+        XCTAssertEqual(
+            reportedErrors.first?.viewModel.title,
+            "Chrome Capture Import Finished with Issues"
+        )
+
+        inbox.commitError = nil
+        let firstRetry = Task { @MainActor in
+            await coordinator
+                .handleCaptureReadyNotification(
+                    Notification(
+                        name:
+                            CaptureInboxCoordinator
+                                .captureReadyNotification,
+                        object:
+                            ChromeFixtures.captureID
+                                .uuidString
+                    )
+                )
+        }
+        let secondRetry = Task { @MainActor in
+            await coordinator
+                .handleCaptureReadyNotification(
+                    Notification(
+                        name:
+                            CaptureInboxCoordinator
+                                .captureReadyNotification,
+                        object:
+                            ChromeFixtures.captureID
+                                .uuidString
+                    )
+                )
+        }
+        await firstRetry.value
+        await secondRetry.value
+
+        XCTAssertEqual(windows.presentationAttempts.count, 1)
+        XCTAssertEqual(inbox.commitAttempts.count, 2)
+        XCTAssertEqual(inbox.committedIDs.count, 1)
+        XCTAssertEqual(inbox.cleanupAttempts.count, 1)
+        XCTAssertEqual(inbox.cleanedIDs.count, 1)
+        XCTAssertEqual(reportedErrors.count, 1)
+    }
+
     func testChromeHandoffWaitsForEditorACKAndRetriesOnceAfterFailure()
         async throws
     {
@@ -691,5 +924,14 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
                 line: line
             )
         }
+    }
+
+    private func captureReadyNotification() -> Notification {
+        Notification(
+            name:
+                CaptureInboxCoordinator
+                    .captureReadyNotification,
+            object: ChromeFixtures.captureID.uuidString
+        )
     }
 }
