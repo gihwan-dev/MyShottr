@@ -20,16 +20,55 @@ verify_no_distribution_signature() {
   local label="$2"
   local signature_details=""
 
-  if signature_details="$(
+  signature_details="$(
     codesign --display --verbose=4 "${target_path}" 2>&1
-  )"; then
-    [[ "${signature_details}" == *"Signature=adhoc"* ]] \
-      || fail "${label} has an unexpected non-ad-hoc signature"
-    [[ "${signature_details}" != *$'\nAuthority='* ]] \
-      || fail "${label} unexpectedly has a signing authority"
-    [[ "${signature_details}" == *"TeamIdentifier=not set"* ]] \
-      || fail "${label} unexpectedly has a signing team"
-  fi
+  )" || fail "${label} does not contain a queryable code signature"
+  [[ "${signature_details}" == *$'\nSignature=adhoc\n'* ]] \
+    || fail "${label} has an unexpected non-ad-hoc signature"
+  [[ "${signature_details}" == *$'\nCodeDirectory '*"(adhoc"* ]] \
+    || fail "${label} is missing an ad-hoc CodeDirectory"
+  [[ "${signature_details}" == *$'\nCDHash='* ]] \
+    || fail "${label} is missing an ad-hoc code-directory hash"
+  [[ "${signature_details}" != *$'\nAuthority='* ]] \
+    || fail "${label} unexpectedly has a signing authority"
+  [[ "${signature_details}" != *"Developer ID"* ]] \
+    || fail "${label} unexpectedly contains a Developer ID identity"
+  [[ "${signature_details}" == *$'\nTeamIdentifier=not set\n'* ]] \
+    || fail "${label} unexpectedly has a signing team"
+}
+
+validate_generated_directory_path() {
+  local candidate_path="$1"
+  local relative_path=""
+  local component=""
+  local current_path=""
+
+  [[ "${candidate_path}" == "${REPO_ROOT}/"* ]] \
+    || fail "generated path must be a canonical repository-contained directory: ${candidate_path}"
+  relative_path="${candidate_path#${REPO_ROOT}/}"
+  [[ -n "${relative_path}" && "${relative_path}" != *".."* ]] \
+    || fail "generated path must be a canonical repository-contained directory: ${candidate_path}"
+
+  current_path="${REPO_ROOT}"
+  for component in "${(@s:/:)relative_path}"; do
+    [[ -n "${component}" && "${component}" != "." && "${component}" != ".." ]] \
+      || fail "generated path must be a canonical repository-contained directory: ${candidate_path}"
+    current_path="${current_path}/${component}"
+    if [[ -L "${current_path}" ]]; then
+      fail "generated path must be a canonical repository-contained directory: ${candidate_path}"
+    fi
+    if [[ -e "${current_path}" && ! -d "${current_path}" ]]; then
+      fail "generated path must be a canonical repository-contained directory: ${candidate_path}"
+    fi
+  done
+
+  local existing_path="${candidate_path}"
+  while [[ ! -e "${existing_path}" && ! -L "${existing_path}" ]]; do
+    existing_path="${existing_path:h}"
+  done
+  existing_path="${existing_path:A}"
+  [[ "${existing_path}" == "${REPO_ROOT}" || "${existing_path}" == "${REPO_ROOT}/"* ]] \
+    || fail "generated path must be a canonical repository-contained directory: ${candidate_path}"
 }
 
 normalize_zip_timestamps() {
@@ -149,9 +188,10 @@ renameSync(normalizedPath, archivePath);
 NODE
 }
 
+SEMVER_PATTERN='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 VERSION="${1:-}"
-if [[ ! "${VERSION}" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
-  echo 'version must match [0-9]+\.[0-9]+\.[0-9]+' >&2
+if [[ ! "${VERSION}" =~ ${SEMVER_PATTERN} ]]; then
+  echo 'version must match [0-9]+\.[0-9]+\.[0-9]+ without leading zeros' >&2
   exit 64
 fi
 
@@ -159,13 +199,18 @@ SCRIPT_PATH="${0:A}"
 REPO_ROOT="${SCRIPT_PATH:h:h}"
 EXPECTED_OUTPUT_ROOT="${REPO_ROOT}/dist/release/${VERSION}"
 OUTPUT_PARENT="${REPO_ROOT}/dist/release"
-TEMP_PARENT="${${TMPDIR:-/tmp}:A}"
 TEMP_ROOT=""
+TEMP_ROOT_PARENT=""
 
 cleanup() {
   [[ -n "${TEMP_ROOT}" ]] || return 0
-  case "${TEMP_ROOT}" in
-    "${TEMP_PARENT%/}/myshottr-release."*)
+  case "${TEMP_ROOT:t}" in
+    myshottr-release.*)
+      [[ "${TEMP_ROOT:h}" == "${TEMP_ROOT_PARENT}" ]] \
+        || {
+          echo "package-release: refusing to clean moved temporary path: ${TEMP_ROOT}" >&2
+          return 1
+        }
       rm -rf "${TEMP_ROOT}"
       ;;
     *)
@@ -199,6 +244,16 @@ GIT_ROOT="$(
 )" || fail "release packaging requires a Git worktree"
 [[ "${GIT_ROOT:A}" == "${REPO_ROOT:A}" ]] \
   || fail "release packaging must run from the MyShottr Git root"
+
+for generated_path in \
+  "${REPO_ROOT}/Packages/editor/dist" \
+  "${REPO_ROOT}/Packages/chrome-extension/dist" \
+  "${REPO_ROOT}/MyShottr.xcodeproj" \
+  "${REPO_ROOT}/dist" \
+  "${OUTPUT_PARENT}" \
+  "${EXPECTED_OUTPUT_ROOT}"; do
+  validate_generated_directory_path "${generated_path}"
+done
 
 DIRTY_SOURCE="$(
   git -C "${REPO_ROOT}" status --porcelain=v1 --untracked-files=all
@@ -243,25 +298,19 @@ NODE
 
 for command_name in \
   pnpm xcodegen xcodebuild ditto shasum plutil codesign spctl find touch \
-  mktemp mkdir mv rm; do
+  mktemp mkdir mv rm xattr; do
   require_command "${command_name}"
 done
 
-for path_component in \
-  "${REPO_ROOT}/dist" \
-  "${OUTPUT_PARENT}" \
-  "${EXPECTED_OUTPUT_ROOT}"; do
-  if [[ -e "${path_component}" || -L "${path_component}" ]]; then
-    [[ ! -L "${path_component}" ]] \
-      || fail "release output path contains a symbolic link: ${path_component}"
-    [[ -d "${path_component}" ]] \
-      || fail "release output path component is not a directory: ${path_component}"
-  fi
-done
-
 TEMP_ROOT="$(
-  mktemp -d "${TEMP_PARENT%/}/myshottr-release.XXXXXX"
+  mktemp -d -t myshottr-release
 )" || fail "could not create a temporary release root"
+[[ -d "${TEMP_ROOT}" && ! -L "${TEMP_ROOT}" ]] \
+  || fail "mktemp did not create a safe temporary release root"
+TEMP_ROOT="${TEMP_ROOT:A}"
+[[ "${TEMP_ROOT:t}" == myshottr-release.* ]] \
+  || fail "mktemp returned an unexpected temporary release root"
+TEMP_ROOT_PARENT="${TEMP_ROOT:h}"
 trap cleanup EXIT
 
 BUILD_ROOT="${TEMP_ROOT}/build"
@@ -305,7 +354,9 @@ BUILT_EXTENSION="${REPO_ROOT}/Packages/chrome-extension/dist"
 [[ -f "${BUILT_EXTENSION}/service-worker.js" ]] \
   || fail "built Chrome service worker is missing"
 
-verify_no_distribution_signature "${BUILT_APP}" "Release app"
+verify_no_distribution_signature \
+  "${BUILT_APP}/Contents/MacOS/MyShottr" \
+  "Release app executable"
 verify_no_distribution_signature \
   "${BUILT_APP}/Contents/Helpers/MyShottrNativeHost" \
   "embedded Native Messaging helper"
@@ -315,8 +366,10 @@ fi
 
 STAGED_APP="${STAGING_ROOT}/MyShottr.app"
 STAGED_EXTENSION="${STAGING_ROOT}/MyShottr-Chrome-${VERSION}"
-ditto --rsrc --extattr "${BUILT_APP}" "${STAGED_APP}"
-ditto --norsrc --noextattr "${BUILT_EXTENSION}" "${STAGED_EXTENSION}"
+ditto --norsrc --noextattr --noqtn --noacl \
+  "${BUILT_APP}" "${STAGED_APP}"
+ditto --norsrc --noextattr --noqtn --noacl \
+  "${BUILT_EXTENSION}" "${STAGED_EXTENSION}"
 
 find "${STAGED_APP}" "${STAGED_EXTENSION}" \
   -exec touch -h -t 200001010000 {} +
@@ -327,9 +380,11 @@ CHECKSUMS="${PACKAGE_ROOT}/SHA256SUMS.txt"
 
 (
   cd "${STAGING_ROOT}"
-  ditto -c -k --sequesterRsrc --keepParent \
+  ditto -c -k \
+    --norsrc --noextattr --noqtn --noacl --keepParent \
     "MyShottr.app" "${APP_ARCHIVE}"
-  ditto -c -k --norsrc --noextattr --keepParent \
+  ditto -c -k \
+    --norsrc --noextattr --noqtn --noacl --keepParent \
     "MyShottr-Chrome-${VERSION}" "${EXTENSION_ARCHIVE}"
 )
 
@@ -357,4 +412,9 @@ mv "${PACKAGE_ROOT}" "${EXPECTED_OUTPUT_ROOT}"
 echo
 echo "Release artifacts: ${EXPECTED_OUTPUT_ROOT}"
 echo "WARNING: MyShottr ${VERSION} has no Developer ID identity and is not notarized."
-echo "Link-time ad-hoc executable signatures may be present."
+echo "Verified link-time ad-hoc executable signatures are present."
+echo "Artifact SHA-256:"
+shasum -a 256 \
+  "${EXPECTED_OUTPUT_ROOT}/MyShottr-${VERSION}-macos.zip" \
+  "${EXPECTED_OUTPUT_ROOT}/MyShottr-Chrome-${VERSION}.zip" \
+  "${EXPECTED_OUTPUT_ROOT}/SHA256SUMS.txt"

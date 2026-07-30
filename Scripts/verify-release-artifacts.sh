@@ -19,22 +19,46 @@ verify_no_distribution_signature() {
   local label="$2"
   local signature_details=""
 
-  if signature_details="$(
+  signature_details="$(
     codesign --display --verbose=4 "${target_path}" 2>&1
-  )"; then
-    [[ "${signature_details}" == *"Signature=adhoc"* ]] \
-      || fail "${label} has an unexpected non-ad-hoc signature"
-    [[ "${signature_details}" != *$'\nAuthority='* ]] \
-      || fail "${label} unexpectedly has a signing authority"
-    [[ "${signature_details}" == *"TeamIdentifier=not set"* ]] \
-      || fail "${label} unexpectedly has a signing team"
-  fi
+  )" || fail "${label} does not contain a queryable code signature"
+  [[ "${signature_details}" == *$'\nSignature=adhoc\n'* ]] \
+    || fail "${label} has an unexpected non-ad-hoc signature"
+  [[ "${signature_details}" == *$'\nCodeDirectory '*"(adhoc"* ]] \
+    || fail "${label} is missing an ad-hoc CodeDirectory"
+  [[ "${signature_details}" == *$'\nCDHash='* ]] \
+    || fail "${label} is missing an ad-hoc code-directory hash"
+  [[ "${signature_details}" != *$'\nAuthority='* ]] \
+    || fail "${label} unexpectedly has a signing authority"
+  [[ "${signature_details}" != *"Developer ID"* ]] \
+    || fail "${label} unexpectedly contains a Developer ID identity"
+  [[ "${signature_details}" == *$'\nTeamIdentifier=not set\n'* ]] \
+    || fail "${label} unexpectedly has a signing team"
 }
 
+verify_universal_macho() {
+  local target_path="$1"
+  local architectures=""
+  local file_description=""
+
+  architectures="$(
+    lipo -archs "${target_path}" 2>/dev/null
+  )" || fail "app executable must be a real universal Mach-O"
+  [[ "${architectures}" == "x86_64 arm64" || "${architectures}" == "arm64 x86_64" ]] \
+    || fail "app executable must contain exactly arm64 and x86_64"
+
+  file_description="$(
+    /usr/bin/file -b "${target_path}"
+  )" || fail "could not inspect app executable type"
+  [[ "${file_description}" == "Mach-O universal binary with 2 architectures:"* ]] \
+    || fail "app executable must be a real universal Mach-O"
+}
+
+SEMVER_PATTERN='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 VERSION="${1:-}"
 DIRECTORY_INPUT="${2:-}"
-if [[ ! "${VERSION}" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
-  echo 'version must match [0-9]+\.[0-9]+\.[0-9]+' >&2
+if [[ ! "${VERSION}" =~ ${SEMVER_PATTERN} ]]; then
+  echo 'version must match [0-9]+\.[0-9]+\.[0-9]+ without leading zeros' >&2
   exit 64
 fi
 [[ -n "${DIRECTORY_INPUT}" ]] \
@@ -42,7 +66,8 @@ fi
 [[ -d "${DIRECTORY_INPUT}" && ! -L "${DIRECTORY_INPUT}" ]] \
   || fail "artifact directory is missing, not a directory, or symbolic"
 
-for command_name in node shasum ditto plutil codesign spctl find cmp zipinfo; do
+for command_name in \
+  node shasum ditto plutil codesign spctl find cmp zipinfo lipo file xattr ls; do
   require_command "${command_name}"
 done
 
@@ -53,13 +78,18 @@ APP_ARCHIVE="${DIRECTORY}/MyShottr-${VERSION}-macos.zip"
 EXTENSION_ARCHIVE="${DIRECTORY}/MyShottr-Chrome-${VERSION}.zip"
 CHECKSUMS="${DIRECTORY}/SHA256SUMS.txt"
 SOURCE_EXTENSION_KEY="${REPO_ROOT}/Config/chrome-extension-key.b64"
-TEMP_PARENT="${${TMPDIR:-/tmp}:A}"
 TEMP_ROOT=""
+TEMP_ROOT_PARENT=""
 
 cleanup() {
   [[ -n "${TEMP_ROOT}" ]] || return 0
-  case "${TEMP_ROOT}" in
-    "${TEMP_PARENT%/}/myshottr-release-verify."*)
+  case "${TEMP_ROOT:t}" in
+    myshottr-release-verify.*)
+      [[ "${TEMP_ROOT:h}" == "${TEMP_ROOT_PARENT}" ]] \
+        || {
+          echo "verify-release-artifacts: refusing to clean moved path: ${TEMP_ROOT}" >&2
+          return 1
+        }
       rm -rf "${TEMP_ROOT}"
       ;;
     *)
@@ -179,6 +209,12 @@ for (const entry of entries) {
 
   const basename = components.at(-1) || components.at(-2) || "";
   if (
+    components[0] === "__MACOSX"
+    || basename.startsWith("._")
+  ) {
+    fail(`${archiveKind} archive contains prohibited AppleDouble metadata`);
+  }
+  if (
     basename === ".DS_Store"
     || basename === "Thumbs.db"
     || basename === ".Spotlight-V100"
@@ -198,13 +234,6 @@ for (const entry of entries) {
       || lowercase.includes("private_key")
     ) {
       fail("extension archive contains private key material");
-    }
-  } else if (components[0] === "__MACOSX") {
-    if (
-      (entry !== "__MACOSX/" && components[1] !== expectedRoot)
-      || (!entry.endsWith("/") && !basename.startsWith("._"))
-    ) {
-      fail("app archive contains unexpected metadata");
     }
   } else if (components[0] !== expectedRoot) {
     fail("app archive has an unexpected root");
@@ -227,8 +256,14 @@ inspect_archive \
   "${EXTENSION_ARCHIVE}" "MyShottr-Chrome-${VERSION}" "extension"
 
 TEMP_ROOT="$(
-  mktemp -d "${TEMP_PARENT%/}/myshottr-release-verify.XXXXXX"
+  mktemp -d -t myshottr-release-verify
 )" || fail "could not create a temporary verification root"
+[[ -d "${TEMP_ROOT}" && ! -L "${TEMP_ROOT}" ]] \
+  || fail "mktemp did not create a safe temporary verification root"
+TEMP_ROOT="${TEMP_ROOT:A}"
+[[ "${TEMP_ROOT:t}" == myshottr-release-verify.* ]] \
+  || fail "mktemp returned an unexpected temporary verification root"
+TEMP_ROOT_PARENT="${TEMP_ROOT:h}"
 trap cleanup EXIT
 
 mkdir -p "${TEMP_ROOT}/app" "${TEMP_ROOT}/extension"
@@ -246,6 +281,22 @@ if find "${APP}" "${EXTENSION}" -type l -print -quit | grep -q .; then
   fail "archive contains symbolic link"
 fi
 
+while IFS= read -r extracted_path; do
+  XATTR_NAMES="$(
+    xattr "${extracted_path}" 2>/dev/null
+  )"
+  while IFS= read -r xattr_name; do
+    [[ -z "${xattr_name}" || "${xattr_name}" == "com.apple.provenance" ]] \
+      || fail "release artifacts contain prohibited restored extended attributes or quarantine metadata"
+  done <<<"${XATTR_NAMES}"
+
+  MODE_FIELD="$(
+    /bin/ls -lde "${extracted_path}" | awk 'NR == 1 { print $1 }'
+  )"
+  [[ "${MODE_FIELD}" != *"+" ]] \
+    || fail "release artifacts contain a prohibited ACL"
+done < <(find "${APP}" "${EXTENSION}" -print)
+
 APP_EXECUTABLE="${APP}/Contents/MacOS/MyShottr"
 HELPER="${APP}/Contents/Helpers/MyShottrNativeHost"
 INFO_PLIST="${APP}/Contents/Info.plist"
@@ -255,12 +306,167 @@ APP_EXTENSION_KEY="${APP}/Contents/Resources/chrome-extension-key.b64"
 EXTENSION_MANIFEST="${EXTENSION}/manifest.json"
 EXTENSION_WORKER="${EXTENSION}/service-worker.js"
 
+node --input-type=module - "${APP}" "${EXTENSION}" <<'NODE'
+import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
+
+const [appRoot, extensionRoot] = process.argv.slice(2);
+
+function fail(message) {
+  process.stderr.write(`verify-release-artifacts: ${message}\n`);
+  process.exit(1);
+}
+
+function walk(root, directory = root) {
+  const entries = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const absolutePath = resolve(directory, entry.name);
+    const relativePath = relative(root, absolutePath).split(sep).join("/");
+    const stat = lstatSync(absolutePath);
+    if (stat.isSymbolicLink()) fail("release resource contains a symbolic link");
+    if (stat.isDirectory()) {
+      entries.push({ absolutePath, relativePath, kind: "directory", stat });
+      entries.push(...walk(root, absolutePath));
+    } else if (stat.isFile()) {
+      entries.push({ absolutePath, relativePath, kind: "file", stat });
+    } else {
+      fail("release resource contains a non-regular file");
+    }
+  }
+  return entries;
+}
+
+function scanSensitiveFile(entry) {
+  const lowercase = entry.relativePath.toLowerCase();
+  const basename = lowercase.split("/").at(-1);
+  if (
+    lowercase.endsWith(".pem")
+    || lowercase.endsWith(".key")
+    || lowercase.endsWith(".p12")
+    || lowercase.endsWith(".pfx")
+    || lowercase.endsWith(".mobileprovision")
+    || lowercase.includes("private-key")
+    || lowercase.includes("private_key")
+    || ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"].includes(basename)
+  ) {
+    fail("release artifact contains private key material");
+  }
+  if (lowercase.endsWith(".map")) {
+    fail("release artifact contains a source map");
+  }
+
+  const content = readFileSync(entry.absolutePath);
+  const text = content.toString("latin1");
+  if (
+    /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/.test(text)
+  ) {
+    fail("release artifact contains private key material");
+  }
+  if (
+    /__myshottrE2E|MYSHOTTR_E2E|E2E seam|TEST_PNG_DATA_URL/.test(text)
+  ) {
+    fail("release artifact contains a test seam");
+  }
+}
+
+const expectedDirectories = new Set([
+  "Contents",
+  "Contents/Helpers",
+  "Contents/MacOS",
+  "Contents/Resources",
+  "Contents/Resources/Editor",
+  "Contents/Resources/Editor/assets",
+]);
+const expectedFiles = new Set([
+  "Contents/Helpers/MyShottrNativeHost",
+  "Contents/Info.plist",
+  "Contents/MacOS/MyShottr",
+  "Contents/PkgInfo",
+  "Contents/Resources/AppIcon.icns",
+  "Contents/Resources/Assets.car",
+  "Contents/Resources/Editor/index.html",
+  "Contents/Resources/chrome-extension-key.b64",
+]);
+const executableFiles = new Set([
+  "Contents/Helpers/MyShottrNativeHost",
+  "Contents/MacOS/MyShottr",
+]);
+const editorAssetPattern =
+  /^Contents\/Resources\/Editor\/assets\/index-[A-Za-z0-9_-]+\.(css|js)$/;
+
+const appEntries = walk(appRoot);
+const editorAssetCounts = { css: 0, js: 0 };
+for (const entry of appEntries) {
+  if (entry.kind === "directory") {
+    if (!expectedDirectories.has(entry.relativePath)) {
+      fail(`app contains an unexpected directory: ${entry.relativePath}`);
+    }
+    continue;
+  }
+
+  scanSensitiveFile(entry);
+  const isExecutable = (entry.stat.mode & 0o111) !== 0;
+  if (isExecutable && !executableFiles.has(entry.relativePath)) {
+    fail(`app contains an unexpected executable: ${entry.relativePath}`);
+  }
+  if (!isExecutable && executableFiles.has(entry.relativePath)) {
+    fail(`required app executable is not executable: ${entry.relativePath}`);
+  }
+
+  const assetMatch = entry.relativePath.match(editorAssetPattern);
+  if (assetMatch) {
+    editorAssetCounts[assetMatch[1]] += 1;
+  } else if (!expectedFiles.has(entry.relativePath)) {
+    fail(`app contains an unexpected file: ${entry.relativePath}`);
+  }
+}
+if (editorAssetCounts.css !== 1 || editorAssetCounts.js !== 1) {
+  fail("app must contain exactly one hashed editor stylesheet and script");
+}
+for (const expectedFile of expectedFiles) {
+  if (!appEntries.some(
+    (entry) => entry.kind === "file" && entry.relativePath === expectedFile,
+  )) {
+    fail(`app is missing expected file: ${expectedFile}`);
+  }
+}
+
+const extensionEntries = walk(extensionRoot);
+const expectedExtensionFiles = new Set([
+  "manifest.json",
+  "service-worker.js",
+]);
+for (const entry of extensionEntries) {
+  if (entry.kind === "directory") {
+    fail(`extension contains an unexpected directory: ${entry.relativePath}`);
+  }
+  scanSensitiveFile(entry);
+  if ((entry.stat.mode & 0o111) !== 0) {
+    fail(`extension contains an unexpected executable: ${entry.relativePath}`);
+  }
+  if (!expectedExtensionFiles.has(entry.relativePath)) {
+    fail(`extension contains an unexpected file: ${entry.relativePath}`);
+  }
+}
+if (
+  extensionEntries.length !== 2
+  || [...expectedExtensionFiles].some(
+    (expectedFile) => !extensionEntries.some(
+      (entry) => entry.relativePath === expectedFile,
+    ),
+  )
+) {
+  fail("extension archive must contain only manifest.json and service-worker.js");
+}
+NODE
+
 for executable in "${APP_EXECUTABLE}" "${HELPER}"; do
   [[ -f "${executable}" && ! -L "${executable}" && -x "${executable}" ]] \
     || fail "app executable is missing, symbolic, or not executable: ${executable}"
 done
 for resource in \
   "${INFO_PLIST}" \
+  "${APP}/Contents/PkgInfo" \
   "${APP}/Contents/Resources/Assets.car" \
   "${APP}/Contents/Resources/AppIcon.icns" \
   "${EDITOR_INDEX}" \
@@ -305,7 +511,9 @@ HELPER_COUNT="$(
   || fail "unsigned release app unexpectedly contains a code signature"
 [[ ! -e "${APP}/Contents/embedded.provisionprofile" ]] \
   || fail "unsigned release app unexpectedly contains a provisioning profile"
-verify_no_distribution_signature "${APP}" "release app"
+verify_universal_macho "${APP_EXECUTABLE}"
+verify_universal_macho "${HELPER}"
+verify_no_distribution_signature "${APP_EXECUTABLE}" "release app executable"
 verify_no_distribution_signature "${HELPER}" "Native Messaging helper"
 if spctl --assess --type execute "${APP}" >/dev/null 2>&1; then
   fail "release app was unexpectedly accepted by Gatekeeper"
