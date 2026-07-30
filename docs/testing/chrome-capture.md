@@ -54,8 +54,9 @@ restoration step in the same test session.
 7. Confirm the PNG contains page pixels but no tab strip, address bar, toolbar,
    or extension popup.
 8. Trigger `Option-Shift-2` and confirm the same behavior.
-9. Rename the host manifest, trigger capture, and confirm the extension reports
-   `HOST_UNAVAILABLE` without a desktop-capture alternative.
+9. Rename the host manifest, trigger capture, and confirm the extension shows
+   an `ERR` badge with the title `Open MyShottr once, then retry.` without a
+   desktop-capture alternative.
 10. Restore the manifest and confirm capture succeeds again.
 
 For step 9, first ensure the disabled name does not already exist:
@@ -89,7 +90,7 @@ Attempted on 2026-07-30 with Google Chrome `150.0.7871.187`.
 | 6. Exactly one editor document | BLOCKED / UNVERIFIED | Depends on check 3. |
 | 7. Page pixels without browser chrome | BLOCKED / UNVERIFIED | Depends on check 3. |
 | 8. `Option-Shift-2` | BLOCKED / UNVERIFIED | Depends on check 3. |
-| 9. `HOST_UNAVAILABLE` with no alternative | BLOCKED / UNVERIFIED | Depends on check 3; the live manifest was not renamed. |
+| 9. Actionable missing-host state with no alternative | BLOCKED / UNVERIFIED | Depends on check 3; the live manifest was not renamed. |
 | 10. Restore and succeed | BLOCKED / UNVERIFIED | Depends on checks 3 and 9. |
 
 Do not mark the installed-Chrome gate complete until checks 1 through 10 have

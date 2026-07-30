@@ -6,6 +6,7 @@ const setBadgeText = vi.fn();
 const setTitle = vi.fn();
 const onClickedAddListener = vi.fn();
 const onCommandAddListener = vi.fn();
+const captureId = "12345678-1234-1234-1234-123456789ABC";
 
 async function loadServiceWorker() {
   return import("../src/service-worker");
@@ -56,7 +57,7 @@ describe("runCaptureAction", () => {
 
   it("captures once and sends one native message", async () => {
     captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
-    sendNativeMessage.mockResolvedValue({ accepted: true });
+    sendNativeMessage.mockResolvedValue({ ok: true, captureId });
     const { runCaptureAction } = await loadServiceWorker();
 
     await runCaptureAction();
@@ -79,6 +80,54 @@ describe("runCaptureAction", () => {
     expect(setBadgeText).toHaveBeenLastCalledWith({ text: "" });
   });
 
+  it.each([
+    ["INVALID_MESSAGE", "MyShottr rejected the capture request."],
+    [
+      "UNSUPPORTED_CAPTURE_MODE",
+      "Only visible viewport capture is supported.",
+    ],
+    ["INVALID_IMAGE", "MyShottr could not read the captured PNG."],
+    ["IMAGE_TOO_LARGE", "Capture is too large for MyShottr."],
+    ["STAGING_FAILED", "MyShottr could not import the capture."],
+  ] as const)(
+    "shows the bounded helper failure %s instead of reporting success",
+    async (code, title) => {
+      captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
+      sendNativeMessage.mockResolvedValue({
+        ok: false,
+        code,
+      });
+      const { runCaptureAction } = await loadServiceWorker();
+
+      await expect(runCaptureAction()).rejects.toMatchObject({ code });
+      expect(captureVisibleTab).toHaveBeenCalledTimes(1);
+      expect(sendNativeMessage).toHaveBeenCalledTimes(1);
+      expect(setBadgeText).toHaveBeenCalledWith({ text: "ERR" });
+      expect(setBadgeText).not.toHaveBeenCalledWith({ text: "OK" });
+      expect(setTitle).toHaveBeenCalledWith({ title });
+    },
+  );
+
+  it("shows a sanitized bounded title for malformed host responses", async () => {
+    captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
+    sendNativeMessage.mockResolvedValue({
+      ok: false,
+      code: "UNKNOWN",
+      detail: "sensitive raw host detail",
+    });
+    const { runCaptureAction } = await loadServiceWorker();
+
+    await expect(runCaptureAction()).rejects.toMatchObject({
+      code: "INVALID_HOST_RESPONSE",
+    });
+    expect(captureVisibleTab).toHaveBeenCalledTimes(1);
+    expect(sendNativeMessage).toHaveBeenCalledTimes(1);
+    expect(setTitle).toHaveBeenCalledWith({
+      title: "MyShottr returned an invalid response.",
+    });
+    expect(JSON.stringify(setTitle.mock.calls)).not.toContain("sensitive");
+  });
+
   it("does not send a fallback capture when native messaging fails", async () => {
     captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
     sendNativeMessage.mockRejectedValue(new Error("host not found"));
@@ -91,7 +140,7 @@ describe("runCaptureAction", () => {
     expect(sendNativeMessage).toHaveBeenCalledTimes(1);
     expect(setBadgeText).toHaveBeenCalledWith({ text: "ERR" });
     expect(setTitle).toHaveBeenCalledWith({
-      title: "MyShottr capture failed: HOST_UNAVAILABLE",
+      title: "Open MyShottr once, then retry.",
     });
     expect(JSON.stringify(setTitle.mock.calls)).not.toContain("host not found");
   });
@@ -109,7 +158,7 @@ describe("runCaptureAction", () => {
 
     await vi.waitFor(() => {
       expect(setTitle).toHaveBeenCalledWith({
-        title: "MyShottr capture failed: HOST_UNAVAILABLE",
+        title: "Open MyShottr once, then retry.",
       });
     });
     expect(captureVisibleTab).toHaveBeenCalledTimes(1);

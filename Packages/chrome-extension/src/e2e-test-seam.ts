@@ -29,7 +29,10 @@ export function installE2ETestSeam(runCaptureAction: RunCaptureAction): void {
   setSendNativeMessageForTesting(async (hostName, message) => {
     assertNativeMessage(hostName, message);
     nativeMessageInvocationCount += 1;
-    return { ok: true };
+    return {
+      ok: true,
+      captureId: "12345678-1234-1234-1234-123456789ABC",
+    };
   });
 
   Object.defineProperty(globalThis, "__myshottrE2E", {
