@@ -319,6 +319,15 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         throws
     {
         let recoveryStore = SpyRecoveryStore()
+        let recovery = RecoveryFixtures.recovered(
+            text: "latest recovery",
+            documentID: ProjectFixtures.documentID,
+            modifiedAt: RecoveryFixtures.fixedNow
+        )
+        recoveryStore.projects = [recovery]
+        recoveryStore.removeErrors = [
+            .removeFailed(ProjectFixtures.documentID),
+        ]
         let session = DocumentSession(
             recoveryStore: recoveryStore,
             recoveryClock: ManualRecoveryClock()
@@ -339,11 +348,17 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         try session.applySnapshot(
             latestProject.annotationJSON
         )
-        try session.completeSave(
+        let completion = try session.completeSave(
             savedProject,
             expectedModificationRevision: saveRevision
         )
 
+        guard case .savedWithNewerChanges = completion
+        else {
+            return XCTFail(
+                "Expected the newer editor revision to remain unsaved"
+            )
+        }
         XCTAssertTrue(session.isModified)
         XCTAssertEqual(
             session.modificationRevision,
@@ -352,6 +367,10 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
         XCTAssertTrue(
             recoveryStore.removedDocumentIDs.isEmpty
         )
+        XCTAssertTrue(
+            recoveryStore.removeAttempts.isEmpty
+        )
+        XCTAssertEqual(recoveryStore.projects, [recovery])
         XCTAssertEqual(
             session.project?.annotationJSON,
             latestProject.annotationJSON
@@ -404,6 +423,140 @@ final class RecoveryCoordinatorTests: TemporaryDirectoryTestCase {
 
         XCTAssertEqual(cleanup.attemptCount, 1)
         XCTAssertFalse(cleanupOperation.isPending)
+    }
+
+    func testPrecommitRecoveryRemovalFailureReturnsSavedCleanupOperation()
+        throws
+    {
+        let recoveryStore = SpyRecoveryStore()
+        let recovery = RecoveryFixtures.recovered(
+            text: "stale recovery",
+            documentID: ProjectFixtures.documentID,
+            modifiedAt: RecoveryFixtures.fixedNow
+        )
+        recoveryStore.projects = [recovery]
+        recoveryStore.removeErrors = [
+            .removeFailed(ProjectFixtures.documentID),
+            nil,
+        ]
+        let session = DocumentSession(
+            recoveryStore: recoveryStore,
+            recoveryClock: ManualRecoveryClock()
+        )
+        try session.open(
+            project: ProjectFixtures.project(text: "initial")
+        )
+        let savedProject = ProjectFixtures.project(
+            text: "saved destination"
+        )
+        try session.applySnapshot(
+            savedProject.annotationJSON
+        )
+
+        let completion = try session.completeSave(
+            session.projectForSave()
+        )
+
+        guard case let .savedRecoveryCleanupPending(
+            cleanupOperation
+        ) = completion else {
+            return XCTFail(
+                "Expected saved state with retryable recovery cleanup"
+            )
+        }
+        XCTAssertFalse(session.isModified)
+        XCTAssertEqual(
+            session.project?.annotationJSON,
+            savedProject.annotationJSON
+        )
+        XCTAssertEqual(
+            recoveryStore.removeAttempts,
+            [ProjectFixtures.documentID]
+        )
+        XCTAssertEqual(recoveryStore.projects, [recovery])
+
+        try cleanupOperation.perform()
+
+        XCTAssertEqual(
+            recoveryStore.removeAttempts,
+            [
+                ProjectFixtures.documentID,
+                ProjectFixtures.documentID,
+            ]
+        )
+        XCTAssertEqual(
+            recoveryStore.removedDocumentIDs,
+            [ProjectFixtures.documentID]
+        )
+        XCTAssertTrue(recoveryStore.projects.isEmpty)
+        XCTAssertFalse(cleanupOperation.isPending)
+        XCTAssertFalse(session.isModified)
+    }
+
+    func testPrecommitCleanupTransitionsToCommittedCleanupWithoutRestaging()
+        throws
+    {
+        let recoveryStore = SpyRecoveryStore()
+        let committedCleanup =
+            RecoveryCleanupAttemptSpy(
+                failuresRemaining: 1
+            )
+        let committedOperation =
+            committedCleanup.operation(
+                documentIDs: [
+                    ProjectFixtures.documentID,
+                ]
+            )
+        recoveryStore.removeErrors = [
+            .removeFailed(ProjectFixtures.documentID),
+        ]
+        recoveryStore.removeResults = [
+            .committedCleanupPending(
+                committedOperation
+            ),
+        ]
+        let session = DocumentSession(
+            recoveryStore: recoveryStore,
+            recoveryClock: ManualRecoveryClock()
+        )
+        try session.open(
+            project: ProjectFixtures.project(text: "initial")
+        )
+        try session.applySnapshot(
+            ProjectFixtures.project(text: "saved")
+                .annotationJSON
+        )
+        let completion = try session.completeSave(
+            session.projectForSave()
+        )
+        guard case let .savedRecoveryCleanupPending(
+            cleanupOperation
+        ) = completion else {
+            return XCTFail(
+                "Expected precommit cleanup operation"
+            )
+        }
+
+        XCTAssertThrowsError(
+            try cleanupOperation.perform()
+        )
+        try cleanupOperation.perform()
+
+        XCTAssertEqual(
+            recoveryStore.removeAttempts,
+            [
+                ProjectFixtures.documentID,
+                ProjectFixtures.documentID,
+            ],
+            "Once discard commits, retry must target its tombstone instead of staging removal again"
+        )
+        XCTAssertEqual(
+            committedCleanup.attemptCount,
+            2
+        )
+        XCTAssertFalse(cleanupOperation.isPending)
+        XCTAssertFalse(committedOperation.isPending)
+        XCTAssertFalse(session.isModified)
     }
 
     func testPendingRecoveryCleanupPerformsTheSameRemovalAtMostOnce()

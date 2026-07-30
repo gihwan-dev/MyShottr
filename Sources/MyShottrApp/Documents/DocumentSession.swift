@@ -39,6 +39,40 @@ final class RecoveryCleanupOperation: @unchecked Sendable {
     }
 }
 
+private final class RecoveryRemovalCleanup:
+    @unchecked Sendable
+{
+    private let store: any RecoveryStoring
+    private let documentID: UUID
+    private var committedCleanup:
+        RecoveryCleanupOperation?
+
+    init(
+        store: any RecoveryStoring,
+        documentID: UUID
+    ) {
+        self.store = store
+        self.documentID = documentID
+    }
+
+    func perform() throws {
+        if let committedCleanup {
+            try committedCleanup.perform()
+            return
+        }
+        switch try store.remove(documentId: documentID) {
+        case .noRecovery, .committed:
+            return
+        case let .committedAwaitingDurability(
+            cleanupOperation
+        ),
+        let .committedCleanupPending(cleanupOperation):
+            committedCleanup = cleanupOperation
+            try cleanupOperation.perform()
+        }
+    }
+}
+
 enum DocumentSaveCompletion {
     case saved
     case savedWithNewerChanges
@@ -265,17 +299,38 @@ final class DocumentSession {
         guard let recoveryStore else {
             return .saved
         }
-        switch try recoveryStore.remove(
-            documentId: savedProject.manifest.documentId
-        ) {
-        case .noRecovery, .committed:
-            return .saved
-        case let .committedAwaitingDurability(
-            cleanupOperation
-        ),
-        let .committedCleanupPending(cleanupOperation):
-            return .savedRecoveryCleanupPending(
+        do {
+            switch try recoveryStore.remove(
+                documentId:
+                    savedProject.manifest.documentId
+            ) {
+            case .noRecovery, .committed:
+                return .saved
+            case let .committedAwaitingDurability(
                 cleanupOperation
+            ),
+            let .committedCleanupPending(
+                cleanupOperation
+            ):
+                return .savedRecoveryCleanupPending(
+                    cleanupOperation
+                )
+            }
+        } catch {
+            let cleanup =
+                RecoveryRemovalCleanup(
+                    store: recoveryStore,
+                    documentID:
+                        savedProject.manifest.documentId
+                )
+            return .savedRecoveryCleanupPending(
+                RecoveryCleanupOperation(
+                    documentIDs: [
+                        savedProject.manifest.documentId,
+                    ]
+                ) {
+                    try cleanup.perform()
+                }
             )
         }
     }

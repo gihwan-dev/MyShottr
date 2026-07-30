@@ -79,6 +79,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         (@MainActor () async throws -> Data)?
     private let pendingChangesDecisionProvider:
         (@MainActor () async -> DocumentPendingChangesDecision)?
+    private let projectSaveURLProvider:
+        (@MainActor () -> URL?)?
     private let closeWindow: (@MainActor () -> Void)?
     private let terminationResolutionGate =
         DocumentTerminationResolutionGate()
@@ -100,6 +102,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         pendingChangesDecisionProvider:
             (@MainActor () async -> DocumentPendingChangesDecision)? =
                 nil,
+        projectSaveURLProvider:
+            (@MainActor () -> URL?)? = nil,
         closeWindow: (@MainActor () -> Void)? = nil
     ) throws {
         let session: DocumentSession
@@ -144,6 +148,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             annotationSnapshotProvider
         self.pendingChangesDecisionProvider =
             pendingChangesDecisionProvider
+        self.projectSaveURLProvider =
+            projectSaveURLProvider
         self.closeWindow = closeWindow
         self.representedDocumentID =
             project.manifest.documentId
@@ -413,7 +419,16 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             if let projectURL {
                 url = projectURL
             } else {
-                guard let selectedURL = chooseProjectSaveURL() else { return false }
+                let selectedURL: URL?
+                if let projectSaveURLProvider {
+                    selectedURL =
+                        projectSaveURLProvider()
+                } else {
+                    selectedURL = chooseProjectSaveURL()
+                }
+                guard let selectedURL else {
+                    return false
+                }
                 url = selectedURL
             }
             try projectStore.save(project, to: url)
