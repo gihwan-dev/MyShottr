@@ -1,5 +1,9 @@
 # MyShottr v1 Implementation Roadmap
 
+> Superseded for public distribution by
+> [`2026-07-30-myshottr-v1-public-release-roadmap.md`](./2026-07-30-myshottr-v1-public-release-roadmap.md).
+> Retained as the historical internal-v1 roadmap.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver the complete personal-use MyShottr v1 through four independently reviewable and testable increments.

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add crash recovery, actionable errors, privacy boundary checks, and a single repeatable acceptance gate that proves the complete personal-use v1.
+**Goal:** Add crash recovery, actionable errors, privacy boundary checks, and a single repeatable acceptance gate that proves the complete public-release candidate.
 
 **Architecture:** `RecoveryStore` writes one debounced package per modified open document and `RecoveryCoordinator` offers restore only after abnormal termination. Typed error presenters map every capture, bridge, project, and export failure to one explicit UI action, while scripts and integration tests verify privacy and product-wide acceptance.
 
@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- Execute this plan after the foundation/editor, native-capture, and Chrome-capture plans.
+- Execute this plan after the foundation/editor, public-editor-polish,
+  native-capture, and Chrome-capture plans.
 - Recovery retains only the latest recoverable state per open document and is not a capture history.
 - A clean save or explicit discard deletes the associated recovery package.
 - No error may silently switch capture mechanisms, discard elements, or overwrite a valid destination.
@@ -406,7 +407,7 @@ git add Sources/MyShottrApp/Editor Tests/MyShottrTests/Editor \
 git commit -m "test: enforce local-only editor and extension permissions"
 ```
 
-### Task 4: Complete v1 Verification and Internal Build
+### Task 4: Complete v1 Release-Candidate Verification
 
 **Files:**
 - Create: `Scripts/verify-v1.sh`
@@ -415,7 +416,7 @@ git commit -m "test: enforce local-only editor and extension permissions"
 
 **Interfaces:**
 - Consumes: every product subsystem and test suite.
-- Produces: one automated gate, one manual acceptance record, and internal setup instructions.
+- Produces: one automated gate, one manual acceptance record, and local release-candidate setup instructions.
 
 - [ ] **Step 1: Add the automated verification script**
 
@@ -454,7 +455,7 @@ xcodebuild build \
   -destination 'platform=macOS'
 ```
 
-- [ ] **Step 2: Write the manual acceptance template and internal setup**
+- [ ] **Step 2: Write the manual acceptance template and local candidate setup**
 
 `docs/testing/v1-acceptance.md` must record date, macOS version, Chrome version,
 tested commit SHA, and pass/fail evidence fields for:
@@ -465,13 +466,14 @@ tested commit SHA, and pass/fail evidence fields for:
 4. the overlay is absent from the captured PNG.
 5. Chrome action captures visible page content without browser chrome.
 6. Chrome `Option-Shift-2` runs the same capture flow.
-7. selection, rectangle, arrow, text, freehand, highlighter, opaque redaction,
-   and number-marker tools work.
+7. selection, rectangle, arrow, line, text, freehand, highlighter, blur, opaque
+   redaction, and number-marker tools work.
 8. move, resize, rotate, duplicate, delete, reorder, multi-select, undo, and
    redo work.
 9. Copy pastes a PNG into macOS Notes.
 10. exported PNG dimensions equal source dimensions.
-11. `.myshottr` Save, close, and reopen preserve source pixels and element JSON.
+11. `.myshottr` Save, close, and reopen preserve source pixels, element JSON,
+    and `presentation: none`; a schema-1 fixture migrates to schema 2.
 12. closing a modified document offers Save, Discard, and Cancel.
 13. forced app termination offers the latest recovery package on next launch.
 14. Screen Recording denial gives the System Settings action.
@@ -492,7 +494,7 @@ First launch: open MyShottr once so it registers the Native Messaging host.
 Permission: grant Screen Recording when macOS prompts, then relaunch MyShottr.
 ```
 
-Also list the v1 non-goals from the design so internal users do not interpret
+Also list the v1 non-goals from the design so early users do not interpret
 missing Safari, full-page capture, OCR, or history as defects.
 
 - [ ] **Step 3: Run the candidate gate and commit the final candidate**

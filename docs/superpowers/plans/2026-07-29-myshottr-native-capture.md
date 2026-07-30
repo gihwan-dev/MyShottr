@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- Execute this plan only after `2026-07-29-myshottr-foundation-editor.md`.
+- Execute this plan only after `2026-07-29-myshottr-foundation-editor.md` and
+  `2026-07-30-myshottr-editor-public-polish.md`.
 - Minimum supported macOS version is macOS 15.
 - ScreenCaptureKit and `SCScreenshotManager` are the only capture path.
 - No deprecated capture API or fallback capture implementation is permitted.
@@ -65,7 +66,7 @@ enum RegionSelectionOutcome: Equatable, Sendable {
 }
 
 protocol ScreenCapturing: Sendable {
-    func capturePNG(selection: RegionSelection) async throws -> Data
+    func capture(selection: RegionSelection) async throws -> CaptureArtifact
 }
 
 @MainActor
@@ -253,7 +254,7 @@ git commit -m "feat: define display capture geometry"
 
 **Interfaces:**
 - Consumes: `RegionSelection` and `DisplayGeometry.pixelRect(for:)`.
-- Produces: `ScreenCapturePermissionProviding`, `ScreenCaptureClient.capturePNG(selection:)`, and actionable `CaptureError`.
+- Produces: `ScreenCapturePermissionProviding`, `ScreenCaptureClient.capture(selection:)`, a `.screenRegion` `CaptureArtifact`, and actionable `CaptureError`.
 
 - [ ] **Step 1: Write failing permission and configuration tests**
 
@@ -318,7 +319,7 @@ enum CaptureError: Error, Equatable {
 "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)`
 action. `requireAccess()` requests once and throws on denial.
 
-`ScreenCaptureClient.capturePNG` must:
+`ScreenCaptureClient.capture` must:
 
 1. require permission before enumerating content;
 2. fetch `SCShareableContent.excludingDesktopWindows(false,
@@ -330,7 +331,9 @@ action. `requireAccess()` requests once and throws on denial.
 6. set output width and height from `DisplayGeometry.pixelRect`;
 7. set `showsCursor = false`;
 8. await `SCScreenshotManager.captureImage`;
-9. encode the `CGImage` as PNG through ImageIO.
+9. encode the `CGImage` as PNG through ImageIO;
+10. return `CaptureArtifact(id: UUID(), sourceKind: .screenRegion, pngData:
+    pngData, scale: Double(selection.display.scale))`.
 
 Do not introduce `CGWindowListCreateImage`, `CGDisplayCreateImage`, command-line
 `screencapture`, or another capture path.
@@ -467,7 +470,7 @@ git commit -m "feat: add interactive region selection overlay"
 - Test support: `Tests/MyShottrTests/Support/CaptureFakes.swift`
 
 **Interfaces:**
-- Consumes: `RegionSelecting`, `ScreenCapturing`, `DocumentWindowController`, and `ProjectPackageStoring`.
+- Consumes: `RegionSelecting`, `ScreenCapturing`, `NewProjectCreating`, `DocumentWindowController`, and `ProjectPackageStoring`.
 - Produces: menu-bar Capture Area/Open Project/Quit commands and the `Command-Shift-2` capture pipeline.
 
 - [ ] **Step 1: Write failing coordinator tests**
@@ -478,11 +481,18 @@ Use fakes to assert:
 @MainActor
 func testConfirmedSelectionOpensScreenRegionDocument() async throws {
     let selector = FakeRegionSelector(result: .confirmed(CaptureFixtures.selection))
-    let capturer = FakeScreenCapturer(result: ProjectFixtures.pngData)
+    let capturer = FakeScreenCapturer(result: try CaptureArtifact(
+        id: UUID(uuidString: "299BEFAA-FF18-49FD-B39B-58F622AF1605")!,
+        sourceKind: .screenRegion,
+        pngData: ProjectFixtures.pngData,
+        scale: 2
+    ))
+    let projects = StubNewProjectFactory()
     let windows = SpyDocumentWindowPresenter()
     let coordinator = RegionCaptureCoordinator(
         selector: selector,
         capturer: capturer,
+        projectFactory: projects,
         windows: windows
     )
 
@@ -517,8 +527,24 @@ final class FakeRegionSelector: RegionSelecting {
 }
 
 struct FakeScreenCapturer: ScreenCapturing {
-    let result: Data
-    func capturePNG(selection: RegionSelection) async throws -> Data { result }
+    let result: CaptureArtifact
+    func capture(selection: RegionSelection) async throws -> CaptureArtifact {
+        result
+    }
+}
+
+struct StubNewProjectFactory: NewProjectCreating {
+    func make(
+        artifact: CaptureArtifact,
+        now: Date
+    ) throws -> MyShottrProject {
+        try NewProjectFactory(
+            preferences: StubPreferences(.approvedDefaults)
+        ).make(
+            artifact: artifact,
+            now: now
+        )
+    }
 }
 
 @MainActor
@@ -557,24 +583,24 @@ Open Project…
 Quit MyShottr
 ```
 
+Load `NSImage(named: "StatusBarIcon")`, require the bundled image, set
+`isTemplate = true`, and assign it to the status button. A missing asset is an
+explicit initialization error rather than a text-only status item.
+
 `RegionCaptureCoordinator.captureArea()` must guard against reentrancy, await
-selection, capture the PNG, create a `MyShottrProject` with:
+selection, obtain the validated artifact from `capturer.capture(selection:)`,
+and create a `MyShottrProject` with:
 
 ```swift
-ProjectManifest(
-    formatVersion: 1,
-    documentId: UUID(),
-    createdAt: now,
-    updatedAt: now,
-    sourcePixelWidth: png.width,
-    sourcePixelHeight: png.height,
-    sourceKind: .screenRegion
+let project = try projectFactory.make(
+    artifact: artifact,
+    now: now()
 )
 ```
 
-and open it with the existing document window. Its initial annotation JSON is
-`EditorDocument` schema version `1`, matching the captured dimensions, with an
-empty elements array and design defaults.
+and open it with the existing document window. The shared factory owns schema
+version `2`, `presentation: none`, dimensions, and remembered defaults; the
+capture coordinator must not construct annotation JSON itself.
 
 Change `MyShottrApp` to expose no empty `WindowGroup`; `AppDelegate` creates the
 menu-bar controller and document windows on demand. Use activation policy

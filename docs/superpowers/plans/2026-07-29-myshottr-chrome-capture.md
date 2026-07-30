@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- Execute this plan after both the foundation/editor and native-capture plans.
+- Execute this plan after the foundation/editor, public-editor-polish, and
+  native-capture plans.
 - Chrome is the only officially supported browser in v1.
 - Capture only the currently visible active-tab content area.
 - The extension requests only `activeTab` and `nativeMessaging`.
@@ -65,16 +66,19 @@ Tests/
 TypeScript:
 
 ```ts
+export type BrowserCaptureMode = "visibleViewport" | "fullPage";
+
 export type NativeCaptureMessage = {
   protocolVersion: 1;
-  type: "captureVisibleViewport";
+  type: "capture";
+  captureMode: BrowserCaptureMode;
   mimeType: "image/png";
   dataBase64: string;
 };
 
 export type NativeCaptureReply =
   | { ok: true; captureId: string }
-  | { ok: false; code: "HOST_UNAVAILABLE" | "INVALID_IMAGE" | "IMAGE_TOO_LARGE" | "STAGING_FAILED" };
+  | { ok: false; code: "HOST_UNAVAILABLE" | "INVALID_MESSAGE" | "UNSUPPORTED_CAPTURE_MODE" | "INVALID_IMAGE" | "IMAGE_TOO_LARGE" | "STAGING_FAILED" };
 ```
 
 Swift:
@@ -149,11 +153,19 @@ it("captures the active tab as PNG", async () => {
   chrome.tabs.captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
   await expect(captureVisibleViewport()).resolves.toEqual({
     protocolVersion: 1,
-    type: "captureVisibleViewport",
+    type: "capture",
+    captureMode: "visibleViewport",
     mimeType: "image/png",
     dataBase64: "iVBORw0KGgo=",
   });
   expect(chrome.tabs.captureVisibleTab).toHaveBeenCalledWith({ format: "png" });
+});
+
+it("rejects full-page mode before taking a viewport capture", async () => {
+  await expect(runCaptureAction("fullPage")).rejects.toMatchObject({
+    code: "UNSUPPORTED_CAPTURE_MODE",
+  });
+  expect(chrome.tabs.captureVisibleTab).not.toHaveBeenCalled();
 });
 
 it("does not send a fallback capture when native messaging fails", async () => {
@@ -302,7 +314,9 @@ chrome.commands.onCommand.addListener((command) => {
 });
 ```
 
-`runCaptureAction()` captures once, sends once to
+`runCaptureAction(mode: BrowserCaptureMode = "visibleViewport")` rejects
+`fullPage` with `UNSUPPORTED_CAPTURE_MODE` before calling Chrome. The
+`visibleViewport` path captures once, sends once to
 `com.myshottr.capture`, and uses `chrome.action.setBadgeText` plus
 `setTitle` to display bounded success or failure state. It clears the badge
 after three seconds. It must not retry by switching capture mechanisms.
@@ -372,8 +386,9 @@ func testRejectsMessageAboveChromeLimitBeforeAllocation() {
 }
 ```
 
-`HostRunnerTests` must reject protocol version `2`, non-PNG MIME, malformed
-base64, decoded data above 45 MiB, and PNG data whose ImageIO type is not PNG.
+`HostRunnerTests` must reject protocol version `2`, `captureMode =
+fullPage`, non-PNG MIME, malformed base64, decoded data above 45 MiB, and PNG
+data whose ImageIO type is not PNG.
 It must return an error reply below 1 MiB and never call the staging spy for
 invalid input. `HostInboxStoreTests` must assert root mode `0700`, staged file
 mode `0600`, `O_EXCL` behavior, partial-file deletion, and UUID-only filenames.
@@ -451,8 +466,22 @@ postBuildScripts:
 Define exact reply codes:
 
 ```swift
+enum BrowserCaptureMode: String, Codable {
+    case visibleViewport
+    case fullPage
+}
+
+struct NativeCaptureMessage: Codable {
+    let protocolVersion: Int
+    let type: String
+    let captureMode: BrowserCaptureMode
+    let mimeType: String
+    let dataBase64: String
+}
+
 enum NativeHostErrorCode: String, Codable {
     case invalidMessage = "INVALID_MESSAGE"
+    case unsupportedCaptureMode = "UNSUPPORTED_CAPTURE_MODE"
     case invalidImage = "INVALID_IMAGE"
     case imageTooLarge = "IMAGE_TOO_LARGE"
     case stagingFailed = "STAGING_FAILED"
@@ -464,6 +493,11 @@ struct NativeHostReply: Codable {
     let code: NativeHostErrorCode?
 }
 ```
+
+`HostRunner` requires `type == "capture"` and
+`captureMode == .visibleViewport`. It returns
+`UNSUPPORTED_CAPTURE_MODE` before decoding or staging image data for
+`.fullPage`.
 
 Define the helper-local staging boundary:
 
@@ -526,7 +560,7 @@ git commit -m "feat: add Chrome native messaging helper"
 - Test support: `Tests/MyShottrTests/Support/ChromeFixtures.swift`
 
 **Interfaces:**
-- Consumes: fixed extension public key, bundled helper URL, `StagedCapture`, and `DocumentWindowController`.
+- Consumes: fixed extension public key, bundled helper URL, `StagedCapture`, `NewProjectCreating`, and `DocumentWindowController`.
 - Produces: user-level host registration, safe pending capture import, and `.chromeVisibleViewport` projects.
 
 - [ ] **Step 1: Write failing identity, inbox, and registration tests**
@@ -552,6 +586,49 @@ func testRegistrarWritesExactAllowedOriginAndAbsoluteHelperPath() throws {
     XCTAssertEqual(manifest.type, "stdio")
     XCTAssertEqual(manifest.allowedOrigins, ["chrome-extension://\(Fixtures.extensionId)/"])
     XCTAssertTrue(manifest.path.hasPrefix("/"))
+}
+
+@MainActor
+func testCoordinatorBuildsChromeViewportProjectThroughSharedFactory() throws {
+    let factory = SpyNewProjectFactory()
+    let coordinator = CaptureInboxCoordinator(
+        inbox: StubPendingCaptureInbox(pngData: ProjectFixtures.pngData),
+        projectFactory: factory,
+        windows: SpyDocumentWindowPresenter()
+    )
+
+    try coordinator.consume(id: ChromeFixtures.captureID)
+
+    XCTAssertEqual(factory.requests.count, 1)
+    XCTAssertEqual(factory.requests[0].sourceKind, .chromeVisibleViewport)
+    XCTAssertEqual(factory.requests[0].id, ChromeFixtures.captureID)
+    XCTAssertNil(factory.requests[0].scale)
+}
+
+final class SpyNewProjectFactory: NewProjectCreating, @unchecked Sendable {
+    struct Request {
+        let id: UUID
+        let sourceKind: CaptureSourceKind
+        let scale: Double?
+    }
+    private(set) var requests: [Request] = []
+
+    func make(
+        artifact: CaptureArtifact,
+        now: Date
+    ) throws -> MyShottrProject {
+        requests.append(Request(
+            id: artifact.id,
+            sourceKind: artifact.sourceKind,
+            scale: artifact.scale
+        ))
+        return try NewProjectFactory(
+            preferences: StubPreferences(.approvedDefaults)
+        ).make(
+            artifact: artifact,
+            now: now
+        )
+    }
 }
 ```
 
@@ -623,9 +700,29 @@ distributed notification named `com.myshottr.captureReady` containing only the
 capture UUID string.
 
 `CaptureInboxCoordinator` observes that notification and also scans pending
-captures at app launch. For every valid capture it creates a project with
-`sourceKind = .chromeVisibleViewport`, matching PNG dimensions, empty editor
-elements, and design defaults, then opens the existing editor window.
+captures at app launch. For every valid capture it creates:
+
+```swift
+let artifact = try CaptureArtifact(
+    id: captureID,
+    sourceKind: .chromeVisibleViewport,
+    pngData: pngData,
+    scale: nil
+)
+```
+
+and calls:
+
+```swift
+let project = try projectFactory.make(
+    artifact: artifact,
+    now: now()
+)
+```
+
+then opens the existing editor window. The shared factory owns schema version
+`2`, `presentation: none`, dimensions, and remembered defaults; the inbox
+coordinator must not construct annotation JSON itself.
 
 - [ ] **Step 4: Run Chrome bridge native tests**
 
