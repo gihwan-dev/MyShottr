@@ -59,8 +59,9 @@ final class SpyRecoveryStore: RecoveryStoring, @unchecked Sendable {
     var writes: [Write] = []
     var removedDocumentIDs: [UUID] = []
     var projects: [RecoveredProject] = []
+    var issues: [RecoveryScanIssue] = []
     var error: RecoveryStoreError?
-    var recoverableProjectsCallCount = 0
+    var scanCallCount = 0
 
     func write(
         _ project: MyShottrProject,
@@ -79,9 +80,18 @@ final class SpyRecoveryStore: RecoveryStoring, @unchecked Sendable {
     }
 
     func recoverableProjects() throws -> [RecoveredProject] {
-        recoverableProjectsCallCount += 1
+        scanCallCount += 1
         if let error { throw error }
         return projects
+    }
+
+    func scanRecoverableProjects() throws -> RecoveryScanResult {
+        scanCallCount += 1
+        if let error { throw error }
+        return RecoveryScanResult(
+            projects: projects,
+            issues: issues
+        )
     }
 }
 

@@ -6,7 +6,7 @@ protocol RecoveryStoring: Sendable {
         documentId: UUID
     ) throws
     func remove(documentId: UUID) throws
-    func recoverableProjects() throws -> [RecoveredProject]
+    func scanRecoverableProjects() throws -> RecoveryScanResult
 }
 
 struct RecoveredProject: Equatable, Sendable {
@@ -15,7 +15,7 @@ struct RecoveredProject: Equatable, Sendable {
     let project: MyShottrProject
 }
 
-enum RecoveryStoreError: Error, Equatable {
+enum RecoveryStoreError: Error, Equatable, Sendable {
     case invalidRoot
     case invalidPackagePath(String)
     case invalidPackage(UUID, ProjectPackageError)
@@ -23,6 +23,16 @@ enum RecoveryStoreError: Error, Equatable {
     case readFailed
     case writeFailed(UUID)
     case removeFailed(UUID)
+}
+
+struct RecoveryScanIssue: Error, Equatable, Sendable {
+    let entryName: String
+    let error: RecoveryStoreError
+}
+
+struct RecoveryScanResult: Equatable, Sendable {
+    let projects: [RecoveredProject]
+    let issues: [RecoveryScanIssue]
 }
 
 struct RecoveryStore: RecoveryStoring {
@@ -128,7 +138,7 @@ struct RecoveryStore: RecoveryStoring {
         }
     }
 
-    func recoverableProjects() throws -> [RecoveredProject] {
+    func scanRecoverableProjects() throws -> RecoveryScanResult {
         try validateRoot()
         let entries: [URL]
         do {
@@ -146,64 +156,93 @@ struct RecoveryStore: RecoveryStoring {
         }
 
         var recovered: [RecoveredProject] = []
+        var issues: [RecoveryScanIssue] = []
         for entry in entries {
-            let documentId = try documentIdentifier(for: entry)
-            let values: URLResourceValues
             do {
-                values = try entry.resourceValues(
-                    forKeys: [
-                        .contentModificationDateKey,
-                        .isDirectoryKey,
-                        .isSymbolicLinkKey,
-                    ]
+                recovered.append(
+                    try recoveredProject(from: entry)
+                )
+            } catch let error as RecoveryStoreError {
+                issues.append(
+                    RecoveryScanIssue(
+                        entryName: entry.lastPathComponent,
+                        error: error
+                    )
                 )
             } catch {
-                throw RecoveryStoreError.invalidPackagePath(
-                    entry.lastPathComponent
+                issues.append(
+                    RecoveryScanIssue(
+                        entryName: entry.lastPathComponent,
+                        error: .readFailed
+                    )
                 )
             }
-            guard values.isDirectory == true,
-                  values.isSymbolicLink != true,
-                  let modifiedAt = values.contentModificationDate
-            else {
-                throw RecoveryStoreError.invalidPackagePath(
-                    entry.lastPathComponent
-                )
-            }
-
-            let project: MyShottrProject
-            do {
-                project = try projectStore.load(from: entry)
-            } catch let error as ProjectPackageError {
-                throw RecoveryStoreError.invalidPackage(
-                    documentId,
-                    error
-                )
-            } catch {
-                throw RecoveryStoreError.readFailed
-            }
-            guard project.manifest.documentId == documentId else {
-                throw RecoveryStoreError.documentIdentifierMismatch(
-                    path: documentId,
-                    manifest: project.manifest.documentId
-                )
-            }
-            recovered.append(
-                RecoveredProject(
-                    documentId: documentId,
-                    modifiedAt: modifiedAt,
-                    project: project
-                )
-            )
         }
 
-        return recovered.sorted {
+        let sortedProjects = recovered.sorted {
             if $0.modifiedAt != $1.modifiedAt {
                 return $0.modifiedAt > $1.modifiedAt
             }
             return $0.documentId.uuidString
                 < $1.documentId.uuidString
         }
+        return RecoveryScanResult(
+            projects: sortedProjects,
+            issues: issues.sorted {
+                $0.entryName < $1.entryName
+            }
+        )
+    }
+
+    private func recoveredProject(
+        from entry: URL
+    ) throws -> RecoveredProject {
+        let documentId = try documentIdentifier(for: entry)
+        let values: URLResourceValues
+        do {
+            values = try entry.resourceValues(
+                forKeys: [
+                    .contentModificationDateKey,
+                    .isDirectoryKey,
+                    .isSymbolicLinkKey,
+                ]
+            )
+        } catch {
+            throw RecoveryStoreError.invalidPackagePath(
+                entry.lastPathComponent
+            )
+        }
+        guard values.isDirectory == true,
+              values.isSymbolicLink != true,
+              let modifiedAt = values.contentModificationDate
+        else {
+            throw RecoveryStoreError.invalidPackagePath(
+                entry.lastPathComponent
+            )
+        }
+
+        let project: MyShottrProject
+        do {
+            project = try projectStore.load(from: entry)
+        } catch let error as ProjectPackageError {
+            throw RecoveryStoreError.invalidPackage(
+                documentId,
+                error
+            )
+        } catch {
+            throw RecoveryStoreError.readFailed
+        }
+        guard project.manifest.documentId == documentId else {
+            throw RecoveryStoreError.documentIdentifierMismatch(
+                path: documentId,
+                manifest: project.manifest.documentId
+            )
+        }
+        return RecoveredProject(
+            documentId: documentId,
+            modifiedAt: modifiedAt,
+            project: project
+        )
     }
 
     private func validateRoot() throws {

@@ -39,6 +39,13 @@ final class AppDelegate:
         () throws -> any SessionTerminationTracking
     typealias RecoveryStoreFactory =
         () throws -> any RecoveryStoring
+    typealias TerminationReply = (Bool) -> Void
+
+    private enum TerminationResolutionState: Equatable {
+        case idle
+        case resolving
+        case approved
+    }
 
     private let dependencies: AppDependencies
     private let applicationLifecycle: ApplicationLifecycle
@@ -52,6 +59,7 @@ final class AppDelegate:
         SessionTerminationStateFactory
     private let recoveryStoreFactory: RecoveryStoreFactory
     private let recoveryPrompt: any RecoveryPrompting
+    private let terminationReply: TerminationReply
     private let hotKeyAPI: GlobalHotKeyAPI
     private var documentWindows: [any EditorWindowControlling] = []
     private var captureCoordinator: RegionCaptureCoordinator?
@@ -62,6 +70,8 @@ final class AppDelegate:
         any SessionTerminationTracking
     )?
     private var recoveryCoordinator: RecoveryCoordinator?
+    private var terminationResolutionState:
+        TerminationResolutionState = .idle
 
     var activeDocumentWindowCount: Int {
         documentWindows.count
@@ -125,6 +135,12 @@ final class AppDelegate:
             },
         recoveryPrompt:
             any RecoveryPrompting = RecoveryAlertPrompt(),
+        terminationReply:
+            @escaping TerminationReply = {
+                NSApp.reply(
+                    toApplicationShouldTerminate: $0
+                )
+            },
         hotKeyAPI: GlobalHotKeyAPI = .live
     ) {
         self.dependencies = dependencies
@@ -139,6 +155,7 @@ final class AppDelegate:
             sessionTerminationStateFactory
         self.recoveryStoreFactory = recoveryStoreFactory
         self.recoveryPrompt = recoveryPrompt
+        self.terminationReply = terminationReply
         self.hotKeyAPI = hotKeyAPI
         super.init()
     }
@@ -207,7 +224,9 @@ final class AppDelegate:
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        guard let sessionTerminationState else {
+        guard terminationResolutionState == .approved,
+              let sessionTerminationState
+        else {
             return
         }
         do {
@@ -217,8 +236,43 @@ final class AppDelegate:
         }
     }
 
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        switch terminationResolutionState {
+        case .approved:
+            return .terminateNow
+        case .resolving:
+            return .terminateLater
+        case .idle:
+            break
+        }
+
+        let modifiedWindows = documentWindows.filter(
+            \.hasModifiedDocument
+        )
+        guard !modifiedWindows.isEmpty else {
+            terminationResolutionState = .approved
+            return .terminateNow
+        }
+
+        terminationResolutionState = .resolving
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            let approved = await resolveTermination(
+                for: modifiedWindows
+            )
+            terminationResolutionState =
+                approved ? .approved : .idle
+            terminationReply(approved)
+        }
+        return .terminateLater
+    }
+
     func present(project: MyShottrProject) throws {
-        try openDocument(
+        _ = try openDocument(
             project: project,
             projectURL: nil,
             isRecoveredDocument: false
@@ -259,7 +313,7 @@ final class AppDelegate:
     private func openProject(at url: URL) {
         do {
             let project = try dependencies.projectStore.load(from: url)
-            try openDocument(
+            _ = try openDocument(
                 project: project,
                 projectURL: url,
                 isRecoveredDocument: false
@@ -269,11 +323,22 @@ final class AppDelegate:
         }
     }
 
+    @discardableResult
     private func openDocument(
         project: MyShottrProject,
         projectURL: URL?,
         isRecoveredDocument: Bool
-    ) throws {
+    ) throws -> Bool {
+        if let existing = existingDocumentWindow(
+            documentID: project.manifest.documentId,
+            projectURL: projectURL
+        ) {
+            existing.focusWindow()
+            applicationLifecycle.setActivationPolicy(.regular)
+            applicationLifecycle.activate()
+            return false
+        }
+
         let controller = try documentWindowFactory(
             project,
             projectURL,
@@ -296,6 +361,7 @@ final class AppDelegate:
         documentWindows.append(controller)
         applicationLifecycle.setActivationPolicy(.regular)
         applicationLifecycle.activate()
+        return true
     }
 
     private func startRecovery() {
@@ -306,21 +372,31 @@ final class AppDelegate:
                 try terminationState.beginSession()
             sessionTerminationState = terminationState
 
+            let issueReporter = launchErrorReporter
             let coordinator = RecoveryCoordinator(
                 recoveryStore: try recoveryStoreFactory(),
                 previousSessionWasClean:
                     previousSessionWasClean,
                 prompt: recoveryPrompt,
+                reportIssue: {
+                    issueReporter($0)
+                },
                 restore: { [weak self] recovered in
                     guard let self else {
                         throw AppDelegateRecoveryError
                             .applicationUnavailable
                     }
-                    try self.openDocument(
+                    let didOpen = try self.openDocument(
                         project: recovered.project,
                         projectURL: nil,
                         isRecoveredDocument: true
                     )
+                    guard didOpen else {
+                        throw AppDelegateRecoveryError
+                            .documentAlreadyOpen(
+                                recovered.documentId
+                            )
+                    }
                 }
             )
             recoveryCoordinator = coordinator
@@ -329,8 +405,68 @@ final class AppDelegate:
             launchErrorReporter(error)
         }
     }
+
+    private func existingDocumentWindow(
+        documentID: UUID,
+        projectURL: URL?
+    ) -> (any EditorWindowControlling)? {
+        let normalizedURL = projectURL.map(
+            normalizedProjectURL
+        )
+        return documentWindows.first { controller in
+            if controller.representedDocumentID == documentID {
+                return true
+            }
+            guard let normalizedURL,
+                  let existingURL =
+                    controller.representedProjectURL
+            else {
+                return false
+            }
+            return normalizedProjectURL(existingURL)
+                == normalizedURL
+        }
+    }
+
+    private func normalizedProjectURL(_ url: URL) -> URL {
+        url.standardizedFileURL
+            .resolvingSymlinksInPath()
+    }
+
+    private func resolveTermination(
+        for windows: [any EditorWindowControlling]
+    ) async -> Bool {
+        do {
+            for window in windows {
+                try await window
+                    .flushRecoveryForTermination()
+            }
+        } catch {
+            launchErrorReporter(error)
+            return false
+        }
+
+        for window in windows {
+            guard await window
+                .resolvePendingChangesForTermination()
+            else {
+                return false
+            }
+        }
+
+        do {
+            for window in windows {
+                try window.finalizePendingTermination()
+            }
+        } catch {
+            launchErrorReporter(error)
+            return false
+        }
+        return true
+    }
 }
 
 private enum AppDelegateRecoveryError: Error {
     case applicationUnavailable
+    case documentAlreadyOpen(UUID)
 }

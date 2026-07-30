@@ -31,7 +31,9 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
             documentId: ProjectFixtures.documentID
         )
 
-        let recovered = try store.recoverableProjects()
+        let recovered = try store
+            .scanRecoverableProjects()
+            .projects
         XCTAssertEqual(recovered.count, 2)
         XCTAssertEqual(
             recovered.first {
@@ -56,7 +58,9 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
 
         try store.remove(documentId: ProjectFixtures.documentID)
 
-        XCTAssertTrue(try store.recoverableProjects().isEmpty)
+        XCTAssertTrue(
+            try store.scanRecoverableProjects().projects.isEmpty
+        )
     }
 
     func testRootIsNormalizedToOwnerOnlyPermissions() throws {
@@ -112,12 +116,23 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
             withDestinationURL: package
         )
 
-        XCTAssertThrowsError(try store.recoverableProjects()) {
-            XCTAssertEqual(
-                $0 as? RecoveryStoreError,
-                .invalidPackagePath(link.lastPathComponent)
-            )
-        }
+        let scan = try store.scanRecoverableProjects()
+
+        XCTAssertTrue(scan.projects.isEmpty)
+        XCTAssertEqual(
+            scan.issues,
+            [
+                RecoveryScanIssue(
+                    entryName: link.lastPathComponent,
+                    error: .invalidPackagePath(
+                        link.lastPathComponent
+                    )
+                ),
+            ]
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: link.path)
+        )
     }
 
     func testRejectsInvalidPackageMembers() throws {
@@ -131,14 +146,20 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
             to: package.appendingPathComponent("extra.txt")
         )
 
-        XCTAssertThrowsError(try store.recoverableProjects()) {
-            guard case .invalidPackage(
-                ProjectFixtures.documentID,
-                .invalidMemberSet(_)
-            ) = $0 as? RecoveryStoreError else {
-                return XCTFail("Unexpected error: \($0)")
-            }
+        let scan = try store.scanRecoverableProjects()
+
+        XCTAssertTrue(scan.projects.isEmpty)
+        guard case .invalidPackage(
+            ProjectFixtures.documentID,
+            .invalidMemberSet(_)
+        ) = scan.issues.first?.error else {
+            return XCTFail(
+                "Unexpected issues: \(scan.issues)"
+            )
         }
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: package.path)
+        )
     }
 
     func testRejectsUnsupportedProjectVersion() throws {
@@ -165,15 +186,18 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
             to: package.appendingPathComponent("manifest.json")
         )
 
-        XCTAssertThrowsError(try store.recoverableProjects()) {
-            XCTAssertEqual(
-                $0 as? RecoveryStoreError,
+        let scan = try store.scanRecoverableProjects()
+
+        XCTAssertTrue(scan.projects.isEmpty)
+        XCTAssertEqual(
+            scan.issues.map(\.error),
+            [
                 .invalidPackage(
                     ProjectFixtures.documentID,
                     .unsupportedFormatVersion(99)
-                )
-            )
-        }
+                ),
+            ]
+        )
     }
 
     func testRejectsUnsupportedAnnotationSchema() throws {
@@ -188,15 +212,18 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
                     .appendingPathComponent("document.json")
             )
 
-        XCTAssertThrowsError(try store.recoverableProjects()) {
-            XCTAssertEqual(
-                $0 as? RecoveryStoreError,
+        let scan = try store.scanRecoverableProjects()
+
+        XCTAssertTrue(scan.projects.isEmpty)
+        XCTAssertEqual(
+            scan.issues.map(\.error),
+            [
                 .invalidPackage(
                     ProjectFixtures.documentID,
                     .unsupportedAnnotationSchemaVersion(99)
-                )
-            )
-        }
+                ),
+            ]
+        )
     }
 
     func testRejectsUnexpectedRecoveryPath() throws {
@@ -205,12 +232,27 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
             to: temporaryDirectory.appendingPathComponent("unexpected.txt")
         )
 
-        XCTAssertThrowsError(try store.recoverableProjects()) {
-            XCTAssertEqual(
-                $0 as? RecoveryStoreError,
-                .invalidPackagePath("unexpected.txt")
+        let scan = try store.scanRecoverableProjects()
+
+        XCTAssertTrue(scan.projects.isEmpty)
+        XCTAssertEqual(
+            scan.issues,
+            [
+                RecoveryScanIssue(
+                    entryName: "unexpected.txt",
+                    error: .invalidPackagePath(
+                        "unexpected.txt"
+                    )
+                ),
+            ]
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: temporaryDirectory
+                    .appendingPathComponent("unexpected.txt")
+                    .path
             )
-        }
+        )
     }
 
     func testRejectsPackageWhoseManifestUsesAnotherDocumentIdentifier()
@@ -239,15 +281,18 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
             to: package.appendingPathComponent("manifest.json")
         )
 
-        XCTAssertThrowsError(try store.recoverableProjects()) {
-            XCTAssertEqual(
-                $0 as? RecoveryStoreError,
+        let scan = try store.scanRecoverableProjects()
+
+        XCTAssertTrue(scan.projects.isEmpty)
+        XCTAssertEqual(
+            scan.issues.map(\.error),
+            [
                 .documentIdentifierMismatch(
                     path: ProjectFixtures.documentID,
                     manifest: RecoveryFixtures.secondDocumentID
-                )
-            )
-        }
+                ),
+            ]
+        )
     }
 
     func testRecoverableProjectsAreNewestFirstWithStableTieBreak()
@@ -278,7 +323,9 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
             )
         }
 
-        let recovered = try store.recoverableProjects()
+        let recovered = try store
+            .scanRecoverableProjects()
+            .projects
 
         XCTAssertEqual(
             recovered.map(\.documentId),
@@ -307,7 +354,57 @@ final class RecoveryStoreTests: TemporaryDirectoryTestCase {
                 )
             )
         }
-        XCTAssertTrue(try store.recoverableProjects().isEmpty)
+        XCTAssertTrue(
+            try store.scanRecoverableProjects().projects.isEmpty
+        )
+    }
+
+    func testMixedValidAndCorruptPackagesReturnValidProjectAndIssue()
+        throws
+    {
+        let store = try RecoveryStore(root: temporaryDirectory)
+        let valid = RecoveryFixtures.project(
+            text: "valid",
+            documentID: ProjectFixtures.documentID
+        )
+        let corrupt = RecoveryFixtures.project(
+            text: "corrupt",
+            documentID: RecoveryFixtures.secondDocumentID
+        )
+        try store.write(
+            valid,
+            documentId: ProjectFixtures.documentID
+        )
+        try store.write(
+            corrupt,
+            documentId: RecoveryFixtures.secondDocumentID
+        )
+        let corruptURL = recoveryURL(
+            for: RecoveryFixtures.secondDocumentID
+        )
+        try Data("unexpected".utf8).write(
+            to: corruptURL.appendingPathComponent("extra.txt")
+        )
+
+        let scan = try store.scanRecoverableProjects()
+
+        XCTAssertEqual(scan.projects.map(\.project), [valid])
+        XCTAssertEqual(scan.issues.count, 1)
+        XCTAssertEqual(
+            scan.issues[0].entryName,
+            corruptURL.lastPathComponent
+        )
+        guard case .invalidPackage(
+            RecoveryFixtures.secondDocumentID,
+            .invalidMemberSet(_)
+        ) = scan.issues[0].error else {
+            return XCTFail(
+                "Unexpected issue: \(scan.issues[0])"
+            )
+        }
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: corruptURL.path)
+        )
     }
 
     private func recoveryURL(for documentID: UUID) -> URL {

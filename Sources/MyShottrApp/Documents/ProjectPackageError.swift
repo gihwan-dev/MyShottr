@@ -1,6 +1,6 @@
 import Foundation
 
-enum ProjectPackageError: Error, Equatable {
+enum ProjectPackageError: Error, Equatable, Sendable {
     case notDirectoryPackage
     case invalidMemberSet([String])
     case invalidManifest

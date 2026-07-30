@@ -6,8 +6,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private let session: DocumentSession
     private let editorWebView: EditorWebView
     private let projectStore: any ProjectPackageStoring
+    let representedDocumentID: UUID
     private var projectURL: URL?
     private var closeAfterPrompt = false
+    private var discardRecoveryOnApprovedTermination = false
     var onClose: (() -> Void)?
 
     init(
@@ -31,6 +33,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         self.session = session
         self.editorWebView = EditorWebView(session: session, preferences: preferences)
         self.projectStore = projectStore
+        self.representedDocumentID =
+            project.manifest.documentId
         self.projectURL = projectURL
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 860),
@@ -83,36 +87,78 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if closeAfterPrompt || !session.isModified { return true }
-        let alert = NSAlert()
-        alert.messageText = "Save changes before closing?"
-        alert.informativeText = "Your annotation changes will be lost if you discard them."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: sender) { [weak self] response in
-            guard let self else { return }
-            switch response {
-            case .alertFirstButtonReturn:
-                Task { @MainActor in
-                    if await self.saveProject() {
-                        self.closeAfterPrompt = true
-                        self.window?.performClose(nil)
-                    }
-                }
-            case .alertSecondButtonReturn:
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            if await resolvePendingChangesForTermination() {
                 do {
-                    try self.session.discardRecovery()
-                    self.session.close()
-                    self.closeAfterPrompt = true
-                    self.window?.performClose(nil)
+                    try finalizePendingTermination()
+                    closeAfterPrompt = true
+                    window?.performClose(nil)
                 } catch {
-                    self.present(error)
+                    present(error)
                 }
-            default:
-                break
             }
         }
         return false
+    }
+
+    func resolvePendingChangesForTermination() async -> Bool {
+        discardRecoveryOnApprovedTermination = false
+        guard session.isModified,
+              let window
+        else {
+            return true
+        }
+        return await withCheckedContinuation {
+            continuation in
+            let alert = NSAlert()
+            alert.messageText = "Save changes before closing?"
+            alert.informativeText =
+                "Your annotation changes will be lost if you discard them."
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Discard")
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) {
+                [weak self] response in
+                guard let self else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                switch response {
+                case .alertFirstButtonReturn:
+                    Task { @MainActor in
+                        continuation.resume(
+                            returning: await self.saveProject()
+                        )
+                    }
+                case .alertSecondButtonReturn:
+                    self.discardRecoveryOnApprovedTermination =
+                        true
+                    continuation.resume(returning: true)
+                default:
+                    continuation.resume(returning: false)
+                }
+            }
+        }
+    }
+
+    func finalizePendingTermination() throws {
+        guard discardRecoveryOnApprovedTermination else {
+            return
+        }
+        try session.discardRecovery()
+        discardRecoveryOnApprovedTermination = false
+    }
+
+    func flushRecoveryForTermination() async throws {
+        try await session.flushRecoveryForTermination()
+    }
+
+    func focusWindow() {
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -193,7 +239,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
     private func saveProject() async -> Bool {
         do {
-            _ = try await editorWebView.requestAnnotationSnapshot()
+            let annotationJSON =
+                try await editorWebView.requestAnnotationSnapshot()
+            try session.install(annotationJSON: annotationJSON)
             let project = try session.projectForSave()
             let url: URL
             if let projectURL {
@@ -253,10 +301,25 @@ private extension NSToolbarItem.Identifier {
 @MainActor
 protocol EditorWindowControlling: AnyObject {
     var onClose: (() -> Void)? { get set }
+    var representedDocumentID: UUID { get }
+    var representedProjectURL: URL? { get }
+    var hasModifiedDocument: Bool { get }
     func presentWindow() throws
+    func focusWindow()
+    func flushRecoveryForTermination() async throws
+    func resolvePendingChangesForTermination() async -> Bool
+    func finalizePendingTermination() throws
 }
 
 extension DocumentWindowController: EditorWindowControlling {
+    var representedProjectURL: URL? {
+        projectURL
+    }
+
+    var hasModifiedDocument: Bool {
+        session.isModified
+    }
+
     func presentWindow() {
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)

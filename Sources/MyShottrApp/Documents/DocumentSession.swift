@@ -4,6 +4,7 @@ enum DocumentSessionError: Error, Equatable {
     case invalidDocument
     case noOpenDocument
     case noStagedDocument
+    case recoverySnapshotUnavailable
 }
 
 @MainActor
@@ -180,6 +181,15 @@ final class DocumentSession {
         try recoveryStore?.remove(documentId: documentId)
     }
 
+    func flushRecoveryForTermination() async throws {
+        guard isModified else {
+            return
+        }
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        try await captureAndWriteLatestRecovery()
+    }
+
     func prepareForRecoveryRestore() {
         restoreStagedProjectAsModified = true
     }
@@ -209,32 +219,41 @@ final class DocumentSession {
             }
             do {
                 if requestLatestSnapshot {
-                    guard let recoverySnapshotProvider =
-                            self.recoverySnapshotProvider
-                    else {
-                        return
-                    }
-                    _ = try await recoverySnapshotProvider()
-                    guard !Task.isCancelled else {
-                        return
-                    }
+                    try await self
+                        .captureAndWriteLatestRecovery()
+                } else {
+                    try self.writeCurrentRecovery()
                 }
-                guard let project = self.project,
-                      self.isModified,
-                      let recoveryStore = self.recoveryStore
-                else {
-                    return
-                }
-                try recoveryStore.write(
-                    project,
-                    documentId: project.manifest.documentId
-                )
             } catch is CancellationError {
                 return
             } catch {
                 self.onRecoveryFailure?(error)
             }
         }
+    }
+
+    private func captureAndWriteLatestRecovery() async throws {
+        guard let recoverySnapshotProvider else {
+            throw DocumentSessionError
+                .recoverySnapshotUnavailable
+        }
+        let annotationJSON = try await recoverySnapshotProvider()
+        try Task.checkCancellation()
+        try install(annotationJSON: annotationJSON)
+        try writeCurrentRecovery()
+    }
+
+    private func writeCurrentRecovery() throws {
+        guard let project,
+              isModified,
+              let recoveryStore
+        else {
+            return
+        }
+        try recoveryStore.write(
+            project,
+            documentId: project.manifest.documentId
+        )
     }
 
     private func validate(annotationJSON: Data, for manifest: ProjectManifest) throws {

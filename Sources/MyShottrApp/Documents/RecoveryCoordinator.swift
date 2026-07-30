@@ -24,43 +24,47 @@ final class RecoveryCoordinator {
     typealias Restore = (RecoveredProject) throws -> Void
 
     private let recoveryStore: any RecoveryStoring
-    private let previousSessionWasClean: Bool
     private let prompt: any RecoveryPrompting
+    private let reportIssue: (RecoveryScanIssue) -> Void
     private let restore: Restore
-    private var cachedProjects: [RecoveredProject]?
+    private var cachedScan: RecoveryScanResult?
     private var didOfferRecovery = false
 
     init(
         recoveryStore: any RecoveryStoring,
-        previousSessionWasClean: Bool,
+        previousSessionWasClean _: Bool,
         prompt: any RecoveryPrompting,
+        reportIssue: @escaping (RecoveryScanIssue) -> Void = {
+            _ in
+        },
         restore: @escaping Restore
     ) {
         self.recoveryStore = recoveryStore
-        self.previousSessionWasClean = previousSessionWasClean
         self.prompt = prompt
+        self.reportIssue = reportIssue
         self.restore = restore
     }
 
     func shouldOfferRecovery() throws -> Bool {
-        guard !previousSessionWasClean,
-              !didOfferRecovery
-        else {
+        guard !didOfferRecovery else {
             return false
         }
-        if let cachedProjects {
-            return !cachedProjects.isEmpty
+        if let cachedScan {
+            return !cachedScan.projects.isEmpty
         }
-        let projects = try recoveryStore.recoverableProjects()
-        cachedProjects = projects
-        return !projects.isEmpty
+        let scan = try recoveryStore.scanRecoverableProjects()
+        cachedScan = scan
+        for issue in scan.issues {
+            reportIssue(issue)
+        }
+        return !scan.projects.isEmpty
     }
 
     func offerRecoveryIfNeeded() throws {
         guard try shouldOfferRecovery() else {
             return
         }
-        guard let projects = cachedProjects else {
+        guard let projects = cachedScan?.projects else {
             return
         }
         didOfferRecovery = true
@@ -89,6 +93,9 @@ final class RecoveryCoordinator {
                         project.documentId
                     )
                 }
+                try recoveryStore.remove(
+                    documentId: project.documentId
+                )
             }
         case .discardAll:
             for project in projects {
@@ -111,7 +118,7 @@ final class RecoveryAlertPrompt: RecoveryPrompting {
         alert.alertStyle = .warning
         alert.messageText = "Recover unsaved MyShottr documents?"
         alert.informativeText =
-            "MyShottr did not exit normally. Select the documents to restore. Nothing is opened or deleted until you choose an action."
+            "Unsaved recovery data is available. Select the documents to restore. Nothing is opened or deleted until you choose an action."
 
         let buttons = projects.map { project in
             let button = NSButton(
