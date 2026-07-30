@@ -413,6 +413,17 @@ expect_failure \
   "${TEST_ROOT}/app-test-seam.log" \
   "${VERIFY_SCRIPT}" "0.1.0" "${ARTIFACT_DIRECTORY}"
 
+APP_INLINE_SOURCE_MAP_ROOT="${TEST_ROOT}/app-inline-source-map"
+ditto -x -k "${TEST_ROOT}/valid-app.zip" "${APP_INLINE_SOURCE_MAP_ROOT}"
+printf '\n//# sourceMappingURL=data:application/json;base64,e30=\n' \
+  >>"${APP_INLINE_SOURCE_MAP_ROOT}/MyShottr.app/Contents/Resources/Editor/assets/index-fixture.js"
+repack_app_without_metadata "${APP_INLINE_SOURCE_MAP_ROOT}"
+expect_failure \
+  "app inline source map" \
+  "release artifact JavaScript contains source map metadata" \
+  "${TEST_ROOT}/app-inline-source-map.log" \
+  "${VERIFY_SCRIPT}" "0.1.0" "${ARTIFACT_DIRECTORY}"
+
 cp "${TEST_ROOT}/valid-app.zip" "${APP_ARCHIVE}"
 refresh_checksums
 
@@ -457,6 +468,24 @@ expect_failure \
   "production test seam" \
   "release artifact contains a test seam" \
   "${TEST_ROOT}/test-seam.log" \
+  "${VERIFY_SCRIPT}" "0.1.0" "${ARTIFACT_DIRECTORY}"
+
+cp "${TEST_ROOT}/valid-extension.zip" "${EXTENSION_ARCHIVE}"
+EXTENSION_INLINE_SOURCE_MAP_ROOT="${TEST_ROOT}/extension-inline-source-map"
+ditto -x -k \
+  "${EXTENSION_ARCHIVE}" "${EXTENSION_INLINE_SOURCE_MAP_ROOT}"
+printf '\nglobalThis.embeddedMap = {"sourcesContent":["source"]};\n' \
+  >>"${EXTENSION_INLINE_SOURCE_MAP_ROOT}/MyShottr-Chrome-0.1.0/service-worker.js"
+rm "${EXTENSION_ARCHIVE}"
+ditto -c -k \
+  --norsrc --noextattr --noqtn --noacl --keepParent \
+  "${EXTENSION_INLINE_SOURCE_MAP_ROOT}/MyShottr-Chrome-0.1.0" \
+  "${EXTENSION_ARCHIVE}"
+refresh_checksums
+expect_failure \
+  "extension inline source map" \
+  "release artifact JavaScript contains source map metadata" \
+  "${TEST_ROOT}/extension-inline-source-map.log" \
   "${VERIFY_SCRIPT}" "0.1.0" "${ARTIFACT_DIRECTORY}"
 
 cp "${TEST_ROOT}/valid-extension.zip" "${EXTENSION_ARCHIVE}"

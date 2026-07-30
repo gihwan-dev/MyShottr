@@ -369,6 +369,17 @@ function scanSensitiveFile(entry) {
   }
 }
 
+function scanJavaScriptForSourceMapMetadata(entry) {
+  const text = readFileSync(entry.absolutePath, "utf8");
+  if (
+    /sourceMappingURL/i.test(text)
+    || /sourcesContent/i.test(text)
+    || /data:application\/json/i.test(text)
+  ) {
+    fail("release artifact JavaScript contains source map metadata");
+  }
+}
+
 const expectedDirectories = new Set([
   "Contents",
   "Contents/Helpers",
@@ -416,6 +427,9 @@ for (const entry of appEntries) {
   const assetMatch = entry.relativePath.match(editorAssetPattern);
   if (assetMatch) {
     editorAssetCounts[assetMatch[1]] += 1;
+    if (assetMatch[1] === "js") {
+      scanJavaScriptForSourceMapMetadata(entry);
+    }
   } else if (!expectedFiles.has(entry.relativePath)) {
     fail(`app contains an unexpected file: ${entry.relativePath}`);
   }
@@ -446,6 +460,9 @@ for (const entry of extensionEntries) {
   }
   if (!expectedExtensionFiles.has(entry.relativePath)) {
     fail(`extension contains an unexpected file: ${entry.relativePath}`);
+  }
+  if (entry.relativePath.endsWith(".js")) {
+    scanJavaScriptForSourceMapMetadata(entry);
   }
 }
 if (
