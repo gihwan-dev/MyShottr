@@ -1,0 +1,92 @@
+name: Release
+
+"on":
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4.2.0
+        with:
+          version: 10.14.0
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Verify project Xcode requirement
+        shell: zsh
+        run: |
+          set -euo pipefail
+          XCODE_VERSION="$(xcodebuild -version | awk '/^Xcode / { print $2 }')"
+          XCODE_MAJOR="${XCODE_VERSION%%.*}"
+          [[ "${XCODE_MAJOR}" == <-> ]]
+          (( XCODE_MAJOR >= 26 ))
+      - name: Validate release contract
+        id: release-contract
+        shell: zsh
+        env:
+          TAG: ${{ github.ref_name }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "${TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          VERSION="${TAG#v}"
+          [[ -f "docs/releases/${TAG}.md" ]]
+          git fetch --no-tags --prune origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          TAG_COMMIT="$(git rev-parse --verify "${TAG}^{commit}")"
+          [[ "${TAG_COMMIT}" == "${EXPECTED_SHA}" ]]
+          git merge-base --is-ancestor "${EXPECTED_SHA}" "origin/main"
+          printf 'version=%s\n' "${VERSION}" >> "${GITHUB_OUTPUT}"
+      - name: Verify exact source
+        shell: zsh
+        run: Scripts/verify-v1.sh
+      - name: Package release
+        shell: zsh
+        env:
+          VERSION: ${{ steps.release-contract.outputs.version }}
+        run: Scripts/package-release.sh "${VERSION}"
+      - name: Verify release artifacts
+        shell: zsh
+        env:
+          VERSION: ${{ steps.release-contract.outputs.version }}
+        run: Scripts/verify-release-artifacts.sh "${VERSION}" "dist/release/${VERSION}"
+      - name: Publish GitHub Release
+        shell: zsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.release-contract.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "${TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "${VERSION}" == "${TAG#v}" ]]
+          OUTPUT="dist/release/${VERSION}"
+          test -f "${OUTPUT}/MyShottr-${VERSION}-macos.zip"
+          test -f "${OUTPUT}/MyShottr-Chrome-${VERSION}.zip"
+          test -f "${OUTPUT}/SHA256SUMS.txt"
+          gh release create "${TAG}" \
+            "${OUTPUT}/MyShottr-${VERSION}-macos.zip" \
+            "${OUTPUT}/MyShottr-Chrome-${VERSION}.zip" \
+            "${OUTPUT}/SHA256SUMS.txt" \
+            --repo "${REPOSITORY}" \
+            --title "MyShottr ${TAG}" \
+            --notes-file "docs/releases/${TAG}.md" \
+            --verify-tag
