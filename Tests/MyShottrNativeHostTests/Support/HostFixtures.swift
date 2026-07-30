@@ -189,11 +189,16 @@ final class StagingSpy: HostCaptureStaging {
 }
 
 final class ActivationSpy: AppActivating {
+    var result: Result<Void, Error>
     let events: EventRecorder?
     private(set) var activationCount = 0
     private(set) var captureIDs: [UUID] = []
 
-    init(events: EventRecorder? = nil) {
+    init(
+        result: Result<Void, Error> = .success(()),
+        events: EventRecorder? = nil
+    ) {
+        self.result = result
         self.events = events
     }
 
@@ -201,6 +206,7 @@ final class ActivationSpy: AppActivating {
         events?.values.append("activate")
         activationCount += 1
         captureIDs.append(captureID)
+        try result.get()
     }
 }
 
@@ -209,6 +215,7 @@ final class EventRecorder {
 }
 
 enum HostTestError: Error {
+    case activation
     case staging
     case partialWrite
 }

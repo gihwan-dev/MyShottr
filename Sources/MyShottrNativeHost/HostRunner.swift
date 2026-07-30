@@ -92,7 +92,7 @@ struct HostRunner {
         do {
             try activator.activateContainingApp(captureID: captureID)
         } catch {
-            return failure(.stagingFailed)
+            return failure(.appActivationFailed)
         }
 
         return NativeHostReply(ok: true, captureId: captureID, code: nil)

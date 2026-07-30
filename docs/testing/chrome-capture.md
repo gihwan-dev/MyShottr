@@ -22,8 +22,26 @@ Playwright uses its bundled Chromium with a persistent context. It loads an
 E2E-only build whose compile-time seam counts calls around
 `captureVisibleTab`. The production build contains neither that seam nor its
 global test API. The process test launches the real `MyShottrNativeHost`
-executable, sends one valid Chrome-framed message, and verifies one owner-only
-PNG in an injected temporary inbox.
+executable and verifies the exact one-reply lifecycle in an injected temporary
+inbox. Success publishes one owner-only PNG. A staging failure returns
+`STAGING_FAILED` without a new PNG. An injected activation failure returns
+`APP_ACTIVATION_FAILED` with no stderr and preserves exactly one valid,
+owner-only pending PNG for MyShottr's next launch scan.
+
+The bounded capture failure code list is:
+
+- `HOST_UNAVAILABLE`
+- `INVALID_MESSAGE`
+- `UNSUPPORTED_CAPTURE_MODE`
+- `INVALID_IMAGE`
+- `IMAGE_TOO_LARGE`
+- `STAGING_FAILED`
+- `APP_ACTIVATION_FAILED`
+
+`HOST_UNAVAILABLE` is the extension-side connection failure. The native helper
+emits the other six codes. A helper failure reply contains only `ok` and
+`code`, stays below the 1 MiB reply limit, and never includes a raw activation
+or staging error.
 
 Run the combined product gate:
 

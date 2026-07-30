@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import ImageIO
 import XCTest
@@ -185,6 +186,96 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(activator.activationCount, 0)
     }
 
+    func testStagingFailureRemovesPartialCaptureAndDoesNotActivateApp() throws {
+        let inbox = temporaryDirectory.appendingPathComponent(
+            "StagingFailureInbox",
+            isDirectory: true
+        )
+        let staging = HostInboxStore(
+            rootURL: inbox,
+            idGenerator: { self.captureID },
+            writeOperation: { descriptor, data in
+                let written = data.prefix(8).withUnsafeBytes {
+                    Darwin.write(descriptor, $0.baseAddress, $0.count)
+                }
+                XCTAssertEqual(written, 8)
+                throw HostTestError.partialWrite
+            }
+        )
+        let activator = ActivationSpy()
+        let runner = HostRunner(staging: staging, activator: activator)
+
+        let output = try HostFixtures.run(
+            runner,
+            inputData: HostFixtures.framed(try HostFixtures.protocolMessage()),
+            in: temporaryDirectory
+        )
+
+        try assertExactBoundedFailure(
+            output,
+            code: .stagingFailed
+        )
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(
+                atPath: inbox.path
+            ).isEmpty
+        )
+        XCTAssertEqual(activator.activationCount, 0)
+        XCTAssertTrue(activator.captureIDs.isEmpty)
+    }
+
+    func testActivationFailurePreservesOneOwnerOnlyPendingPNG() throws {
+        let inbox = temporaryDirectory.appendingPathComponent(
+            "ActivationFailureInbox",
+            isDirectory: true
+        )
+        let staging = HostInboxStore(
+            rootURL: inbox,
+            idGenerator: { self.captureID }
+        )
+        let activator = ActivationSpy(
+            result: .failure(HostTestError.activation)
+        )
+        let runner = HostRunner(staging: staging, activator: activator)
+
+        let output = try HostFixtures.run(
+            runner,
+            inputData: HostFixtures.framed(try HostFixtures.protocolMessage()),
+            in: temporaryDirectory
+        )
+
+        try assertExactBoundedFailure(
+            output,
+            code: .appActivationFailed
+        )
+        XCTAssertEqual(activator.activationCount, 1)
+        XCTAssertEqual(activator.captureIDs, [captureID])
+
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: inbox,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(
+            entries.map(\.lastPathComponent),
+            ["\(captureID.uuidString).png"]
+        )
+        let capture = try XCTUnwrap(entries.first)
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: capture.path
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(
+                attributes[.posixPermissions] as? NSNumber
+            ).intValue & 0o777,
+            0o600
+        )
+        XCTAssertEqual(
+            (attributes[.ownerAccountID] as? NSNumber)?.uint32Value,
+            getuid()
+        )
+        XCTAssertEqual(try Data(contentsOf: capture), HostFixtures.validPNG)
+    }
+
     func testProcessesOnlyFirstFramedMessage() throws {
         let staging = StagingSpy(result: .success(captureID))
         let activator = ActivationSpy()
@@ -264,5 +355,46 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         )
         XCTAssertTrue(staging.stagedData.isEmpty, file: file, line: line)
         XCTAssertEqual(activator.activationCount, 0, file: file, line: line)
+    }
+
+    private func assertExactBoundedFailure(
+        _ framedReply: Data,
+        code: NativeHostErrorCode,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        XCTAssertGreaterThanOrEqual(
+            framedReply.count,
+            4,
+            file: file,
+            line: line
+        )
+        XCTAssertLessThan(
+            framedReply.count - 4,
+            NativeMessageFraming.maximumReplyLength,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            try HostFixtures.decodedReply(from: framedReply),
+            NativeHostReply(ok: false, captureId: nil, code: code),
+            file: file,
+            line: line
+        )
+
+        let body = framedReply.subdata(in: 4..<framedReply.count)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: Any],
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(Set(object.keys), ["ok", "code"], file: file, line: line)
+        XCTAssertEqual(object["ok"] as? Bool, false, file: file, line: line)
+        XCTAssertEqual(
+            object["code"] as? String,
+            code.rawValue,
+            file: file,
+            line: line
+        )
     }
 }

@@ -213,11 +213,23 @@ The helper:
    the generated capture ID;
 5. returns a small success or error acknowledgement to Chrome.
 
+The bounded capture failure codes are `HOST_UNAVAILABLE`, `INVALID_MESSAGE`,
+`UNSUPPORTED_CAPTURE_MODE`, `INVALID_IMAGE`, `IMAGE_TOO_LARGE`,
+`STAGING_FAILED`, and `APP_ACTIVATION_FAILED`. `HOST_UNAVAILABLE` is produced
+when Chrome cannot reach the helper; the remaining codes are exact helper
+replies.
+
+`STAGING_FAILED` means no new capture was durably published and the helper did
+not attempt to activate the app. If the PNG was published atomically but the
+app could not be opened, the helper returns `APP_ACTIVATION_FAILED` and keeps
+that one owner-only pending PNG. It neither retries nor deletes the file;
+opening MyShottr later imports it through the launch inbox scan.
+
 The app resolves the ID inside its own inbox, verifies that the file is a
 regular owner-controlled PNG, imports it, and deletes the inbox file. Arbitrary
 paths are never accepted from the extension. On launch, the app also scans the
-inbox for the capture ID that caused activation, so the same flow works when
-the app was not already running.
+inbox for every pending capture, so the same flow works when the app was not
+already running or helper activation failed.
 
 On first launch, the app installs the per-user Native Messaging host manifest
 at
@@ -400,6 +412,8 @@ data.
 | ScreenCaptureKit capture failure | Close the overlay, keep the menu-bar app running, and show the system error. |
 | Chrome native host missing | Extension explains that MyShottr must be opened once to register the host. |
 | Native message invalid or oversized | Helper rejects it and returns a bounded error code. |
+| Native helper staging fails | Helper returns `STAGING_FAILED`, leaves no new pending capture, and does not activate MyShottr. |
+| MyShottr activation fails after staging | Helper returns `APP_ACTIVATION_FAILED` and preserves the durable pending PNG for the next app launch scan. |
 | Inbox file invalid | App refuses import, removes the staged file, and reports the failure. |
 | Editor bridge invalid | App keeps the current native document state and reports an internal editor error. |
 | Project corrupt or too new | App refuses to open it without partially importing elements. |

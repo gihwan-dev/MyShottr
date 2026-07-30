@@ -19,6 +19,7 @@ enum NativeHostErrorCode: String, Codable {
     case invalidImage = "INVALID_IMAGE"
     case imageTooLarge = "IMAGE_TOO_LARGE"
     case stagingFailed = "STAGING_FAILED"
+    case appActivationFailed = "APP_ACTIVATION_FAILED"
 }
 
 struct NativeHostReply: Codable, Equatable {

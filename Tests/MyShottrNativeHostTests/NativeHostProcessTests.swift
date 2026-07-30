@@ -64,6 +64,109 @@ final class NativeHostProcessTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: entries[0]), HostFixtures.validPNG)
     }
 
+    func testExecutableActivationFailurePreservesOneOwnerOnlyPendingPNG() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "MyShottrNativeHostProcessTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let inboxURL = temporaryDirectory
+            .appendingPathComponent("Inbox", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        let result = try runHost(
+            inputData: HostFixtures.framed(
+                try HostFixtures.protocolMessage()
+            ),
+            environment: [
+                NativeHostTestEnvironment.inboxPathKey: inboxURL.path,
+                NativeHostTestEnvironment.activationFailureKey: "1",
+            ]
+        )
+
+        XCTAssertEqual(result.terminationStatus, 0)
+        try assertExactFailureReply(
+            result.replyData,
+            code: .appActivationFailed
+        )
+        XCTAssertTrue(result.errorData.isEmpty)
+
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: inboxURL,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(entries.count, 1)
+        let capture = try XCTUnwrap(entries.first)
+        XCTAssertTrue(
+            UUID(
+                uuidString: capture.deletingPathExtension().lastPathComponent
+            ) != nil
+        )
+        XCTAssertEqual(capture.pathExtension, "png")
+        let captureAttributes = try FileManager.default.attributesOfItem(
+            atPath: capture.path
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(
+                captureAttributes[.posixPermissions] as? NSNumber
+            ).intValue & 0o777,
+            0o600
+        )
+        XCTAssertEqual(
+            (captureAttributes[.ownerAccountID] as? NSNumber)?.uint32Value,
+            getuid()
+        )
+        XCTAssertEqual(try Data(contentsOf: capture), HostFixtures.validPNG)
+    }
+
+    func testExecutableStagingFailureLeavesNoPendingCapture() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "MyShottrNativeHostProcessTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let inboxURL = temporaryDirectory.appendingPathComponent("Inbox")
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
+        )
+        let original = Data("not a directory".utf8)
+        try original.write(to: inboxURL)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        let result = try runHost(
+            inputData: HostFixtures.framed(
+                try HostFixtures.protocolMessage()
+            ),
+            environment: [
+                NativeHostTestEnvironment.inboxPathKey: inboxURL.path,
+                NativeHostTestEnvironment.activationFailureKey: "1",
+            ]
+        )
+
+        XCTAssertEqual(result.terminationStatus, 0)
+        try assertExactFailureReply(
+            result.replyData,
+            code: .stagingFailed
+        )
+        XCTAssertTrue(result.errorData.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: inboxURL), original)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(
+                atPath: temporaryDirectory.path
+            ),
+            ["Inbox"]
+        )
+    }
+
     func testExecutableRejectsDuplicateMemberAsInvalidMessage() throws {
         let result = try runHost(
             inputData: HostFixtures.framed(
@@ -103,6 +206,47 @@ final class NativeHostProcessTests: XCTestCase {
             NativeHostReply(ok: false, captureId: nil, code: .invalidMessage)
         )
         XCTAssertTrue(result.errorData.isEmpty)
+    }
+
+    private func assertExactFailureReply(
+        _ framedReply: Data,
+        code: NativeHostErrorCode,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        XCTAssertGreaterThanOrEqual(
+            framedReply.count,
+            4,
+            file: file,
+            line: line
+        )
+        XCTAssertLessThan(
+            framedReply.count - 4,
+            NativeMessageFraming.maximumReplyLength,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            try HostFixtures.decodedReply(from: framedReply),
+            NativeHostReply(ok: false, captureId: nil, code: code),
+            file: file,
+            line: line
+        )
+
+        let body = framedReply.subdata(in: 4..<framedReply.count)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: Any],
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(Set(object.keys), ["ok", "code"], file: file, line: line)
+        XCTAssertEqual(object["ok"] as? Bool, false, file: file, line: line)
+        XCTAssertEqual(
+            object["code"] as? String,
+            code.rawValue,
+            file: file,
+            line: line
+        )
     }
 
     private func runHost(

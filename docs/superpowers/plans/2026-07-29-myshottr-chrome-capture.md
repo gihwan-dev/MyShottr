@@ -78,7 +78,17 @@ export type NativeCaptureMessage = {
 
 export type NativeCaptureReply =
   | { ok: true; captureId: string }
-  | { ok: false; code: "HOST_UNAVAILABLE" | "INVALID_MESSAGE" | "UNSUPPORTED_CAPTURE_MODE" | "INVALID_IMAGE" | "IMAGE_TOO_LARGE" | "STAGING_FAILED" };
+  | {
+      ok: false;
+      code:
+        | "HOST_UNAVAILABLE"
+        | "INVALID_MESSAGE"
+        | "UNSUPPORTED_CAPTURE_MODE"
+        | "INVALID_IMAGE"
+        | "IMAGE_TOO_LARGE"
+        | "STAGING_FAILED"
+        | "APP_ACTIVATION_FAILED";
+    };
 ```
 
 Swift:
@@ -392,6 +402,14 @@ data whose ImageIO type is not PNG.
 It must return an error reply below 1 MiB and never call the staging spy for
 invalid input. `HostInboxStoreTests` must assert root mode `0700`, staged file
 mode `0600`, `O_EXCL` behavior, partial-file deletion, and UUID-only filenames.
+The runner and executable process tests must distinguish the two post-validation
+failure states:
+
+- staging failure returns exactly `STAGING_FAILED`, leaves no new pending PNG,
+  and never calls activation;
+- activation failure after atomic staging returns exactly
+  `APP_ACTIVATION_FAILED`, keeps the single durable owner-only pending PNG, and
+  does not delete it, retry activation, or use an alternate activation path.
 
 `HostFixtures` owns a 1×1 valid PNG, its base64 value, a valid protocol message,
 and length-prefix helpers. The helper test target uses its own
@@ -485,6 +503,7 @@ enum NativeHostErrorCode: String, Codable {
     case invalidImage = "INVALID_IMAGE"
     case imageTooLarge = "IMAGE_TOO_LARGE"
     case stagingFailed = "STAGING_FAILED"
+    case appActivationFailed = "APP_ACTIVATION_FAILED"
 }
 
 struct NativeHostReply: Codable {
@@ -520,7 +539,11 @@ output contains only one length-prefixed JSON reply.
 
 The helper locates the containing `.app` by walking upward from its executable
 URL until it finds `Contents/Info.plist`. It stages before activating the app.
-If staging fails, it does not launch the app.
+If staging fails, it returns `STAGING_FAILED`, removes any partial capture, and
+does not launch the app. If atomic staging succeeds but activation fails, it
+returns `APP_ACTIVATION_FAILED` and intentionally preserves the durable pending
+capture. The helper does not retry, use an alternate activation path, or delete
+that capture; opening MyShottr later imports it through the normal launch scan.
 
 - [ ] **Step 4: Verify helper tests and framing executable**
 
