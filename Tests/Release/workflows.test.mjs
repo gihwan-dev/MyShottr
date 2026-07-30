@@ -4,30 +4,80 @@ import { spawnSync } from "node:child_process";
 
 const CI_PATH = ".github/workflows/ci.yml";
 const RELEASE_PATH = ".github/workflows/release.yml";
-const FULL_SHA = /^[0-9a-f]{40}$/;
-const STRICT_SEMVER_SOURCE =
-  String.raw`\^v\(0\|\[1-9\]\[0-9\]\*\)\\\.\(0\|\[1-9\]\[0-9\]\*\)\\\.\(0\|\[1-9\]\[0-9\]\*\)\$`;
 
-function parseYaml(path) {
-  const parser = String.raw`
+const AUDITED_ACTIONS = Object.freeze({
+  "actions/checkout": Object.freeze({
+    sha: "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    tag: "v7.0.1",
+  }),
+  "actions/setup-node": Object.freeze({
+    sha: "820762786026740c76f36085b0efc47a31fe5020",
+    tag: "v7.0.0",
+  }),
+  "pnpm/action-setup": Object.freeze({
+    sha: "0ebf47130e4866e96fce0953f49152a61190b271",
+    tag: "v6.0.9",
+  }),
+});
+
+const XCODE_REQUIREMENT_RUN = `set -euo pipefail
+XCODE_VERSION="$(xcodebuild -version | awk '/^Xcode / { print $2 }')"
+XCODE_MAJOR="\${XCODE_VERSION%%.*}"
+[[ "\${XCODE_MAJOR}" == <-> ]]
+(( XCODE_MAJOR >= 26 ))
+`;
+
+const RELEASE_VALIDATION_RUN = `set -euo pipefail
+[[ "\${TAG}" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]
+VERSION="\${TAG#v}"
+[[ -f "docs/releases/\${TAG}.md" ]]
+git fetch --no-tags --prune origin \\
+  "+refs/heads/main:refs/remotes/origin/main"
+TAG_COMMIT="$(git rev-parse --verify "\${TAG}^{commit}")"
+[[ "\${TAG_COMMIT}" == "\${EXPECTED_SHA}" ]]
+git merge-base --is-ancestor "\${EXPECTED_SHA}" "origin/main"
+printf 'version=%s\\n' "\${VERSION}" >> "\${GITHUB_OUTPUT}"
+`;
+
+const RELEASE_PUBLISH_RUN = `set -euo pipefail
+[[ "\${TAG}" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]
+[[ "\${VERSION}" == "\${TAG#v}" ]]
+OUTPUT="dist/release/\${VERSION}"
+test -f "\${OUTPUT}/MyShottr-\${VERSION}-macos.zip"
+test -f "\${OUTPUT}/MyShottr-Chrome-\${VERSION}.zip"
+test -f "\${OUTPUT}/SHA256SUMS.txt"
+gh release create "\${TAG}" \\
+  "\${OUTPUT}/MyShottr-\${VERSION}-macos.zip" \\
+  "\${OUTPUT}/MyShottr-Chrome-\${VERSION}.zip" \\
+  "\${OUTPUT}/SHA256SUMS.txt" \\
+  --repo "\${REPOSITORY}" \\
+  --title "MyShottr \${TAG}" \\
+  --notes-file "docs/releases/\${TAG}.md" \\
+  --verify-tag
+`;
+
+const YAML_PARSER = String.raw`
 require "json"
 require "yaml"
 
 document = YAML.safe_load(
-  File.read(ARGV.fetch(0)),
+  STDIN.read,
   permitted_classes: [],
   permitted_symbols: [],
   aliases: false
 )
 STDOUT.write(JSON.generate(document))
 `;
-  const result = spawnSync("/usr/bin/ruby", ["-e", parser, path], {
+
+function parseYaml(source, label) {
+  const result = spawnSync("/usr/bin/ruby", ["-e", YAML_PARSER], {
+    input: source,
     encoding: "utf8",
   });
   assert.equal(
     result.status,
     0,
-    `could not parse ${path} as YAML:\n${result.stderr}`,
+    `could not parse ${label} as YAML:\n${result.stderr}`,
   );
   return JSON.parse(result.stdout);
 }
@@ -36,207 +86,325 @@ function assertExactKeys(object, keys, label) {
   assert.deepEqual(Object.keys(object).sort(), [...keys].sort(), label);
 }
 
-function getUses(step) {
-  if (typeof step.uses !== "string") return null;
-  const separator = step.uses.lastIndexOf("@");
-  assert.notEqual(separator, -1, `action is missing a ref: ${step.uses}`);
+function pinnedUses(action) {
+  return `${action}@${AUDITED_ACTIONS[action].sha}`;
+}
+
+function actionStep(name, action, inputs) {
   return {
-    action: step.uses.slice(0, separator),
-    ref: step.uses.slice(separator + 1),
+    name,
+    uses: pinnedUses(action),
+    with: inputs,
   };
 }
 
-function assertPinnedActions(workflow, source) {
-  const steps = Object.values(workflow.jobs).flatMap((job) => job.steps);
-  const actionSteps = steps.filter((step) => typeof step.uses === "string");
-  assert.ok(actionSteps.length > 0, "workflow must use pinned setup actions");
-
-  for (const step of actionSteps) {
-    const { action, ref } = getUses(step);
-    assert.match(ref, FULL_SHA, `${action} must use an immutable commit SHA`);
+function assertAuditedActionComments(source) {
+  for (const [action, audit] of Object.entries(AUDITED_ACTIONS)) {
+    const escapedAction = action.replaceAll("/", String.raw`\/`);
     assert.match(
       source,
       new RegExp(
-        String.raw`uses:\s*${action.replaceAll("/", String.raw`\/`)}@${ref}\s+#\s+v[0-9]`,
+        String.raw`uses:\s*${escapedAction}@${audit.sha}\s+#\s+${audit.tag}(?:\s|$)`,
       ),
-      `${action} pin must document its upstream version`,
+      `${action} must use the audited SHA and exact upstream tag comment`,
     );
   }
 }
 
-const ciSource = readFileSync(CI_PATH, "utf8");
-const releaseSource = readFileSync(RELEASE_PATH, "utf8");
-const ci = parseYaml(CI_PATH);
-const release = parseYaml(RELEASE_PATH);
+function assertNoProhibitedWorkflowSurface(ciSource, releaseSource) {
+  const combined = `${ciSource}\n${releaseSource}`;
 
-assert.equal(ci.name, "CI");
-assertExactKeys(
-  ci.on,
-  ["push", "pull_request", "workflow_dispatch"],
-  "CI must run only for main pushes, pull requests, and manual dispatches",
-);
-assert.deepEqual(ci.on.push.branches, ["main"]);
-assert.deepEqual(ci.on.pull_request, {});
-assert.deepEqual(ci.on.workflow_dispatch, {});
-assert.deepEqual(ci.permissions, { contents: "read" });
-assertExactKeys(ci.jobs, ["verify"], "CI must expose one blocking verify job");
-assert.equal(ci.jobs.verify["runs-on"], "macos-15");
-
-const ciSteps = ci.jobs.verify.steps;
-assert.deepEqual(
-  ciSteps
-    .filter((step) => typeof step.uses === "string")
-    .map((step) => getUses(step).action),
-  ["actions/checkout", "pnpm/action-setup", "actions/setup-node"],
-);
-assert.equal(
-  ciSteps.find((step) => getUses(step)?.action === "pnpm/action-setup").with
-    .version,
-  "10.14.0",
-);
-assert.equal(
-  ciSteps.find((step) => getUses(step)?.action === "actions/setup-node").with[
-    "node-version"
-  ],
-  22,
-);
-assert.ok(
-  ciSteps.some(
-    (step) =>
-      step.name === "Verify project Xcode requirement" &&
-      step.shell === "zsh" &&
-      step.run.includes("xcodebuild -version") &&
-      step.run.includes("XCODE_MAJOR >= 26"),
-  ),
-  "CI must reject runners below the project's Xcode 26 requirement",
-);
-assert.deepEqual(
-  ciSteps
-    .filter((step) => step.run?.includes("Scripts/verify-v1.sh"))
-    .map((step) => ({ name: step.name, shell: step.shell, run: step.run })),
-  [{ name: "Verify v1", shell: "zsh", run: "Scripts/verify-v1.sh" }],
-  "CI must run the canonical v1 gate exactly once",
-);
-assertPinnedActions(ci, ciSource);
-
-assert.equal(release.name, "Release");
-assertExactKeys(
-  release.on,
-  ["push"],
-  "release workflow must be tag-push-only",
-);
-assert.deepEqual(release.on.push.tags, ["v[0-9]+.[0-9]+.[0-9]+"]);
-assert.deepEqual(release.permissions, { contents: "write" });
-assertExactKeys(
-  release.jobs,
-  ["release"],
-  "release workflow must expose one publishing job",
-);
-assert.equal(release.jobs.release["runs-on"], "macos-15");
-
-const releaseSteps = release.jobs.release.steps;
-assert.deepEqual(
-  releaseSteps
-    .filter((step) => typeof step.uses === "string")
-    .map((step) => getUses(step).action),
-  ["actions/checkout", "pnpm/action-setup", "actions/setup-node"],
-);
-assert.equal(
-  releaseSteps.find((step) => getUses(step)?.action === "actions/checkout")
-    .with["fetch-depth"],
-  0,
-);
-assert.equal(
-  releaseSteps.find((step) => getUses(step)?.action === "pnpm/action-setup")
-    .with.version,
-  "10.14.0",
-);
-assert.equal(
-  releaseSteps.find((step) => getUses(step)?.action === "actions/setup-node")
-    .with["node-version"],
-  22,
-);
-assertPinnedActions(release, releaseSource);
-
-const stepNames = releaseSteps.map((step) => step.name).filter(Boolean);
-const validateIndex = stepNames.indexOf("Validate release contract");
-const sourceGateIndex = stepNames.indexOf("Verify exact source");
-const packageIndex = stepNames.indexOf("Package release");
-const artifactGateIndex = stepNames.indexOf("Verify release artifacts");
-const publishIndex = stepNames.indexOf("Publish GitHub Release");
-assert.ok(validateIndex >= 0, "release contract validation step is missing");
-assert.ok(
-  validateIndex < sourceGateIndex &&
-    sourceGateIndex < packageIndex &&
-    packageIndex < artifactGateIndex &&
-    artifactGateIndex < publishIndex,
-  "release validation, source gate, packaging, artifact gate, and publish must be ordered",
-);
-
-const validateStep = releaseSteps[validateIndex];
-assert.equal(validateStep.shell, "zsh");
-assert.match(validateStep.run, new RegExp(STRICT_SEMVER_SOURCE));
-assert.match(validateStep.run, /git merge-base --is-ancestor/);
-assert.match(validateStep.run, /origin\/main/);
-assert.match(validateStep.run, /docs\/releases\/\$\{TAG\}\.md/);
-assert.match(validateStep.run, /git rev-parse --verify/);
-
-assert.equal(releaseSteps[sourceGateIndex].run, "Scripts/verify-v1.sh");
-assert.equal(releaseSteps[sourceGateIndex].shell, "zsh");
-
-const packageStep = releaseSteps[packageIndex];
-assert.equal(packageStep.shell, "zsh");
-assert.match(packageStep.run, /^Scripts\/package-release\.sh "\$\{VERSION\}"$/);
-assert.deepEqual(Object.keys(packageStep.env), ["VERSION"]);
-
-const artifactGateStep = releaseSteps[artifactGateIndex];
-assert.equal(artifactGateStep.shell, "zsh");
-assert.match(
-  artifactGateStep.run,
-  /^Scripts\/verify-release-artifacts\.sh "\$\{VERSION\}" "dist\/release\/\$\{VERSION\}"$/,
-);
-
-const publishStep = releaseSteps[publishIndex];
-assert.equal(publishStep.shell, "zsh");
-assert.equal(publishStep.env.GH_TOKEN, "${{ github.token }}");
-assert.match(publishStep.run, /gh release create "\$\{TAG\}"/);
-assert.match(publishStep.run, /--verify-tag/);
-assert.match(
-  publishStep.run,
-  /--notes-file "docs\/releases\/\$\{TAG\}\.md"/,
-);
-
-const expectedAssets = [
-  '"${OUTPUT}/MyShottr-${VERSION}-macos.zip"',
-  '"${OUTPUT}/MyShottr-Chrome-${VERSION}.zip"',
-  '"${OUTPUT}/SHA256SUMS.txt"',
-];
-const createCommand = publishStep.run.match(
-  /gh release create "\$\{TAG\}"[\s\S]*?\s+--repo /,
-)?.[0];
-assert.ok(createCommand, "could not isolate the GitHub release command");
-const createCommandLines = createCommand
-  .split("\n")
-  .map((line) => line.trim().replace(/\s*\\$/, ""))
-  .filter(Boolean);
-assert.equal(createCommandLines[0], 'gh release create "${TAG}"');
-assert.deepEqual(
-  createCommandLines.slice(1, -1),
-  expectedAssets,
-  "release must upload exactly the three approved files",
-);
-assert.doesNotMatch(publishStep.run, /(?:\*|\?|\[[^\]]+\])\.zip/);
-assert.doesNotMatch(releaseSource, /actions\/upload-artifact/);
-
-for (const [label, source] of [
-  ["CI", ciSource],
-  ["release", releaseSource],
-]) {
-  assert.doesNotMatch(source, /pull_request_target/);
-  assert.doesNotMatch(source, /\$\{\{\s*secrets\./);
+  assert.doesNotMatch(combined, /pull_request_target/);
+  assert.doesNotMatch(combined, /\$\{\{\s*secrets\./);
+  assert.doesNotMatch(combined, /persist-credentials:\s*true/i);
+  assert.doesNotMatch(combined, /actions\/upload-artifact/i);
   assert.doesNotMatch(
-    source,
+    combined,
+    /\b(?:curl|wget|scp|rsync|ftp|aws|gcloud|az)\b/i,
+    "workflows must not contain an external publication path",
+  );
+  assert.doesNotMatch(
+    combined,
     /APPLE_|NOTARY|SIGNING|CERTIFICATE/i,
-    `${label} workflow must not contain distribution credentials or operations`,
+    "workflows must not contain distribution credentials or operations",
+  );
+
+  const actionUses = [...combined.matchAll(/\buses:\s*([^\s#]+)/g)].map(
+    (match) => match[1],
+  );
+  assert.ok(actionUses.length > 0, "workflows must contain audited setup actions");
+  for (const uses of actionUses) {
+    const separator = uses.lastIndexOf("@");
+    assert.notEqual(separator, -1, `action is missing a ref: ${uses}`);
+    const action = uses.slice(0, separator);
+    const ref = uses.slice(separator + 1);
+    assert.ok(
+      Object.hasOwn(AUDITED_ACTIONS, action),
+      `workflow uses unapproved action ${action}`,
+    );
+    assert.equal(ref, AUDITED_ACTIONS[action].sha, `${action} pin changed`);
+  }
+}
+
+function assertReleaseCommandSurface(releaseSource, publishRun) {
+  const allReleaseInvocations = [
+    ...releaseSource.matchAll(/\bgh\s+release\s+([a-z-]+)/g),
+  ];
+  assert.deepEqual(
+    allReleaseInvocations.map((match) => match[1]),
+    ["create"],
+    "the workflow must contain exactly one gh release invocation and it must create",
+  );
+  assert.doesNotMatch(
+    releaseSource,
+    /\bgh\s+release\s+(?:upload|edit|delete)\b/,
+  );
+
+  const createCommand = publishRun.match(
+    /gh release create "\$\{TAG\}"[\s\S]*?\s+--repo /,
+  )?.[0];
+  assert.ok(createCommand, "could not isolate the GitHub release command");
+  const createCommandLines = createCommand
+    .split("\n")
+    .map((line) => line.trim().replace(/\s*\\$/, ""))
+    .filter(Boolean);
+  assert.deepEqual(createCommandLines, [
+    'gh release create "${TAG}"',
+    '"${OUTPUT}/MyShottr-${VERSION}-macos.zip"',
+    '"${OUTPUT}/MyShottr-Chrome-${VERSION}.zip"',
+    '"${OUTPUT}/SHA256SUMS.txt"',
+    "--repo",
+  ]);
+  assert.doesNotMatch(publishRun, /(?:\*|\?|\[[^\]]+\])\.zip/);
+}
+
+function validateCI(ciSource) {
+  const ci = parseYaml(ciSource, "CI workflow");
+
+  assertExactKeys(ci, ["name", "on", "permissions", "jobs"], "CI schema changed");
+  assert.equal(ci.name, "CI");
+  assert.deepEqual(ci.on, {
+    push: { branches: ["main"] },
+    pull_request: {},
+    workflow_dispatch: {},
+  });
+  assert.deepEqual(ci.permissions, { contents: "read" });
+  assertExactKeys(ci.jobs, ["verify"], "CI must expose one blocking job");
+  assertExactKeys(
+    ci.jobs.verify,
+    ["runs-on", "timeout-minutes", "steps"],
+    "CI verify job schema changed",
+  );
+  assert.equal(ci.jobs.verify["runs-on"], "macos-15");
+  assert.equal(ci.jobs.verify["timeout-minutes"], 45);
+  assert.deepEqual(ci.jobs.verify.steps, [
+    actionStep("Check out source", "actions/checkout", {
+      "persist-credentials": false,
+    }),
+    actionStep("Set up pnpm", "pnpm/action-setup", {
+      version: "10.14.0",
+    }),
+    actionStep("Set up Node.js", "actions/setup-node", {
+      "node-version": 22,
+      cache: "pnpm",
+    }),
+    {
+      name: "Install XcodeGen",
+      run: "brew install xcodegen",
+    },
+    {
+      name: "Verify project Xcode requirement",
+      shell: "zsh",
+      run: XCODE_REQUIREMENT_RUN,
+    },
+    {
+      name: "Verify v1",
+      shell: "zsh",
+      run: "Scripts/verify-v1.sh",
+    },
+  ]);
+  assertAuditedActionComments(ciSource);
+}
+
+function validateRelease(releaseSource) {
+  const release = parseYaml(releaseSource, "release workflow");
+
+  assertExactKeys(
+    release,
+    ["name", "on", "permissions", "jobs"],
+    "release schema changed",
+  );
+  assert.equal(release.name, "Release");
+  assert.deepEqual(release.on, {
+    push: { tags: ["v[0-9]+.[0-9]+.[0-9]+"] },
+  });
+  assert.deepEqual(release.permissions, { contents: "write" });
+  assertExactKeys(release.jobs, ["release"], "release must expose one job");
+  assertExactKeys(
+    release.jobs.release,
+    ["runs-on", "timeout-minutes", "steps"],
+    "release job schema changed",
+  );
+  assert.equal(release.jobs.release["runs-on"], "macos-15");
+  assert.equal(release.jobs.release["timeout-minutes"], 60);
+
+  const expectedSteps = [
+    actionStep("Check out tagged source", "actions/checkout", {
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    }),
+    actionStep("Set up pnpm", "pnpm/action-setup", {
+      version: "10.14.0",
+    }),
+    actionStep("Set up Node.js", "actions/setup-node", {
+      "node-version": 22,
+      cache: "pnpm",
+    }),
+    {
+      name: "Install XcodeGen",
+      run: "brew install xcodegen",
+    },
+    {
+      name: "Verify project Xcode requirement",
+      shell: "zsh",
+      run: XCODE_REQUIREMENT_RUN,
+    },
+    {
+      name: "Validate release contract",
+      id: "release-contract",
+      shell: "zsh",
+      env: {
+        TAG: "${{ github.ref_name }}",
+        EXPECTED_SHA: "${{ github.sha }}",
+      },
+      run: RELEASE_VALIDATION_RUN,
+    },
+    {
+      name: "Verify exact source",
+      shell: "zsh",
+      run: "Scripts/verify-v1.sh",
+    },
+    {
+      name: "Package release",
+      shell: "zsh",
+      env: {
+        VERSION: "${{ steps.release-contract.outputs.version }}",
+      },
+      run: 'Scripts/package-release.sh "${VERSION}"',
+    },
+    {
+      name: "Verify release artifacts",
+      shell: "zsh",
+      env: {
+        VERSION: "${{ steps.release-contract.outputs.version }}",
+      },
+      run: 'Scripts/verify-release-artifacts.sh "${VERSION}" "dist/release/${VERSION}"',
+    },
+    {
+      name: "Publish GitHub Release",
+      shell: "zsh",
+      env: {
+        GH_TOKEN: "${{ github.token }}",
+        REPOSITORY: "${{ github.repository }}",
+        TAG: "${{ github.ref_name }}",
+        VERSION: "${{ steps.release-contract.outputs.version }}",
+      },
+      run: RELEASE_PUBLISH_RUN,
+    },
+  ];
+  assert.deepEqual(
+    release.jobs.release.steps,
+    expectedSteps,
+    "release step order or schema changed",
+  );
+  assertAuditedActionComments(releaseSource);
+  assertReleaseCommandSurface(
+    releaseSource,
+    release.jobs.release.steps.at(-1).run,
   );
 }
+
+function validateWorkflows(ciSource, releaseSource) {
+  validateCI(ciSource);
+  validateRelease(releaseSource);
+  assertNoProhibitedWorkflowSurface(ciSource, releaseSource);
+}
+
+function replaceOnce(source, before, after, mutation) {
+  assert.ok(source.includes(before), `${mutation} mutation fixture is stale`);
+  const mutated = source.replace(before, after);
+  assert.notEqual(mutated, source, `${mutation} mutation did not change source`);
+  return mutated;
+}
+
+function swapBlocks(source, first, second) {
+  const sentinel = "__MYSHOTTR_WORKFLOW_STEP_SWAP__";
+  assert.ok(!source.includes(sentinel));
+  return replaceOnce(
+    replaceOnce(
+      replaceOnce(source, first, sentinel, "first reordered step"),
+      second,
+      first,
+      "second reordered step",
+    ),
+    sentinel,
+    second,
+    "reordered step sentinel",
+  );
+}
+
+function expectRejected(label, ciSource, releaseSource) {
+  assert.throws(
+    () => validateWorkflows(ciSource, releaseSource),
+    assert.AssertionError,
+    label,
+  );
+}
+
+const ciSource = readFileSync(CI_PATH, "utf8");
+const releaseSource = readFileSync(RELEASE_PATH, "utf8");
+
+validateWorkflows(ciSource, releaseSource);
+
+const extraReleaseUpload = replaceOnce(
+  releaseSource,
+  "          --verify-tag",
+  `          --verify-tag
+          gh release upload "\${TAG}" "\${OUTPUT}/unexpected.zip"`,
+  "extra release upload",
+);
+expectRejected("extra release uploads must be rejected", ciSource, extraReleaseUpload);
+
+const verifySourceBlock = `      - name: Verify exact source
+        shell: zsh
+        run: Scripts/verify-v1.sh`;
+const packageBlock = `      - name: Package release
+        shell: zsh
+        env:
+          VERSION: \${{ steps.release-contract.outputs.version }}
+        run: Scripts/package-release.sh "\${VERSION}"`;
+expectRejected(
+  "packaging before source verification must be rejected",
+  ciSource,
+  swapBlocks(releaseSource, verifySourceBlock, packageBlock),
+);
+
+const mutableCheckout = replaceOnce(
+  ciSource,
+  `actions/checkout@${AUDITED_ACTIONS["actions/checkout"].sha}`,
+  "actions/checkout@v7",
+  "mutable action",
+);
+expectRejected("mutable actions must be rejected", mutableCheckout, releaseSource);
+
+const persistedCredentials = replaceOnce(
+  releaseSource,
+  "persist-credentials: false",
+  "persist-credentials: true",
+  "persisted credentials",
+);
+expectRejected(
+  "checkout credential persistence must be rejected",
+  ciSource,
+  persistedCredentials,
+);
