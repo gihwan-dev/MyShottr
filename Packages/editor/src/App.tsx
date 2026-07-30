@@ -5,13 +5,15 @@ import { createElementId } from "./canvas/tools/createElement";
 import { keyboardCommandFor, isTextEntryTarget } from "./canvas/tools/ToolController";
 import { ContextStylePalette } from "./components/ContextStylePalette";
 import { FloatingToolPalette } from "./components/FloatingToolPalette";
+import { TextEditorOverlay } from "./components/TextEditorOverlay";
 import { ZoomControls } from "./components/ZoomControls";
 import { useNativeBridge } from "./bridge/nativeBridge";
 import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
 import { sendComposite } from "./export/sendComposite";
 import { createHistoryStore, type HistoryStore } from "./model/history";
 import { findElement } from "./model/reducer";
-import type { EditorCommand, EditorDefaults, EditorDocument, EditorTool, PaletteColor, Point } from "./model/elements";
+import type { EditorCommand, EditorDefaults, EditorDocument, EditorTool, PaletteColor, Point, TextElement } from "./model/elements";
+import { KONVA_DEFAULT_FONT_FAMILY } from "./canvas/renderingConstants";
 import "./styles.css";
 
 export type EditorAppProps = {
@@ -33,6 +35,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [rectangleFillColor, setRectangleFillColor] = useState<PaletteColor | null>(null);
+  const [editingTextId, setEditingTextId] = useState<string>();
 
   const publishDocument = useCallback(() => {
     const next = { ...history.current!.document, defaults: defaults.current };
@@ -72,6 +75,35 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     );
     dispatch({ type: "create", element: { ...offset, id: createElementId(), seed: nextSeed, zIndex: nextZIndex } });
   }, [dispatch, document.elements, selectedId]);
+  const beginTextEdit = useCallback((id: string) => {
+    const element = findElement(history.current!.document, id);
+    if (element.type !== "text") {
+      throw new Error(`Cannot edit non-text element: ${id}`);
+    }
+    setEditingTextId(id);
+  }, []);
+  const commitTextEdit = useCallback((text: string) => {
+    const id = editingTextId;
+    if (!id) return;
+    const element = findElement(history.current!.document, id);
+    if (element.type !== "text") {
+      throw new Error(`Cannot edit non-text element: ${id}`);
+    }
+    const nextText = text.trim();
+    if (nextText.length === 0) {
+      dispatch({ type: "delete", ids: [id] });
+      select(undefined);
+    } else {
+      dispatch({ type: "update", element: { ...element, text: nextText, ...measureTextBounds(nextText, element.fontSize) } });
+    }
+    setEditingTextId(undefined);
+  }, [dispatch, editingTextId, select]);
+  const selectedElements = selectedId
+    ? document.elements.filter((element) => element.id === selectedId)
+    : [];
+  const editingText = editingTextId
+    ? document.elements.find((element): element is TextElement => element.id === editingTextId && element.type === "text")
+    : undefined;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -114,6 +146,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         rectangleFillColor={rectangleFillColor}
         selectedId={selectedId}
         onSelect={select}
+        onEditText={beginTextEdit}
         onCommand={dispatch}
         onBeginTransaction={(label) => history.current!.beginTransaction(label)}
         onCommitTransaction={() => {
@@ -126,12 +159,41 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
           }
         }}
         onPanChange={setPan}
+        textEditorOverlay={editingText && <TextEditorOverlay
+          element={editingText}
+          zoom={zoom}
+          pan={pan}
+          onCommit={commitTextEdit}
+          onCancel={() => setEditingTextId(undefined)}
+        />}
       />
       <FloatingToolPalette tool={tool} onSelect={selectTool} />
-      <ContextStylePalette tool={tool} defaults={document.defaults} fillColor={rectangleFillColor} onChange={setDefaults} onFillChange={setRectangleFillColor} />
+      <ContextStylePalette
+        tool={tool}
+        defaults={document.defaults}
+        selectedElements={selectedElements}
+        onDefaultsChange={setDefaults}
+        onElementsChange={(elements) => dispatch({ type: "updateMany", elements })}
+        fillColor={rectangleFillColor}
+        onFillChange={setRectangleFillColor}
+      />
       <ZoomControls zoom={zoom} onChange={setZoom} />
     </main>
   );
+}
+
+function measureTextBounds(text: string, fontSize: TextElement["fontSize"]): Pick<TextElement, "width" | "height"> {
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Text measurement context is unavailable");
+  }
+  context.font = `${fontSize}px ${KONVA_DEFAULT_FONT_FAMILY}`;
+  const lines = text.split("\n");
+  return {
+    width: Math.max(1, ...lines.map((line) => Math.ceil(context.measureText(line).width))),
+    height: Math.ceil(lines.length * fontSize * 1.2),
+  };
 }
 
 export function App() {

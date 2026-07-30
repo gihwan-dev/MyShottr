@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type Konva from "konva";
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Transformer } from "react-konva";
 import type { CreationGesture, EditorCommand, EditorDocument, EditorElement, EditorTool, PaletteColor, Point } from "../model/elements";
@@ -8,7 +8,7 @@ import { createElement } from "./tools/createElement";
 import { renderElement } from "./renderElement";
 import { BLUR_RADIUS_PX, createBlurredSourceCanvas } from "./blurSource";
 
-export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectangleFillColor, selectedId, onSelect, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onPanChange }: {
+export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectangleFillColor, selectedId, onSelect, onEditText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onPanChange, textEditorOverlay }: {
   document: EditorDocument;
   sourceImageURL: string;
   tool: EditorTool;
@@ -17,11 +17,13 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   rectangleFillColor: PaletteColor | null;
   selectedId: string | undefined;
   onSelect: (id: string | undefined) => void;
+  onEditText: (id: string) => void;
   onCommand: (command: EditorCommand) => void;
   onBeginTransaction: (label: string) => void;
   onCommitTransaction: () => void;
   onCancelTransaction: () => void;
   onPanChange: (pan: Point) => void;
+  textEditorOverlay: ReactNode;
 }) {
   const image = useSourceImage(sourceImageURL);
   const blurredSource = useMemo(
@@ -114,7 +116,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   const selectedElement = selectedId ? document.elements.find((element) => element.id === selectedId) : undefined;
 
   return (
-    <div className="canvas-shell" data-testid="editor-canvas">
+    <div className="canvas-shell" data-testid="editor-canvas" style={{ position: "relative" }}>
       <Stage
         width={Math.ceil(document.sourcePixelWidth * zoom)}
         height={Math.ceil(document.sourcePixelHeight * zoom)}
@@ -172,6 +174,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
               selected: selectedId === element.id,
               draggable: tool === "selection" && selectedId === element.id,
               onSelect: (id) => onSelect(id),
+              onEditText: (id) => onEditText(id),
               onDragStart: (node) => {
                 if (!pointerController.current.shouldDispatchAnnotationDrag()) {
                   suppressedAnnotationDrag.current = true;
@@ -278,6 +281,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
           </Group>
         </Layer>
       </Stage>
+      {textEditorOverlay}
     </div>
   );
 }

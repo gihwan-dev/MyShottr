@@ -41,6 +41,10 @@ export function fixtureRect(): RectangleElement {
   };
 }
 
+export function fixtureText(): TextElement {
+  return allElementFixtures().find((element): element is TextElement => element.type === "text")!;
+}
+
 export function fixtureBlur(): BlurElement {
   return {
     id: "blur-1",

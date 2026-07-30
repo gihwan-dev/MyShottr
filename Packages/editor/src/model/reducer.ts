@@ -32,6 +32,19 @@ export function applyCommand(document: EditorDocument, command: EditorCommand): 
       ));
       return EditorDocumentSchema.parse({ ...current, elements }) as EditorDocument;
     }
+    case "updateMany": {
+      assertCommandIds(current, command.elements.map((element) => element.id), "updateMany");
+      const updates = new Map(command.elements.map((candidate) => {
+        const element = EditorElementSchema.parse(candidate) as EditorElement;
+        const currentElement = findElement(current, element.id);
+        if (currentElement.type !== element.type) {
+          throw new Error(`Cannot change element type for: ${element.id}`);
+        }
+        return [element.id, element];
+      }));
+      const elements = current.elements.map((candidate) => updates.get(candidate.id) ?? candidate);
+      return EditorDocumentSchema.parse({ ...current, elements }) as EditorDocument;
+    }
     case "delete": {
       assertCommandIds(current, command.ids, "delete");
       const deleted = new Set(command.ids);

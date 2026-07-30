@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fixtureDocument, fixtureRect } from "../test/fixtures";
+import { fixtureDocument, fixtureRect, fixtureText } from "../test/fixtures";
 import type { EditorElement } from "./elements";
 import { findElement, applyCommand } from "./reducer";
 import { createHistoryStore } from "./history";
@@ -49,6 +49,19 @@ describe("applyCommand", () => {
 
     expect(() => applyCommand(document, { type: "delete", ids: ["missing"] })).toThrow();
     expect(() => applyCommand(document, { type: "reorder", ids: ["missing"], direction: "forward" })).toThrow();
+  });
+
+  it("rejects updateMany commands with duplicate or missing element ids", () => {
+    const document = fixtureDocument({ elements: [fixtureRect(), fixtureText()] });
+
+    expect(() => applyCommand(document, {
+      type: "updateMany",
+      elements: [{ ...fixtureRect(), opacity: 0.5 }, { ...fixtureRect(), opacity: 0.5 }],
+    })).toThrow("Cannot updateMany duplicate element ids");
+    expect(() => applyCommand(document, {
+      type: "updateMany",
+      elements: [{ ...fixtureRect(), id: "missing" }],
+    })).toThrow("Element not found: missing");
   });
 });
 
@@ -121,5 +134,21 @@ describe("createHistoryStore", () => {
     history.undo();
     history.undo();
     expect(findElement(history.document, "rect-1").x).toBe(0);
+  });
+
+  it("applies updateMany as one undoable command", () => {
+    const history = createHistoryStore(fixtureDocument({
+      elements: [fixtureRect(), fixtureText()],
+    }));
+    history.dispatch({
+      type: "updateMany",
+      elements: [
+        { ...fixtureRect(), opacity: 0.5 },
+        { ...fixtureText(), opacity: 0.5 },
+      ],
+    });
+
+    expect(history.undo()).toBe(true);
+    expect(history.document.elements.map((element) => element.opacity)).toEqual([1, 1]);
   });
 });

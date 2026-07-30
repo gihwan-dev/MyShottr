@@ -129,5 +129,6 @@ export type Presentation = { type: "none" };
 export type EditorCommand =
   | { type: "create"; element: EditorElement }
   | { type: "update"; element: EditorElement }
+  | { type: "updateMany"; elements: EditorElement[] }
   | { type: "delete"; ids: string[] }
   | { type: "reorder"; ids: string[]; direction: "forward" | "backward" };

@@ -1,4 +1,4 @@
-import type { EditorDefaults, EditorTool, PaletteColor } from "../model/elements";
+import type { EditorDefaults, EditorElement, EditorTool, PaletteColor } from "../model/elements";
 
 const colors: PaletteColor[] = ["#000000", "#FF4D4F", "#1677FF", "#FADB14"];
 const strokeWidths: EditorDefaults["strokeWidth"][] = [2, 4, 8];
@@ -6,44 +6,89 @@ const textSizes: EditorDefaults["textSize"][] = [16, 24, 36];
 const roughnesses: EditorDefaults["roughness"][] = [0, 1, 2];
 const opacities: EditorDefaults["opacity"][] = [0.25, 0.5, 0.75, 1];
 
-export function ContextStylePalette({ tool, defaults, fillColor, onChange, onFillChange }: {
+export function ContextStylePalette({
+  tool,
+  defaults,
+  selectedElements,
+  onDefaultsChange,
+  onElementsChange,
+  fillColor,
+  onFillChange,
+}: {
   tool: EditorTool;
   defaults: EditorDefaults;
-  fillColor: PaletteColor | null;
-  onChange: (defaults: EditorDefaults) => void;
-  onFillChange: (color: PaletteColor | null) => void;
+  selectedElements: EditorElement[];
+  onDefaultsChange: (defaults: EditorDefaults) => void;
+  onElementsChange: (elements: EditorElement[]) => void;
+  fillColor?: PaletteColor | null;
+  onFillChange?: (color: PaletteColor | null) => void;
 }) {
-  if (tool === "selection" || tool === "blur") return null;
-
-  const set = <K extends keyof EditorDefaults>(key: K, value: EditorDefaults[K]) => {
-    onChange({ ...defaults, [key]: value });
+  const isSelection = selectedElements.length > 0;
+  const setDefault = <K extends keyof EditorDefaults>(key: K, value: EditorDefaults[K]) => {
+    onDefaultsChange({ ...defaults, [key]: value });
   };
-  const showStroke = tool === "rectangle" || tool === "arrow" || tool === "line" || tool === "freehand";
-  const showFill = tool === "rectangle";
-  const showRoughness = tool === "rectangle" || tool === "arrow" || tool === "line";
-  const showTextSize = tool === "text";
-  const showOpacity = tool !== "redaction";
-  const visibleOpacity = tool === "highlighter" && defaults.opacity !== 0.25 && defaults.opacity !== 0.5
+  const apply = (change: (element: EditorElement) => EditorElement) => {
+    onElementsChange(selectedElements.map(change));
+  };
+
+  const defaultShowStroke = tool === "rectangle" || tool === "arrow" || tool === "line" || tool === "freehand";
+  const defaultShowFill = tool === "rectangle";
+  const defaultShowRoughness = tool === "rectangle" || tool === "arrow" || tool === "line";
+  const defaultShowTextSize = tool === "text";
+  const defaultShowOpacity = tool !== "redaction";
+  const defaultVisibleOpacity = tool === "highlighter" && defaults.opacity !== 0.25 && defaults.opacity !== 0.5
     ? 0.5
     : defaults.opacity;
 
+  if (!isSelection && (tool === "selection" || tool === "blur")) return null;
+
+  const showColor = isSelection ? selectedElements.some(supportsColor) : true;
+  const showStroke = isSelection ? selectedElements.some(supportsStrokeWidth) : defaultShowStroke;
+  const showFill = !isSelection && defaultShowFill;
+  const showRoughness = isSelection ? selectedElements.some(supportsRoughness) : defaultShowRoughness;
+  const showTextSize = isSelection ? selectedElements.some(supportsTextSize) : defaultShowTextSize;
+  const showOpacity = isSelection ? selectedElements.some(supportsOpacity) : defaultShowOpacity;
+  const selectionOpacityValues = selectedElements.some((element) => element.type === "highlighter")
+    ? opacities.slice(0, 2)
+    : opacities;
+  const firstColor = selectedElements.find(supportsColor);
+  const firstStrokeWidth = selectedElements.find(supportsStrokeWidth);
+  const firstRoughness = selectedElements.find(supportsRoughness);
+  const firstTextSize = selectedElements.find(supportsTextSize);
+  const firstOpacity = selectedElements.find(supportsOpacity);
+
   return (
-    <section className="context-style-palette" aria-label={`${tool} style controls`}>
-      <label>
-        Color
-        <select aria-label="Color" value={tool === "redaction" ? "#000000" : defaults.color} disabled={tool === "redaction"} onChange={(event) => set("color", event.target.value as PaletteColor)}>
-          {colors.map((color) => <option key={color} value={color}>{color}</option>)}
-        </select>
-      </label>
+    <section className="context-style-palette" aria-label={`${isSelection ? "selection" : tool} style controls`}>
+      {showColor && (
+        <label>
+          Color
+          <select
+            aria-label="Color"
+            value={isSelection ? colorOf(firstColor!) : defaults.color}
+            disabled={!isSelection && tool === "redaction"}
+            onChange={(event) => isSelection
+              ? apply((element) => recolor(element, event.target.value as PaletteColor))
+              : setDefault("color", event.target.value as PaletteColor)}
+          >
+            {colors.map((color) => <option key={color} value={color}>{color}</option>)}
+          </select>
+        </label>
+      )}
       {showStroke && (
         <label>
           Stroke width
-          <select aria-label="Stroke width" value={defaults.strokeWidth} onChange={(event) => set("strokeWidth", Number(event.target.value) as EditorDefaults["strokeWidth"])}>
+          <select
+            aria-label="Stroke width"
+            value={isSelection ? firstStrokeWidth!.strokeWidth : defaults.strokeWidth}
+            onChange={(event) => isSelection
+              ? apply((element) => setStrokeWidth(element, Number(event.target.value) as EditorDefaults["strokeWidth"]))
+              : setDefault("strokeWidth", Number(event.target.value) as EditorDefaults["strokeWidth"])}
+          >
             {strokeWidths.map((width) => <option key={width} value={width}>{width}</option>)}
           </select>
         </label>
       )}
-      {showFill && (
+      {showFill && onFillChange && (
         <label>
           Fill
           <select aria-label="Fill" value={fillColor ?? "none"} onChange={(event) => onFillChange(parseFillColor(event.target.value))}>
@@ -55,7 +100,13 @@ export function ContextStylePalette({ tool, defaults, fillColor, onChange, onFil
       {showRoughness && (
         <label>
           Roughness
-          <select aria-label="Roughness" value={defaults.roughness} onChange={(event) => set("roughness", Number(event.target.value) as EditorDefaults["roughness"])}>
+          <select
+            aria-label="Roughness"
+            value={isSelection ? firstRoughness!.roughness : defaults.roughness}
+            onChange={(event) => isSelection
+              ? apply((element) => setRoughness(element, Number(event.target.value) as EditorDefaults["roughness"]))
+              : setDefault("roughness", Number(event.target.value) as EditorDefaults["roughness"])}
+          >
             {roughnesses.map((roughness) => <option key={roughness} value={roughness}>{roughness}</option>)}
           </select>
         </label>
@@ -63,7 +114,13 @@ export function ContextStylePalette({ tool, defaults, fillColor, onChange, onFil
       {showTextSize && (
         <label>
           Text size
-          <select aria-label="Text size" value={defaults.textSize} onChange={(event) => set("textSize", Number(event.target.value) as EditorDefaults["textSize"])}>
+          <select
+            aria-label="Text size"
+            value={isSelection ? firstTextSize!.fontSize : defaults.textSize}
+            onChange={(event) => isSelection
+              ? apply((element) => setTextSize(element, Number(event.target.value) as EditorDefaults["textSize"]))
+              : setDefault("textSize", Number(event.target.value) as EditorDefaults["textSize"])}
+          >
             {textSizes.map((size) => <option key={size} value={size}>{size}</option>)}
           </select>
         </label>
@@ -71,13 +128,83 @@ export function ContextStylePalette({ tool, defaults, fillColor, onChange, onFil
       {showOpacity && (
         <label>
           Opacity
-          <select aria-label="Opacity" value={visibleOpacity} onChange={(event) => set("opacity", Number(event.target.value) as EditorDefaults["opacity"])}>
-            {(tool === "highlighter" ? opacities.slice(0, 2) : opacities).map((opacity) => <option key={opacity} value={opacity}>{opacity}</option>)}
+          <select
+            aria-label="Opacity"
+            value={isSelection
+              ? selectionOpacityValues.includes(firstOpacity!.opacity) ? firstOpacity!.opacity : 0.5
+              : defaultVisibleOpacity}
+            onChange={(event) => isSelection
+              ? apply((element) => setOpacity(element, Number(event.target.value) as EditorDefaults["opacity"]))
+              : setDefault("opacity", Number(event.target.value) as EditorDefaults["opacity"])}
+          >
+            {(isSelection ? selectionOpacityValues : tool === "highlighter" ? opacities.slice(0, 2) : opacities)
+              .map((opacity) => <option key={opacity} value={opacity}>{opacity}</option>)}
           </select>
         </label>
       )}
     </section>
   );
+}
+
+function supportsColor(element: EditorElement): element is Exclude<EditorElement, { type: "blur" | "redaction" }> {
+  return element.type !== "blur" && element.type !== "redaction";
+}
+
+function colorOf(element: Exclude<EditorElement, { type: "blur" | "redaction" }>): PaletteColor {
+  return element.type === "rectangle" || element.type === "arrow" || element.type === "line"
+    ? element.strokeColor
+    : element.color;
+}
+
+function recolor(element: EditorElement, color: PaletteColor): EditorElement {
+  switch (element.type) {
+    case "rectangle":
+    case "arrow":
+    case "line":
+      return { ...element, strokeColor: color };
+    case "text":
+    case "freehand":
+    case "highlighter":
+    case "numberMarker":
+      return { ...element, color };
+    case "blur":
+    case "redaction":
+      return element;
+  }
+}
+
+function supportsStrokeWidth(element: EditorElement): element is Extract<EditorElement, { type: "rectangle" | "arrow" | "line" | "freehand" }> {
+  return element.type === "rectangle" || element.type === "arrow" || element.type === "line" || element.type === "freehand";
+}
+
+function setStrokeWidth(element: EditorElement, strokeWidth: EditorDefaults["strokeWidth"]): EditorElement {
+  return supportsStrokeWidth(element) ? { ...element, strokeWidth } : element;
+}
+
+function supportsRoughness(element: EditorElement): element is Extract<EditorElement, { type: "rectangle" | "arrow" | "line" }> {
+  return element.type === "rectangle" || element.type === "arrow" || element.type === "line";
+}
+
+function setRoughness(element: EditorElement, roughness: EditorDefaults["roughness"]): EditorElement {
+  return supportsRoughness(element) ? { ...element, roughness } : element;
+}
+
+function supportsTextSize(element: EditorElement): element is Extract<EditorElement, { type: "text" }> {
+  return element.type === "text";
+}
+
+function setTextSize(element: EditorElement, fontSize: EditorDefaults["textSize"]): EditorElement {
+  return supportsTextSize(element) ? { ...element, fontSize } : element;
+}
+
+function supportsOpacity(element: EditorElement): element is Exclude<EditorElement, { type: "blur" | "redaction" }> {
+  return element.type !== "blur" && element.type !== "redaction";
+}
+
+function setOpacity(element: EditorElement, opacity: EditorDefaults["opacity"]): EditorElement {
+  if (!supportsOpacity(element)) return element;
+  if (element.type === "highlighter") return { ...element, opacity: opacity === 0.25 || opacity === 0.5 ? opacity : 0.5 };
+  return { ...element, opacity };
 }
 
 function parseFillColor(value: string): PaletteColor | null {

@@ -188,11 +188,13 @@ describe("EditorCanvas gesture terminals", () => {
           rectangleFillColor={null}
           selectedId={undefined}
           onSelect={() => {}}
+          onEditText={() => {}}
           onCommand={(command) => history.dispatch(command)}
           onBeginTransaction={(label) => history.beginTransaction(label)}
           onCommitTransaction={() => history.commitTransaction()}
           onCancelTransaction={() => history.cancelTransaction()}
           onPanChange={() => {}}
+          textEditorOverlay={undefined}
         />,
       );
       const stage = screen.getByTestId("stage");
@@ -285,13 +287,15 @@ function renderSelectionCanvas(
       zoom={1}
       pan={{ x: 0, y: 0 }}
       rectangleFillColor={null}
-      selectedId="rect-1"
-      onSelect={() => {}}
+    selectedId="rect-1"
+    onSelect={() => {}}
+    onEditText={() => {}}
       onCommand={(command) => history.dispatch(command)}
       onBeginTransaction={(label) => history.beginTransaction(label)}
       onCommitTransaction={() => history.commitTransaction()}
       onCancelTransaction={() => history.cancelTransaction()}
-      onPanChange={() => {}}
+    onPanChange={() => {}}
+    textEditorOverlay={undefined}
     />,
   );
 }

@@ -9,6 +9,7 @@ export type ElementInteractionHandlers = {
   selected: boolean;
   draggable: boolean;
   onSelect: (id: string) => void;
+  onEditText: (id: string) => void;
   onDragStart: (node: Konva.Group) => void;
   onDragMove: (id: string, x: number, y: number) => void;
   onDragEnd: () => void;
@@ -33,6 +34,7 @@ export function renderElement(
     draggable: handlers.draggable,
     onClick: () => handlers.onSelect(element.id),
     onTap: () => handlers.onSelect(element.id),
+    "data-testid": `element-${element.id}`,
     onDragStart: (event) => handlers.onDragStart(event.currentTarget as Konva.Group),
     onDragMove: (event) => {
       const group = event.currentTarget as Konva.Group;
@@ -42,6 +44,10 @@ export function renderElement(
     onTransformStart: (event) => handlers.onTransformStart(element.id, event.currentTarget as Konva.Group),
     onTransformEnd: (event) => handlers.onTransformEnd(element.id, event.currentTarget as Konva.Group),
   };
+
+  if (element.type === "text") {
+    groupProps.onDblClick = () => handlers.onEditText(element.id);
+  }
 
   switch (element.type) {
     case "rectangle":

@@ -1,22 +1,26 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App, EditorApp } from "./App";
 import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
 import type { EditorCommand, EditorDocument, PaletteColor } from "./model/elements";
-import { fixtureDocument } from "./test/fixtures";
+import { fixtureDocument, fixtureText } from "./test/fixtures";
 
 vi.mock("./canvas/EditorCanvas", () => ({
-  EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCancelTransaction, rectangleFillColor }: {
+  EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCancelTransaction, onEditText, rectangleFillColor, textEditorOverlay }: {
     document: EditorDocument;
     onCommand: (command: EditorCommand) => void;
     onSelect: (id: string | undefined) => void;
     onBeginTransaction: (label: string) => void;
     onCancelTransaction: () => void;
+    onEditText: (id: string) => void;
     rectangleFillColor: PaletteColor | null;
+    textEditorOverlay: ReactNode;
   }) => (
     <>
       <button type="button" onClick={() => onSelect("rect-1")}>Select rect-1</button>
+      <button type="button" onClick={() => onEditText("text-1")}>Edit text-1</button>
       <button
         type="button"
         onClick={() => onCommand({
@@ -54,13 +58,97 @@ vi.mock("./canvas/EditorCanvas", () => ({
       >
         Move then cancel
       </button>
+      {textEditorOverlay}
     </>
   ),
 }));
 
-afterEach(cleanup);
+beforeEach(() => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    font: "",
+    measureText: (text: string) => ({ width: text.length * 12 }),
+  } as never);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("EditorApp", () => {
+  it("edits existing text and commits one history command", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureText()] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    fireEvent.change(editor, { target: { value: "Ship this" } });
+    fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
+
+    expect(changes.at(-1)?.elements[0]).toMatchObject({ type: "text", text: "Ship this" });
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    expect(changes.at(-1)?.elements[0]).toMatchObject({ type: "text", text: "Annotate this" });
+  });
+
+  it("escapes text editing without changing the document", () => {
+    const onChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureText()] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    fireEvent.change(editor, { target: { value: "Discard me" } });
+    fireEvent.keyDown(editor, { key: "Escape" });
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
+  });
+
+  it("deletes a text element when its committed text is empty", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureText()] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    fireEvent.change(editor, { target: { value: "   " } });
+    fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
+
+    expect(changes.at(-1)?.elements).toEqual([]);
+  });
+
+  it("applies a color change to the selected rectangle", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
+
+    expect(changes.at(-1)?.elements[0]).toMatchObject({ strokeColor: "#FF4D4F" });
+  });
+
   it("publishes selected tools and defaults as preferences without changing the document", () => {
     const onChange = vi.fn();
     const onPreferencesChange = vi.fn();
