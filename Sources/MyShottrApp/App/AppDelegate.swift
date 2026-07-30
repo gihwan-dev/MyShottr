@@ -32,6 +32,7 @@ final class AppDelegate:
     private let dependencies: AppDependencies
     private let applicationLifecycle: ApplicationLifecycle
     private let documentWindowFactory: DocumentWindowFactory
+    private let hotKeyAPI: GlobalHotKeyAPI
     private var documentWindows: [any EditorWindowControlling] = []
     private var captureCoordinator: RegionCaptureCoordinator?
     private var menuBarController: MenuBarController?
@@ -66,16 +67,20 @@ final class AppDelegate:
                 project: project,
                 projectURL: projectURL
             )
-        }
+        },
+        hotKeyAPI: GlobalHotKeyAPI = .live
     ) {
         self.dependencies = dependencies
         self.applicationLifecycle = applicationLifecycle
         self.documentWindowFactory = documentWindowFactory
+        self.hotKeyAPI = hotKeyAPI
         super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        applicationLifecycle.setActivationPolicy(.accessory)
+        if documentWindows.isEmpty {
+            applicationLifecycle.setActivationPolicy(.accessory)
+        }
         let coordinator = dependencies.makeCaptureCoordinator(
             windows: self
         )
@@ -93,8 +98,9 @@ final class AppDelegate:
                     NSApp.terminate(nil)
                 }
             )
-            hotKeyRegistrar = try GlobalHotKeyRegistrar {
-                [weak self] in
+            hotKeyRegistrar = try GlobalHotKeyRegistrar(
+                api: hotKeyAPI
+            ) { [weak self] in
                 self?.captureArea()
             }
         } catch {
@@ -116,10 +122,7 @@ final class AppDelegate:
             return
         }
 
-        Task { @MainActor [weak self] in
-            guard let self else {
-                return
-            }
+        Task { @MainActor in
             if let error = await captureCoordinator.captureArea(),
                error as? CaptureError != .captureAlreadyInProgress {
                 NSAlert(error: error).runModal()
