@@ -32,6 +32,123 @@ verify_no_distribution_signature() {
   fi
 }
 
+normalize_zip_timestamps() {
+  local archive_path="$1"
+
+  node --input-type=module - "${archive_path}" <<'NODE'
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
+
+const archivePath = process.argv[2];
+const normalizedPath = `${archivePath}.normalized`;
+const archive = readFileSync(archivePath);
+const eocdSignature = 0x06054b50;
+const centralSignature = 0x02014b50;
+const localSignature = 0x04034b50;
+const fixedUnixTime = 946684800;
+const fixedDosTime = 0;
+const fixedDosDate = ((2000 - 1980) << 9) | (1 << 5) | 1;
+
+function fail(message) {
+  process.stderr.write(`package-release: ${message}\n`);
+  process.exit(1);
+}
+
+function locateEndOfCentralDirectory() {
+  const minimum = Math.max(0, archive.length - 65_557);
+  for (let offset = archive.length - 22; offset >= minimum; offset -= 1) {
+    if (archive.readUInt32LE(offset) === eocdSignature) return offset;
+  }
+  fail(`could not locate ZIP central directory in ${archivePath}`);
+}
+
+function normalizeExtraFields(offset, length) {
+  const end = offset + length;
+  let cursor = offset;
+  while (cursor < end) {
+    if (cursor + 4 > end) fail(`malformed ZIP extra field in ${archivePath}`);
+    const identifier = archive.readUInt16LE(cursor);
+    const size = archive.readUInt16LE(cursor + 2);
+    const dataOffset = cursor + 4;
+    const next = dataOffset + size;
+    if (next > end) fail(`malformed ZIP extra field in ${archivePath}`);
+
+    if (identifier === 0x5855 && size >= 8) {
+      archive.writeUInt32LE(fixedUnixTime, dataOffset);
+      archive.writeUInt32LE(fixedUnixTime, dataOffset + 4);
+    } else if (identifier === 0x5455 && size >= 5) {
+      const flags = archive.readUInt8(dataOffset);
+      let timeOffset = dataOffset + 1;
+      for (const flag of [1, 2, 4]) {
+        if ((flags & flag) !== 0) {
+          if (timeOffset + 4 > next) {
+            fail(`malformed ZIP timestamp field in ${archivePath}`);
+          }
+          archive.writeUInt32LE(fixedUnixTime, timeOffset);
+          timeOffset += 4;
+        }
+      }
+    }
+    cursor = next;
+  }
+}
+
+const eocdOffset = locateEndOfCentralDirectory();
+const entryCount = archive.readUInt16LE(eocdOffset + 10);
+const centralSize = archive.readUInt32LE(eocdOffset + 12);
+const centralOffset = archive.readUInt32LE(eocdOffset + 16);
+if (
+  entryCount === 0xffff
+  || centralSize === 0xffffffff
+  || centralOffset === 0xffffffff
+) {
+  fail("ZIP64 release archives are not supported");
+}
+
+let centralCursor = centralOffset;
+for (let index = 0; index < entryCount; index += 1) {
+  if (
+    centralCursor + 46 > archive.length
+    || archive.readUInt32LE(centralCursor) !== centralSignature
+  ) {
+    fail(`malformed ZIP central entry in ${archivePath}`);
+  }
+
+  archive.writeUInt16LE(fixedDosTime, centralCursor + 12);
+  archive.writeUInt16LE(fixedDosDate, centralCursor + 14);
+
+  const filenameLength = archive.readUInt16LE(centralCursor + 28);
+  const extraLength = archive.readUInt16LE(centralCursor + 30);
+  const commentLength = archive.readUInt16LE(centralCursor + 32);
+  const localOffset = archive.readUInt32LE(centralCursor + 42);
+  normalizeExtraFields(centralCursor + 46 + filenameLength, extraLength);
+
+  if (
+    localOffset + 30 > archive.length
+    || archive.readUInt32LE(localOffset) !== localSignature
+  ) {
+    fail(`malformed ZIP local entry in ${archivePath}`);
+  }
+  archive.writeUInt16LE(fixedDosTime, localOffset + 10);
+  archive.writeUInt16LE(fixedDosDate, localOffset + 12);
+  const localFilenameLength = archive.readUInt16LE(localOffset + 26);
+  const localExtraLength = archive.readUInt16LE(localOffset + 28);
+  normalizeExtraFields(
+    localOffset + 30 + localFilenameLength,
+    localExtraLength,
+  );
+
+  centralCursor +=
+    46 + filenameLength + extraLength + commentLength;
+}
+if (centralCursor !== centralOffset + centralSize) {
+  fail(`ZIP central directory size mismatch in ${archivePath}`);
+}
+
+writeFileSync(normalizedPath, archive, { mode: 0o644 });
+renameSync(normalizedPath, archivePath);
+NODE
+}
+
 VERSION="${1:-}"
 if [[ ! "${VERSION}" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
   echo 'version must match [0-9]+\.[0-9]+\.[0-9]+' >&2
@@ -171,7 +288,9 @@ xcodebuild build \
   -derivedDataPath "${BUILD_ROOT}/DerivedData" \
   -destination "platform=macOS" \
   CODE_SIGNING_ALLOWED=NO \
-  CODE_SIGNING_REQUIRED=NO
+  CODE_SIGNING_REQUIRED=NO \
+  GCC_GENERATE_DEBUGGING_SYMBOLS=NO \
+  DEBUG_INFORMATION_FORMAT=
 
 BUILT_APP="${BUILD_ROOT}/DerivedData/Build/Products/Release/MyShottr.app"
 BUILT_EXTENSION="${REPO_ROOT}/Packages/chrome-extension/dist"
@@ -213,6 +332,9 @@ CHECKSUMS="${PACKAGE_ROOT}/SHA256SUMS.txt"
   ditto -c -k --norsrc --noextattr --keepParent \
     "MyShottr-Chrome-${VERSION}" "${EXTENSION_ARCHIVE}"
 )
+
+normalize_zip_timestamps "${APP_ARCHIVE}"
+normalize_zip_timestamps "${EXTENSION_ARCHIVE}"
 
 (
   cd "${PACKAGE_ROOT}"
