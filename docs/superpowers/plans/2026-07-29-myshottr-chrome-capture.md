@@ -81,7 +81,6 @@ export type NativeCaptureReply =
   | {
       ok: false;
       code:
-        | "HOST_UNAVAILABLE"
         | "INVALID_MESSAGE"
         | "UNSUPPORTED_CAPTURE_MODE"
         | "INVALID_IMAGE"
