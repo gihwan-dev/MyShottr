@@ -1,2 +1,3 @@
 packages:
-  - Packages/*
+  - Packages/editor
+  - Packages/chrome-extension

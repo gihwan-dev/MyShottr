@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "MyShottr Web Capture",
+  "version": "0.1.0",
+  "description": "Capture the visible page viewport in MyShottr.",
+  "permissions": ["activeTab", "nativeMessaging"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Capture visible page in MyShottr"
+  },
+  "commands": {
+    "capture-visible-viewport": {
+      "suggested_key": {
+        "default": "Alt+Shift+2",
+        "mac": "Alt+Shift+2"
+      },
+      "description": "Capture visible page in MyShottr"
+    }
+  }
+}
