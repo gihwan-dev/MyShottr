@@ -95,7 +95,7 @@ final class RecoveryCoordinator {
                 }
             }
         case .discardAll:
-            try recoveryStore.stageDiscard(
+            _ = try recoveryStore.stageDiscard(
                 documentIds: projects.map(\.documentId)
             )
         case .cancel:

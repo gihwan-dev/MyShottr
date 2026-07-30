@@ -553,7 +553,7 @@ final class AppDelegate:
                         terminationRecoveryStore =
                             recoveryStore
                     }
-                    try recoveryStore.stageDiscard(
+                    _ = try recoveryStore.stageDiscard(
                         documentIds: discardDocumentIDs
                     )
                 }

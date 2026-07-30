@@ -81,14 +81,21 @@ final class SpyRecoveryStore: RecoveryStoring, @unchecked Sendable {
         projects.removeAll { $0.documentId == documentId }
     }
 
-    func stageDiscard(documentIds: [UUID]) throws {
+    @discardableResult
+    func stageDiscard(
+        documentIds: [UUID]
+    ) throws -> RecoveryDiscardStageResult {
         attemptedDiscardBatches.append(documentIds)
         if let error { throw error }
+        guard !documentIds.isEmpty else {
+            return .noRecovery
+        }
         stagedDiscardBatches.append(documentIds)
         removedDocumentIDs.append(contentsOf: documentIds)
         projects.removeAll {
             documentIds.contains($0.documentId)
         }
+        return .committed
     }
 
     func recoverableProjects() throws -> [RecoveredProject] {

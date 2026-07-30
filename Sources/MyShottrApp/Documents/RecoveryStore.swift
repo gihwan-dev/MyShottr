@@ -7,8 +7,17 @@ protocol RecoveryStoring: Sendable {
         documentId: UUID
     ) throws
     func remove(documentId: UUID) throws
-    func stageDiscard(documentIds: [UUID]) throws
+    @discardableResult
+    func stageDiscard(
+        documentIds: [UUID]
+    ) throws -> RecoveryDiscardStageResult
     func scanRecoverableProjects() throws -> RecoveryScanResult
+}
+
+enum RecoveryDiscardStageResult: Equatable, Sendable {
+    case noRecovery
+    case committed
+    case committedAwaitingDurability
 }
 
 struct RecoveredProject: Equatable, Sendable {
@@ -156,16 +165,19 @@ struct RecoveryStore: RecoveryStoring {
     }
 
     func remove(documentId: UUID) throws {
-        try stageDiscard(documentIds: [documentId])
+        _ = try stageDiscard(documentIds: [documentId])
     }
 
-    func stageDiscard(documentIds: [UUID]) throws {
+    @discardableResult
+    func stageDiscard(
+        documentIds: [UUID]
+    ) throws -> RecoveryDiscardStageResult {
         try validateRoot()
         let uniqueDocumentIDs = Array(Set(documentIds)).sorted {
             $0.uuidString < $1.uuidString
         }
         guard !uniqueDocumentIDs.isEmpty else {
-            return
+            return .noRecovery
         }
 
         var entries: [(documentID: UUID, url: URL)] = []
@@ -177,7 +189,7 @@ struct RecoveryStore: RecoveryStoring {
             }
         }
         guard !entries.isEmpty else {
-            return
+            return .noRecovery
         }
 
         let transactionID = makeTransactionID()
@@ -214,7 +226,6 @@ struct RecoveryStore: RecoveryStoring {
             )
         }
 
-        var transactionURL = pendingURL
         var movedDocumentIDs: [UUID] = []
         var failedDocumentID = entries[0].documentID
         do {
@@ -222,25 +233,19 @@ struct RecoveryStore: RecoveryStoring {
                 failedDocumentID = entry.documentID
                 try fileSystem.moveItem(
                     entry.url,
-                    transactionURL.appendingPathComponent(
+                    pendingURL.appendingPathComponent(
                         entry.url.lastPathComponent,
                         isDirectory: true
                     )
                 )
                 movedDocumentIDs.append(entry.documentID)
             }
-            try fileSystem.synchronizeDirectory(transactionURL)
-            try fileSystem.synchronizeDirectory(root)
-            try fileSystem.moveItem(
-                transactionURL,
-                committedURL
-            )
-            transactionURL = committedURL
+            try fileSystem.synchronizeDirectory(pendingURL)
             try fileSystem.synchronizeDirectory(root)
         } catch {
             do {
                 try rollbackDiscardTransaction(
-                    at: transactionURL,
+                    at: pendingURL,
                     documentIDs: movedDocumentIDs
                 )
             } catch {
@@ -249,6 +254,32 @@ struct RecoveryStore: RecoveryStoring {
             throw RecoveryStoreError.discardStageFailed(
                 failedDocumentID
             )
+        }
+
+        do {
+            try fileSystem.moveItem(
+                pendingURL,
+                committedURL
+            )
+        } catch {
+            do {
+                try rollbackDiscardTransaction(
+                    at: pendingURL,
+                    documentIDs: movedDocumentIDs
+                )
+            } catch {
+                throw RecoveryStoreError.discardRollbackFailed
+            }
+            throw RecoveryStoreError.discardStageFailed(
+                failedDocumentID
+            )
+        }
+
+        do {
+            try fileSystem.synchronizeDirectory(root)
+            return .committed
+        } catch {
+            return .committedAwaitingDurability
         }
     }
 
