@@ -18,9 +18,9 @@ export function ContextStylePalette({ tool, defaults, fillColor, onChange, onFil
   const set = <K extends keyof EditorDefaults>(key: K, value: EditorDefaults[K]) => {
     onChange({ ...defaults, [key]: value });
   };
-  const showStroke = tool === "rectangle" || tool === "arrow" || tool === "freehand";
+  const showStroke = tool === "rectangle" || tool === "arrow" || tool === "line" || tool === "freehand";
   const showFill = tool === "rectangle";
-  const showRoughness = tool === "rectangle" || tool === "arrow";
+  const showRoughness = tool === "rectangle" || tool === "arrow" || tool === "line";
   const showTextSize = tool === "text";
   const showOpacity = tool !== "redaction";
   const visibleOpacity = tool === "highlighter" && defaults.opacity !== 0.25 && defaults.opacity !== 0.5

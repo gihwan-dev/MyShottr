@@ -46,6 +46,16 @@ export function createElement(
         strokeWidth: context.defaults.strokeWidth,
         roughness: context.defaults.roughness,
       };
+    case "line":
+      assertBoxGesture(gesture, tool);
+      return {
+        ...base,
+        type: "line",
+        points: [gesture.start, gesture.end],
+        strokeColor: context.defaults.color,
+        strokeWidth: context.defaults.strokeWidth,
+        roughness: context.defaults.roughness,
+      };
     case "text":
       assertPointGesture(gesture, tool);
       return {
@@ -105,7 +115,7 @@ function createBase(
 }
 
 function boundsFor(tool: Exclude<EditorTool, "selection">, gesture: CreationGesture) {
-  if (tool === "rectangle" || tool === "arrow" || tool === "redaction") {
+  if (tool === "rectangle" || tool === "arrow" || tool === "line" || tool === "redaction") {
     assertBoxGesture(gesture, tool);
     return boxBounds(gesture.start, gesture.end);
   }

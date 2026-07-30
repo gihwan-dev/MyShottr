@@ -47,6 +47,7 @@ function drawElement(context: CanvasRenderingContext2D, element: EditorElement):
   switch (element.type) {
     case "rectangle":
     case "arrow":
+    case "line":
       drawRoughElement(context, element);
       break;
     case "text":
@@ -82,7 +83,7 @@ function drawElement(context: CanvasRenderingContext2D, element: EditorElement):
 
 function drawRoughElement(
   context: CanvasRenderingContext2D,
-  element: Extract<EditorElement, { type: "rectangle" | "arrow" }>,
+  element: Extract<EditorElement, { type: "rectangle" | "arrow" | "line" }>,
 ): void {
   for (const roughPath of roughPathsFor(element)) {
     const path = new Path2D(roughPath.d);

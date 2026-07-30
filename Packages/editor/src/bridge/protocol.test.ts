@@ -25,6 +25,32 @@ describe("EditorToNativeEnvelopeSchema", () => {
     expect(EditorToNativeEnvelopeSchema.parse(message)).toEqual(message);
   });
 
+  it("accepts line as a persisted and loaded editor preference", () => {
+    const preferencesMessage = {
+      protocolVersion: 1,
+      requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      type: "editorPreferencesChanged",
+      payload: {
+        tool: "line",
+        defaults: fixtureDocument().defaults,
+      },
+    };
+    const loadMessage = {
+      protocolVersion: 1,
+      requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      type: "loadDocument",
+      payload: {
+        documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        annotationDocument: fixtureDocument(),
+        initialTool: "line",
+      },
+    };
+
+    expect(EditorToNativeEnvelopeSchema.parse(preferencesMessage)).toEqual(preferencesMessage);
+    expect(NativeToEditorEnvelopeSchema.parse(loadMessage)).toEqual(loadMessage);
+  });
+
   it.each([
     ["unknown tools", { tool: "unknown", defaults: fixtureDocument().defaults }],
     ["unknown colors", { tool: "arrow", defaults: { ...fixtureDocument().defaults, color: "#FFFFFF" } }],

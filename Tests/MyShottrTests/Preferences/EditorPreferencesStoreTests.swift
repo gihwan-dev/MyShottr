@@ -38,4 +38,19 @@ final class EditorPreferencesStoreTests: XCTestCase {
 
         XCTAssertThrowsError(try store.save(invalid))
     }
+
+    func testLinePreferencesCanBeSavedAndLoaded() throws {
+        let line = EditorPreferences(
+            tool: "line",
+            color: "#1677FF",
+            strokeWidth: 4,
+            textSize: 24,
+            roughness: 1,
+            opacity: 1
+        )
+
+        try store.save(line)
+
+        XCTAssertEqual(store.load(), line)
+    }
 }

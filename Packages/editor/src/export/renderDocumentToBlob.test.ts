@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as roughRenderer from "../canvas/roughRenderer";
 import { roughPathsFor } from "../canvas/roughRenderer";
-import { fixtureDocument, fixtureRect } from "../test/fixtures";
+import { fixtureDocument, fixtureLine, fixtureRect } from "../test/fixtures";
 import { renderDocumentToBlob } from "./renderDocumentToBlob";
 
 describe("renderDocumentToBlob", () => {
@@ -64,6 +64,36 @@ describe("renderDocumentToBlob", () => {
 
     expect(pathData).toEqual([...roughPathsFor(rectangle), ...roughPathsFor(arrow)].map((path) => path.d));
     expect(context.stroke).toHaveBeenCalledTimes(pathData.length);
+  });
+
+  it("exports line with its stored rough seed", async () => {
+    const canvas = document.createElement("canvas");
+    const context = canvasContext();
+    const path2D = vi.fn();
+    vi.spyOn(document, "createElement").mockReturnValue(canvas);
+    vi.spyOn(canvas, "getContext").mockReturnValue(context);
+    vi.spyOn(canvas, "toBlob").mockImplementation((callback) => callback(new Blob(["png"], { type: "image/png" })));
+    vi.stubGlobal("Image", loadedImage(1440, 900));
+    vi.stubGlobal("Path2D", class {
+      constructor(path: string) { path2D(path); }
+    });
+
+    await renderDocumentToBlob(fixtureDocument({ elements: [fixtureLine()] }), "source.png");
+
+    expect(path2D).toHaveBeenCalledWith(expect.stringMatching(/\S+/));
+    expect(path2D).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders one seeded line shaft and three seeded arrow parts", () => {
+    const arrow = {
+      id: "arrow-parts", type: "arrow" as const, x: 20, y: 25, width: 100, height: 40,
+      rotation: 0, opacity: 1 as const, zIndex: 1, seed: 712,
+      points: [{ x: 20, y: 25 }, { x: 120, y: 65 }] as [{ x: number; y: number }, { x: number; y: number }],
+      strokeColor: "#FF4D4F" as const, strokeWidth: 2 as const, roughness: 1 as const,
+    };
+
+    expect(roughPathsFor(fixtureLine())).toHaveLength(1);
+    expect(roughPathsFor(arrow)).toHaveLength(3);
   });
 
   it("does not fill rough paths whose sentinel is none", async () => {

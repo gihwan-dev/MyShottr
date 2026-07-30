@@ -4,6 +4,7 @@ export const shortcuts = {
   select: "v",
   rectangle: "r",
   arrow: "a",
+  line: "l",
   text: "t",
   freehand: "p",
   highlighter: "h",
@@ -32,6 +33,7 @@ export function keyboardCommandFor(event: KeyboardEvent): KeyboardCommand | unde
     case "v": return "selection";
     case "r": return "rectangle";
     case "a": return "arrow";
+    case "l": return "line";
     case "t": return "text";
     case "p": return "freehand";
     case "h": return "highlighter";

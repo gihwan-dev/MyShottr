@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { allElementFixtures, fixtureRect } from "../test/fixtures";
+import { allElementFixtures, fixtureLine, fixtureRect } from "../test/fixtures";
 import { beginTransformerInteraction } from "./EditorCanvas";
 import { CanvasPointerController, duplicateElementWithinBounds, resizeElementWithinBounds } from "./SelectionController";
 import { createHistoryStore } from "../model/history";
@@ -18,6 +18,31 @@ describe("canvas element bounds", () => {
     const duplicate = duplicateElementWithinBounds(edgeArrow, { x: edgeArrow.x + 12, y: edgeArrow.y + 12 }, { sourceWidth: 1440, sourceHeight: 900 });
 
     expect(duplicate).toMatchObject({ x: 1439, y: 37, points: [{ x: 1439, y: 37 }, { x: 1539, y: 77 }] });
+  });
+
+  it("offsets and scales both line endpoints with its bounds", () => {
+    const line = fixtureLine();
+    const duplicate = duplicateElementWithinBounds(
+      line,
+      { x: 30, y: 40 },
+      { sourceWidth: 1440, sourceHeight: 900 },
+    );
+    const transformed = resizeElementWithinBounds(
+      duplicate,
+      { x: 30, y: 40 },
+      2,
+      0.5,
+      0,
+      { sourceWidth: 1440, sourceHeight: 900 },
+    );
+
+    expect(transformed).toMatchObject({
+      x: 30,
+      y: 40,
+      width: 180,
+      height: 22.5,
+      points: [{ x: 30, y: 40 }, { x: 210, y: 62.5 }],
+    });
   });
 
   it("clamps after resizing so a shrunken element remains visible", () => {

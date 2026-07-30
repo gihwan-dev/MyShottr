@@ -38,6 +38,14 @@ export type ArrowElement = ElementBase & {
   roughness: 0 | 1 | 2;
 };
 
+export type LineElement = ElementBase & {
+  type: "line";
+  points: [Point, Point];
+  strokeColor: PaletteColor;
+  strokeWidth: 2 | 4 | 8;
+  roughness: 0 | 1 | 2;
+};
+
 export type TextElement = ElementBase & {
   type: "text";
   text: string;
@@ -75,6 +83,7 @@ export type NumberMarkerElement = ElementBase & {
 export type EditorElement =
   | RectangleElement
   | ArrowElement
+  | LineElement
   | TextElement
   | FreehandElement
   | HighlighterElement
@@ -85,6 +94,7 @@ export type EditorTool =
   | "selection"
   | "rectangle"
   | "arrow"
+  | "line"
   | "text"
   | "freehand"
   | "highlighter"

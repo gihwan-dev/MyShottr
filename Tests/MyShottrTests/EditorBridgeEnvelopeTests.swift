@@ -23,6 +23,12 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         """.utf8)
 
         XCTAssertNoThrow(try EditorToNativeEnvelope.decode(from: valid))
+        XCTAssertNoThrow(try EditorToNativeEnvelope.decode(
+            from: Data(String(decoding: valid, as: UTF8.self).replacingOccurrences(
+                of: "\"tool\": \"arrow\"",
+                with: "\"tool\": \"line\""
+            ).utf8)
+        ))
 
         for payload in [
             "{\"tool\":\"unknown\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":1,\"opacity\":1}}",
@@ -36,6 +42,22 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             let envelope = "{\"protocolVersion\":1,\"requestId\":\"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\",\"type\":\"editorPreferencesChanged\",\"payload\":\(payload)}"
             XCTAssertThrowsError(try EditorToNativeEnvelope.decode(from: Data(envelope.utf8)))
         }
+    }
+
+    @MainActor
+    func testAcceptsAValidLineElement() throws {
+        let session = DocumentSession()
+        var document = validDocument()
+        document["elements"] = [[
+            "id": "line-1", "type": "line", "x": 10, "y": 20,
+            "width": 80, "height": 40, "rotation": 0, "opacity": 1,
+            "zIndex": 0, "seed": 99,
+            "points": [["x": 10, "y": 20], ["x": 90, "y": 60]],
+            "strokeColor": "#1677FF", "strokeWidth": 4, "roughness": 1,
+        ]]
+
+        XCTAssertNoThrow(try session.open(project: try project(annotationDocument: document)))
+        XCTAssertTrue(session.isOpen)
     }
 
     func testDecodesV1EditorReadyFixture() throws {

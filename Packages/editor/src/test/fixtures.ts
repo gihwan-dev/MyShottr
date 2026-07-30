@@ -6,6 +6,7 @@ import type {
   EditorTool,
   FreehandElement,
   HighlighterElement,
+  LineElement,
   NumberMarkerElement,
   RectangleElement,
   RedactionElement,
@@ -39,6 +40,25 @@ export function fixtureRect(): RectangleElement {
   };
 }
 
+export function fixtureLine(): LineElement {
+  return {
+    id: "line-1",
+    type: "line",
+    x: 15,
+    y: 20,
+    width: 90,
+    height: 45,
+    rotation: 0,
+    opacity: 1,
+    zIndex: 2,
+    seed: 108,
+    points: [{ x: 15, y: 20 }, { x: 105, y: 65 }],
+    strokeColor: "#1677FF",
+    strokeWidth: 4,
+    roughness: 1,
+  };
+}
+
 export function allElementFixtures(): EditorElement[] {
   const arrow: ArrowElement = {
     id: "arrow-1",
@@ -65,7 +85,7 @@ export function allElementFixtures(): EditorElement[] {
     height: 36,
     rotation: 0,
     opacity: 1,
-    zIndex: 2,
+    zIndex: 3,
     seed: 103,
     text: "Annotate this",
     color: "#000000",
@@ -80,7 +100,7 @@ export function allElementFixtures(): EditorElement[] {
     height: 45,
     rotation: 0,
     opacity: 1,
-    zIndex: 3,
+    zIndex: 4,
     seed: 104,
     points: [{ x: 60, y: 80 }, { x: 100, y: 100 }, { x: 160, y: 125 }],
     color: "#FADB14",
@@ -95,7 +115,7 @@ export function allElementFixtures(): EditorElement[] {
     height: 30,
     rotation: 0,
     opacity: 0.25,
-    zIndex: 4,
+    zIndex: 5,
     seed: 105,
     points: [{ x: 80, y: 140 }, { x: 200, y: 170 }],
     color: "#FADB14",
@@ -110,7 +130,7 @@ export function allElementFixtures(): EditorElement[] {
     height: 40,
     rotation: 0,
     opacity: 1,
-    zIndex: 5,
+    zIndex: 6,
     seed: 106,
     color: "#000000",
   };
@@ -123,13 +143,13 @@ export function allElementFixtures(): EditorElement[] {
     height: 32,
     rotation: 0,
     opacity: 1,
-    zIndex: 6,
+    zIndex: 7,
     seed: 107,
     number: 1,
     color: "#FF4D4F",
   };
 
-  return [fixtureRect(), arrow, text, freehand, highlighter, redaction, numberMarker];
+  return [fixtureRect(), arrow, fixtureLine(), text, freehand, highlighter, redaction, numberMarker];
 }
 
 export function fixtureDocument(
@@ -152,6 +172,7 @@ export function creationGesture(
   switch (tool) {
     case "rectangle":
     case "arrow":
+    case "line":
     case "redaction":
       return { kind: "box", start: { x: 10, y: 20 }, end: { x: 110, y: 70 } };
     case "freehand":

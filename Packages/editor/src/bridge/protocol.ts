@@ -31,7 +31,7 @@ const EnvelopeBaseSchema = z.object({
 const EditorReadyPayloadSchema = z.object({}).strict();
 const DocumentChangedPayloadSchema = z.object({}).strict();
 const EditorPreferencesChangedPayloadSchema = z.object({
-  tool: z.enum(["selection", "rectangle", "arrow", "text", "freehand", "highlighter", "redaction", "numberMarker"]),
+  tool: z.enum(["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "redaction", "numberMarker"]),
   defaults: EditorDefaultsSchema,
 }).strict();
 const AnnotationSnapshotPayloadSchema = z.object({
@@ -67,7 +67,7 @@ const LoadDocumentPayloadSchema = z.object({
   documentId: RequestIDSchema,
   sourceImageURL: z.string(),
   annotationDocument: EditorDocumentSchema,
-  initialTool: z.enum(["selection", "rectangle", "arrow", "text", "freehand", "highlighter", "redaction", "numberMarker"]),
+  initialTool: z.enum(["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "redaction", "numberMarker"]),
 }).strict().superRefine((payload, context) => {
   const expectedURL = `myshottr-editor://editor/document/${payload.documentId}/original.png`;
   if (payload.sourceImageURL !== expectedURL) {

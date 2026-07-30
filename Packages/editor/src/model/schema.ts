@@ -45,6 +45,14 @@ const ArrowElementSchema = ElementBaseSchema.extend({
   roughness: RoughnessSchema,
 }).strict();
 
+const LineElementSchema = ElementBaseSchema.extend({
+  type: z.literal("line"),
+  points: z.tuple([PointSchema, PointSchema]),
+  strokeColor: PaletteColorSchema,
+  strokeWidth: StrokeWidthSchema,
+  roughness: RoughnessSchema,
+}).strict();
+
 const TextElementSchema = ElementBaseSchema.extend({
   type: z.literal("text"),
   text: z.string(),
@@ -82,6 +90,7 @@ const NumberMarkerElementSchema = ElementBaseSchema.extend({
 export const EditorElementSchema = z.discriminatedUnion("type", [
   RectangleElementSchema,
   ArrowElementSchema,
+  LineElementSchema,
   TextElementSchema,
   FreehandElementSchema,
   HighlighterElementSchema,

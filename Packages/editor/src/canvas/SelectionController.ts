@@ -54,6 +54,7 @@ export function moveElementWithinBounds(
 
   switch (element.type) {
     case "arrow":
+    case "line":
       return { ...element, x, y, points: [translate(element.points[0]), translate(element.points[1])] };
     case "freehand":
     case "highlighter":
@@ -94,6 +95,7 @@ export function resizeElementWithinBounds(
   const resized = (() => {
     switch (translated.type) {
       case "arrow":
+      case "line":
         return {
           ...translated,
           ...dimensions,
@@ -116,6 +118,7 @@ function translateElement(element: EditorElement, targetPosition: Point): Editor
   const translate = (point: Point): Point => ({ x: point.x + deltaX, y: point.y + deltaY });
   switch (element.type) {
     case "arrow":
+    case "line":
       return { ...element, x: targetPosition.x, y: targetPosition.y, points: [translate(element.points[0]), translate(element.points[1])] };
     case "freehand":
     case "highlighter":

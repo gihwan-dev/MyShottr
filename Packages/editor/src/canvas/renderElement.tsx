@@ -42,6 +42,7 @@ export function renderElement(element: EditorElement, handlers: ElementInteracti
   switch (element.type) {
     case "rectangle":
     case "arrow":
+    case "line":
       return (
         <Group key={element.id} {...groupProps}>
           {roughPathsFor(element).map((path, index) => (

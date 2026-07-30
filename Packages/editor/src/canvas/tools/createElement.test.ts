@@ -3,6 +3,7 @@ import { EditorElementSchema } from "../../model/schema";
 import { creationGesture, fixtureDocument } from "../../test/fixtures";
 import { createElement } from "./createElement";
 import { createCanvasElement } from "../EditorCanvas";
+import { keyboardCommandFor } from "./ToolController";
 
 const context = {
   defaults: {
@@ -19,10 +20,32 @@ const context = {
 
 describe("createElement", () => {
   it.each([
-    "rectangle", "arrow", "text", "freehand",
+    "rectangle", "arrow", "line", "text", "freehand",
     "highlighter", "redaction", "numberMarker",
   ] as const)("creates a valid %s element", (tool) => {
     expect(() => EditorElementSchema.parse(createElement(tool, creationGesture(tool), context))).not.toThrow();
+  });
+
+  it("creates a two-point rough line from a box gesture", () => {
+    const line = createElement("line", {
+      kind: "box",
+      start: { x: 10, y: 20 },
+      end: { x: 90, y: 60 },
+    }, context);
+
+    expect(line).toMatchObject({
+      type: "line",
+      x: 10,
+      y: 20,
+      width: 80,
+      height: 40,
+      points: [{ x: 10, y: 20 }, { x: 90, y: 60 }],
+    });
+  });
+
+  it("maps L to line without modifiers", () => {
+    expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "l" })))
+      .toBe("line");
   });
 
   it("uses the caller-derived number and z-index for a number marker", () => {

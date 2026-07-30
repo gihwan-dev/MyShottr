@@ -4,6 +4,7 @@ const tools: Array<{ tool: EditorTool; label: string }> = [
   { tool: "selection", label: "Select" },
   { tool: "rectangle", label: "Rectangle" },
   { tool: "arrow", label: "Arrow" },
+  { tool: "line", label: "Line" },
   { tool: "text", label: "Text" },
   { tool: "freehand", label: "Freehand" },
   { tool: "highlighter", label: "Highlighter" },
