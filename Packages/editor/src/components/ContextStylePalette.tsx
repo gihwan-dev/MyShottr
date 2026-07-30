@@ -62,8 +62,8 @@ export function ContextStylePalette({
     <section className="context-style-palette" aria-label={`${isSelection ? "selection" : tool} style controls`}>
       {isSelection && (
         <div className="context-order-controls">
-          <button type="button" onClick={() => onReorder("forward")}>Bring Forward</button>
-          <button type="button" onClick={() => onReorder("backward")}>Send Backward</button>
+          <button type="button" title="Bring Forward (⌘])" onClick={() => onReorder("forward")}>Bring Forward</button>
+          <button type="button" title="Send Backward (⌘[)" onClick={() => onReorder("backward")}>Send Backward</button>
         </div>
       )}
       {showColor && (

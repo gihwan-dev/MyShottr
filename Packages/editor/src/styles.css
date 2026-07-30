@@ -1,15 +1,182 @@
 :root {
-  color: #171717;
+  --ink: #201b1a;
+  --canvas-surround: #f7f1e8;
+  --panel: rgb(255 252 247 / 94%);
+  --coral: #ff6b5f;
+  --coral-strong: #ed4f45;
+  --border: rgb(32 27 26 / 12%);
+  --shadow: 0 16px 42px rgb(73 45 38 / 16%);
+  color: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-body { margin: 0; background: #f2f4f7; }
+* {
+  box-sizing: border-box;
+}
 
-.editor-app { min-height: 100vh; display: grid; place-items: center; position: relative; overflow: hidden; }
-.canvas-shell { background: #ffffff; box-shadow: 0 12px 36px rgb(0 0 0 / 18%); }
-.floating-tool-palette, .context-style-palette, .zoom-controls { position: fixed; display: flex; gap: 8px; padding: 10px; border-radius: 10px; background: rgb(255 255 255 / 96%); box-shadow: 0 4px 16px rgb(0 0 0 / 16%); }
-.floating-tool-palette { top: 16px; left: 50%; transform: translateX(-50%); }
-.context-style-palette { top: 72px; left: 50%; transform: translateX(-50%); align-items: center; }
-.context-style-palette label { display: grid; gap: 4px; font-size: 12px; }
-.zoom-controls { right: 16px; bottom: 16px; align-items: center; }
-button[aria-pressed="true"] { background: #1677ff; color: #ffffff; }
+body {
+  margin: 0;
+  background: var(--canvas-surround);
+}
+
+button,
+select {
+  color: inherit;
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--border);
+  background: rgb(255 255 255 / 72%);
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: rgb(237 79 69 / 32%);
+  background: rgb(255 107 95 / 10%);
+}
+
+button:focus-visible,
+select:focus-visible {
+  outline: 3px solid rgb(255 107 95 / 48%);
+  outline-offset: 2px;
+}
+
+.editor-app {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+  background: var(--canvas-surround);
+}
+
+.canvas-shell {
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 18px 52px rgb(73 45 38 / 18%);
+  filter: none;
+}
+
+.floating-tool-palette,
+.context-style-palette,
+.zoom-controls {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.floating-tool-palette {
+  top: 16px;
+  left: 50%;
+  max-width: calc(100vw - 32px);
+  transform: translateX(-50%);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.floating-tool-palette button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  flex: 0 0 36px;
+  place-items: center;
+  padding: 0;
+  border-radius: 10px;
+}
+
+.floating-tool-palette button[aria-pressed="true"] {
+  border-color: var(--coral-strong);
+  background: var(--coral);
+  color: #ffffff;
+  box-shadow: 0 5px 12px rgb(237 79 69 / 24%);
+}
+
+.context-style-palette {
+  top: 76px;
+  left: 50%;
+  max-width: calc(100vw - 32px);
+  transform: translateX(-50%);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.context-style-palette label {
+  display: grid;
+  gap: 3px;
+  color: rgb(32 27 26 / 72%);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.context-style-palette select {
+  min-width: 72px;
+  height: 30px;
+  padding: 0 24px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 76%);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.context-order-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.context-order-controls button {
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.zoom-controls {
+  right: 16px;
+  bottom: 16px;
+}
+
+.zoom-controls button {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 9px;
+  font-weight: 650;
+}
+
+.zoom-controls output {
+  min-width: 44px;
+  color: rgb(32 27 26 / 72%);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-align: center;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 540px) {
+  .context-style-palette {
+    top: 164px;
+  }
+}

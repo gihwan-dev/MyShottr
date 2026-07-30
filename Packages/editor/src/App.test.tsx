@@ -285,7 +285,7 @@ describe("EditorApp", () => {
       onPreferencesChange={onPreferencesChange}
     />);
 
-    expect(screen.getByRole("button", { name: "Arrow" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Arrow (A)" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
 
     expect(onPreferencesChange).toHaveBeenLastCalledWith("arrow", expect.objectContaining({ color: "#FF4D4F" }));
@@ -297,21 +297,30 @@ describe("EditorApp", () => {
 
     const palette = within(screen.getByRole("navigation", { name: "Annotation tools" }));
     expect(palette.getAllByRole("button")).toHaveLength(10);
-    expect(palette.getByRole("button", { name: "Line" })).toBeTruthy();
-    expect(palette.getByRole("button", { name: "Blur" })).toBeTruthy();
+    expect(palette.getByRole("button", { name: "Line (L)" })).toBeTruthy();
+    expect(palette.getByRole("button", { name: "Blur (B)" })).toBeTruthy();
+  });
+
+  it("renders every tool as an icon button with label and shortcut", () => {
+    render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
+
+    expect(screen.getByRole("button", { name: "Rectangle (R)" }).getAttribute("title"))
+      .toBe("Rectangle (R)");
+    expect(screen.getByRole("button", { name: "Blur (B)" }).getAttribute("title"))
+      .toBe("Blur (B)");
   });
 
   it("shows rectangle style controls and omits opacity for redaction", () => {
     render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Rectangle" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle (R)" }));
     expect(screen.getByLabelText("Color")).toBeTruthy();
     expect(screen.getByLabelText("Stroke width")).toBeTruthy();
     expect(screen.getByLabelText("Fill")).toBeTruthy();
     expect(screen.getByLabelText("Roughness")).toBeTruthy();
     expect(screen.getByLabelText("Opacity")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Redaction" }));
+    fireEvent.click(screen.getByRole("button", { name: "Redaction (X)" }));
     expect(screen.queryByLabelText("Opacity")).toBeNull();
   });
 
@@ -319,7 +328,7 @@ describe("EditorApp", () => {
     const changes: EditorDocument[] = [];
     render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(document) => changes.push(document)} onPreferencesChange={() => {}} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Rectangle" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle (R)" }));
     fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
     fireEvent.change(screen.getByLabelText("Fill"), { target: { value: "#FADB14" } });
     fireEvent.click(screen.getByRole("button", { name: "Create rectangle from canvas" }));
