@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { promises as fs } from "node:fs";
+import { dirname, extname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const captureVisibleTab = vi.fn();
 const sendNativeMessage = vi.fn();
@@ -169,3 +172,57 @@ describe("runCaptureAction", () => {
     expect(sendNativeMessage).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("privacy boundary", () => {
+  it("has no scripting, webRequest, content script, or network API source", async () => {
+    const packageDirectory = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+    );
+    const sourceDirectory = resolve(packageDirectory, "src");
+    const sourcePaths = await productionSourcePaths(sourceDirectory);
+    const sources = await Promise.all(
+      sourcePaths.map(async (path) => ({
+        path,
+        source: await fs.readFile(path, "utf8"),
+      })),
+    );
+    const manifest = JSON.parse(
+      await fs.readFile(
+        resolve(packageDirectory, "public", "manifest.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+
+    expect(manifest.permissions).toEqual(["activeTab", "nativeMessaging"]);
+    expect(manifest).not.toHaveProperty("host_permissions");
+    expect(manifest).not.toHaveProperty("optional_host_permissions");
+    expect(manifest).not.toHaveProperty("content_scripts");
+
+    for (const { path, source } of sources) {
+      expect(source, path).not.toMatch(/\bchrome\s*\.\s*scripting\b/);
+      expect(source, path).not.toMatch(/\bchrome\s*\.\s*webRequest\b/);
+      expect(source, path).not.toMatch(
+        /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource)\s*\(/,
+      );
+      expect(source, path).not.toMatch(/\bnavigator\s*\.\s*sendBeacon\s*\(/);
+    }
+  });
+});
+
+async function productionSourcePaths(directory: string): Promise<string[]> {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  const paths = await Promise.all(
+    entries.map(async (entry) => {
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) return productionSourcePaths(path);
+      if (!entry.isFile()) return [];
+      if (![".ts", ".tsx"].includes(extname(entry.name))) return [];
+      if (entry.name.endsWith(".test.ts") || entry.name.endsWith(".d.ts")) {
+        return [];
+      }
+      return [path];
+    }),
+  );
+  return paths.flat().sort();
+}

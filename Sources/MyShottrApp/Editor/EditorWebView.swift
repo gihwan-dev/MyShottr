@@ -2,11 +2,11 @@ import Foundation
 import WebKit
 
 @MainActor
-final class EditorWebView: NSObject, WKNavigationDelegate {
+final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
-    private let editorURL: URL
     private let bridge: EditorBridge
     private let configuration: WKWebViewConfiguration
+    private let navigationPolicy: EditorNavigationPolicy
     private var didTearDown = false
     private(set) var navigationError: Error?
     private(set) var navigationFinished = false
@@ -54,6 +54,7 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
     private init(session: DocumentSession, editorURL: URL, editorBundleRootURL: URL, preferences: any EditorPreferencesStoring) {
         let bridge = EditorBridge(session: session, preferences: preferences)
         let configuration = WKWebViewConfiguration()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.setURLSchemeHandler(
             EditorBundleSchemeHandler(
                 rootURL: editorBundleRootURL,
@@ -67,10 +68,13 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
 
         self.bridge = bridge
         self.configuration = configuration
-        self.editorURL = editorURL
+        self.navigationPolicy = EditorNavigationPolicy(
+            editorBundleRootURL: editorBundleRootURL
+        )
         self.webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         bridge.attach(to: webView)
         webView.load(URLRequest(url: editorURL))
     }
@@ -95,11 +99,44 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
-        guard navigationAction.request.url == editorURL else {
+        let targetFrame = navigationAction.targetFrame
+        switch navigationPolicy.navigationDecision(
+            for: navigationAction.request.url,
+            hasTargetFrame: targetFrame != nil,
+            isMainFrame: targetFrame?.isMainFrame == true,
+            shouldPerformDownload: navigationAction.shouldPerformDownload
+        ) {
+        case .allow:
+            decisionHandler(.allow)
+        case .cancel:
             decisionHandler(.cancel)
-            return
         }
-        decisionHandler(.allow)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void
+    ) {
+        switch navigationPolicy.responseDecision(
+            for: navigationResponse.response.url,
+            isForMainFrame: navigationResponse.isForMainFrame,
+            canShowMIMEType: navigationResponse.canShowMIMEType
+        ) {
+        case .allow:
+            decisionHandler(.allow)
+        case .cancel:
+            decisionHandler(.cancel)
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        nil
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
