@@ -77,6 +77,7 @@ select:focus-visible {
 .floating-tool-palette {
   top: 16px;
   left: 50%;
+  width: max-content;
   max-width: calc(100vw - 32px);
   transform: translateX(-50%);
   flex-wrap: wrap;
@@ -175,8 +176,8 @@ select:focus-visible {
   border: 0;
 }
 
-@media (max-width: 540px) {
+@media (max-width: 463px) {
   .context-style-palette {
-    top: 164px;
+    top: 122px;
   }
 }
