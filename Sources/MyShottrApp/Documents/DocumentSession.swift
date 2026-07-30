@@ -9,7 +9,7 @@ enum DocumentSessionError: Error, Equatable {
 @MainActor
 final class DocumentSession {
     private static let supportedElementTypes: Set<String> = [
-        "rectangle", "arrow", "line", "text", "freehand", "highlighter", "redaction", "numberMarker",
+        "rectangle", "arrow", "line", "text", "freehand", "highlighter", "blur", "redaction", "numberMarker",
     ]
 
     private(set) var project: MyShottrProject?
@@ -163,6 +163,9 @@ final class DocumentSession {
             return Set(element.keys) == base.union(["points", "color", "strokeWidth"])
                 && points(element["points"], minimum: 1) && Self.colors.contains(element["color"] as? String ?? "")
                 && integer(element["strokeWidth"]) == 8 && [0.25, 0.5].contains(number(element["opacity"]) ?? -1)
+        case "blur":
+            return Set(element.keys) == base.union(["radius"])
+                && integer(element["radius"]) == 12 && number(element["opacity"]) == 1 && number(element["rotation"]) == 0
         case "redaction":
             return Set(element.keys) == base.union(["color"])
                 && element["color"] as? String == "#000000" && number(element["opacity"]) == 1

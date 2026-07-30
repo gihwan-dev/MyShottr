@@ -8,6 +8,7 @@ const tools: Array<{ tool: EditorTool; label: string }> = [
   { tool: "text", label: "Text" },
   { tool: "freehand", label: "Freehand" },
   { tool: "highlighter", label: "Highlighter" },
+  { tool: "blur", label: "Blur" },
   { tool: "redaction", label: "Redaction" },
   { tool: "numberMarker", label: "Number marker" },
 ];

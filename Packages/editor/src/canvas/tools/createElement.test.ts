@@ -21,7 +21,7 @@ const context = {
 describe("createElement", () => {
   it.each([
     "rectangle", "arrow", "line", "text", "freehand",
-    "highlighter", "redaction", "numberMarker",
+    "highlighter", "blur", "redaction", "numberMarker",
   ] as const)("creates a valid %s element", (tool) => {
     expect(() => EditorElementSchema.parse(createElement(tool, creationGesture(tool), context))).not.toThrow();
   });
@@ -43,9 +43,31 @@ describe("createElement", () => {
     });
   });
 
+  it("creates a fixed-radius blur region", () => {
+    expect(createElement("blur", {
+      kind: "box",
+      start: { x: 20, y: 30 },
+      end: { x: 120, y: 80 },
+    }, context)).toMatchObject({
+      type: "blur",
+      x: 20,
+      y: 30,
+      width: 100,
+      height: 50,
+      radius: 12,
+      opacity: 1,
+      rotation: 0,
+    });
+  });
+
   it("maps L to line without modifiers", () => {
     expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "l" })))
       .toBe("line");
+  });
+
+  it("maps B to blur without modifiers", () => {
+    expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "b" })))
+      .toBe("blur");
   });
 
   it("uses the caller-derived number and z-index for a number marker", () => {

@@ -79,12 +79,13 @@ describe("EditorApp", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("shows the nine canvas tools including line", () => {
+  it("shows the ten canvas tools including blur and line", () => {
     render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
 
     const palette = within(screen.getByRole("navigation", { name: "Annotation tools" }));
-    expect(palette.getAllByRole("button")).toHaveLength(9);
+    expect(palette.getAllByRole("button")).toHaveLength(10);
     expect(palette.getByRole("button", { name: "Line" })).toBeTruthy();
+    expect(palette.getByRole("button", { name: "Blur" })).toBeTruthy();
   });
 
   it("shows rectangle style controls and omits opacity for redaction", () => {

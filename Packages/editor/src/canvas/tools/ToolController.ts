@@ -8,6 +8,7 @@ export const shortcuts = {
   text: "t",
   freehand: "p",
   highlighter: "h",
+  blur: "b",
   redaction: "x",
   numberMarker: "n",
   delete: ["Backspace", "Delete"],
@@ -37,6 +38,7 @@ export function keyboardCommandFor(event: KeyboardEvent): KeyboardCommand | unde
     case "t": return "text";
     case "p": return "freehand";
     case "h": return "highlighter";
+    case "b": return "blur";
     case "x": return "redaction";
     case "n": return "numberMarker";
     default: return undefined;

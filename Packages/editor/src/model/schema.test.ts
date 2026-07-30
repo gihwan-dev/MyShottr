@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allElementFixtures, fixtureDocument, fixtureRect } from "../test/fixtures";
+import { allElementFixtures, fixtureBlur, fixtureDocument, fixtureRect } from "../test/fixtures";
 import { EditorDocumentSchema, EditorElementSchema, parseEditorDocument } from "./schema";
 
 describe("EditorDocumentSchema", () => {
@@ -24,6 +24,15 @@ describe("EditorDocumentSchema", () => {
   it("rejects empty freehand paths", () => {
     const freehand = allElementFixtures().find((element) => element.type === "freehand");
     expect(() => EditorElementSchema.parse({ ...freehand, points: [] })).toThrow();
+  });
+
+  it("accepts only the fixed, axis-aligned blur shape", () => {
+    expect(() => EditorElementSchema.parse(fixtureBlur())).not.toThrow();
+    expect(() => EditorElementSchema.parse({ ...fixtureBlur(), radius: 8 })).toThrow();
+    expect(() => EditorElementSchema.parse({ ...fixtureBlur(), width: -1 })).toThrow();
+    expect(() => EditorElementSchema.parse({ ...fixtureBlur(), unexpected: true })).toThrow();
+    expect(() => EditorElementSchema.parse({ ...fixtureBlur(), opacity: 0.5 })).toThrow();
+    expect(() => EditorElementSchema.parse({ ...fixtureBlur(), rotation: 15 })).toThrow();
   });
 
   it("rejects duplicate element ids and z-index values", () => {

@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import type Konva from "konva";
-import { Circle, Group, Line, Path, Rect, Text } from "react-konva";
+import { Circle, Group, Image as KonvaImage, Line, Path, Rect, Text } from "react-konva";
 import type { EditorElement } from "../model/elements";
 import { roughPathsFor } from "./roughRenderer";
 import { KONVA_DEFAULT_FONT_FAMILY, NUMBER_MARKER_FONT_SIZE } from "./renderingConstants";
@@ -17,7 +17,11 @@ export type ElementInteractionHandlers = {
   registerNode: (id: string, node: Konva.Group | null) => void;
 };
 
-export function renderElement(element: EditorElement, handlers: ElementInteractionHandlers) {
+export function renderElement(
+  element: EditorElement,
+  handlers: ElementInteractionHandlers,
+  blurredSource?: HTMLCanvasElement,
+) {
   const groupProps: ComponentProps<typeof Group> = {
     ref: (node: Konva.Group | null) => handlers.registerNode(element.id, node),
     x: element.x,
@@ -56,6 +60,13 @@ export function renderElement(element: EditorElement, handlers: ElementInteracti
       return <Group key={element.id} {...groupProps}><Line points={relativePoints(element.points, element.x, element.y)} stroke={element.color} strokeWidth={element.strokeWidth} lineCap="round" lineJoin="round" /></Group>;
     case "highlighter":
       return <Group key={element.id} {...groupProps}><Line points={relativePoints(element.points, element.x, element.y)} stroke={element.color} strokeWidth={8} lineCap="round" lineJoin="round" /></Group>;
+    case "blur":
+      if (!blurredSource) return null;
+      return (
+        <Group key={element.id} {...groupProps} clipX={0} clipY={0} clipWidth={element.width} clipHeight={element.height}>
+          <KonvaImage image={blurredSource} x={-element.x} y={-element.y} width={blurredSource.width} height={blurredSource.height} />
+        </Group>
+      );
     case "redaction":
       return <Group key={element.id} {...groupProps}><Rect width={element.width} height={element.height} fill={element.color} /></Group>;
     case "numberMarker":

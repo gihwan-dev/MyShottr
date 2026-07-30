@@ -19,7 +19,7 @@ struct EditorPreferences: Codable, Equatable, Sendable {
     var opacity: Double
 
     var isValid: Bool {
-        ["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "redaction", "numberMarker"].contains(tool)
+        ["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "blur", "redaction", "numberMarker"].contains(tool)
             && ["#000000", "#FF4D4F", "#1677FF", "#FADB14"].contains(color)
             && [2, 4, 8].contains(strokeWidth)
             && [16, 24, 36].contains(textSize)

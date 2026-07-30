@@ -1,5 +1,6 @@
 import type {
   ArrowElement,
+  BlurElement,
   CreationGesture,
   EditorDocument,
   EditorElement,
@@ -37,6 +38,22 @@ export function fixtureRect(): RectangleElement {
     strokeWidth: 4,
     fillColor: null,
     roughness: 1,
+  };
+}
+
+export function fixtureBlur(): BlurElement {
+  return {
+    id: "blur-1",
+    type: "blur",
+    x: 20,
+    y: 30,
+    width: 100,
+    height: 50,
+    rotation: 0,
+    opacity: 1,
+    zIndex: 8,
+    seed: 109,
+    radius: 12,
   };
 }
 
@@ -149,7 +166,7 @@ export function allElementFixtures(): EditorElement[] {
     color: "#FF4D4F",
   };
 
-  return [fixtureRect(), arrow, fixtureLine(), text, freehand, highlighter, redaction, numberMarker];
+  return [fixtureRect(), arrow, fixtureLine(), text, freehand, highlighter, redaction, numberMarker, fixtureBlur()];
 }
 
 export function fixtureDocument(
@@ -174,6 +191,7 @@ export function creationGesture(
     case "arrow":
     case "line":
     case "redaction":
+    case "blur":
       return { kind: "box", start: { x: 10, y: 20 }, end: { x: 110, y: 70 } };
     case "freehand":
     case "highlighter":

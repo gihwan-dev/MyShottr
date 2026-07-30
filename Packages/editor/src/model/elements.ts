@@ -68,6 +68,13 @@ export type HighlighterElement = ElementBase & {
   opacity: 0.25 | 0.5;
 };
 
+export type BlurElement = ElementBase & {
+  type: "blur";
+  radius: 12;
+  rotation: 0;
+  opacity: 1;
+};
+
 export type RedactionElement = ElementBase & {
   type: "redaction";
   color: "#000000";
@@ -87,6 +94,7 @@ export type EditorElement =
   | TextElement
   | FreehandElement
   | HighlighterElement
+  | BlurElement
   | RedactionElement
   | NumberMarkerElement;
 
@@ -98,6 +106,7 @@ export type EditorTool =
   | "text"
   | "freehand"
   | "highlighter"
+  | "blur"
   | "redaction"
   | "numberMarker";
 

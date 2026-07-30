@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as roughRenderer from "../canvas/roughRenderer";
 import { roughPathsFor } from "../canvas/roughRenderer";
-import { fixtureDocument, fixtureLine, fixtureRect } from "../test/fixtures";
+import { fixtureBlur, fixtureDocument, fixtureLine, fixtureRect } from "../test/fixtures";
 import { renderDocumentToBlob } from "./renderDocumentToBlob";
 
 describe("renderDocumentToBlob", () => {
@@ -14,7 +14,7 @@ describe("renderDocumentToBlob", () => {
     const context = {
       globalAlpha: 1,
       save: vi.fn(), restore: vi.fn(), translate: vi.fn(), rotate: vi.fn(),
-      drawImage: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), stroke: vi.fn(), fill: vi.fn(),
+      drawImage: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), stroke: vi.fn(), fill: vi.fn(),
       moveTo: vi.fn(), lineTo: vi.fn(), fillText: vi.fn(), arc: vi.fn(),
       closePath: vi.fn(),
       fillRect: vi.fn(), strokeRect: vi.fn(),
@@ -162,13 +162,36 @@ describe("renderDocumentToBlob", () => {
 
     expect(fonts).toContain("12px Arial");
   });
+
+  it("draws blur before vector annotations during export", async () => {
+    const outputCanvas = document.createElement("canvas");
+    const drawOperations: string[] = [];
+    const outputContext = canvasContext();
+    const drawImage = outputContext.drawImage as unknown as { mockImplementation: (implementation: (image: unknown) => void) => void };
+    const fillText = outputContext.fillText as unknown as { mockImplementation: (implementation: () => void) => void };
+    drawImage.mockImplementation((image: unknown) => {
+      if (outputContext.filter === "blur(12px)") return;
+      drawOperations.push(image === outputCanvas ? "blurred-source-crop" : "source");
+    });
+    const createElement = vi.spyOn(document, "createElement").mockReturnValue(outputCanvas);
+    vi.spyOn(outputCanvas, "getContext").mockReturnValue(outputContext);
+    vi.spyOn(outputCanvas, "toBlob").mockImplementation((callback) => callback(new Blob(["png"], { type: "image/png" })));
+    vi.stubGlobal("Image", loadedImage(1440, 900));
+    const text = { ...fixtureDocument().elements[0], id: "text-1", type: "text" as const, x: 40, y: 50, width: 180, height: 36, zIndex: 1, text: "After blur", color: "#000000" as const, fontSize: 24 as const };
+    fillText.mockImplementation(() => drawOperations.push("text"));
+
+    await renderDocumentToBlob(fixtureDocument({ elements: [text, fixtureBlur()] }), "source.png");
+
+    expect(createElement).toHaveBeenCalledTimes(2);
+    expect(drawOperations).toEqual(["source", "blurred-source-crop", "text"]);
+  });
 });
 
 function canvasContext(): CanvasRenderingContext2D & { stroke: ReturnType<typeof vi.fn>; fill: ReturnType<typeof vi.fn> } {
   return {
     globalAlpha: 1,
     save: vi.fn(), restore: vi.fn(), translate: vi.fn(), rotate: vi.fn(),
-    drawImage: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), stroke: vi.fn(), fill: vi.fn(),
+    drawImage: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), stroke: vi.fn(), fill: vi.fn(),
     moveTo: vi.fn(), lineTo: vi.fn(), fillText: vi.fn(), arc: vi.fn(),
     closePath: vi.fn(), fillRect: vi.fn(), strokeRect: vi.fn(),
   } as unknown as CanvasRenderingContext2D & { stroke: ReturnType<typeof vi.fn>; fill: ReturnType<typeof vi.fn> };

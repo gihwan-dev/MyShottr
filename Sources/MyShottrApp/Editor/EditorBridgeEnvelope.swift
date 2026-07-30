@@ -96,7 +96,7 @@ extension EditorBridgeEnvelope where MessageType == EditorToNativeMessageType, P
         case .editorPreferencesChanged:
             guard exact(["tool", "defaults"]),
                   case let .string(tool)? = payload["tool"],
-                  ["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "redaction", "numberMarker"].contains(tool),
+                  ["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "blur", "redaction", "numberMarker"].contains(tool),
                   case let .object(defaults)? = payload["defaults"],
                   Set(defaults.keys) == ["color", "strokeWidth", "textSize", "roughness", "opacity"],
                   case let .string(color)? = defaults["color"],

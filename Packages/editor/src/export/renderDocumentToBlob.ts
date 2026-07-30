@@ -1,6 +1,7 @@
 import type { EditorDocument, EditorElement, Point } from "../model/elements";
 import { roughPathsFor } from "../canvas/roughRenderer";
 import { KONVA_DEFAULT_FONT_FAMILY, NUMBER_MARKER_FONT_SIZE } from "../canvas/renderingConstants";
+import { BLUR_RADIUS_PX, createBlurredSourceCanvas } from "../canvas/blurSource";
 
 export async function renderDocumentToBlob(document: EditorDocument, sourceImageURL: string): Promise<Blob> {
   const sourceImage = await loadSourceImage(sourceImageURL);
@@ -15,9 +16,17 @@ export async function renderDocumentToBlob(document: EditorDocument, sourceImage
   if (!context) throw new Error("Unable to create PNG rendering context");
 
   context.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
+  const blurElements = document.elements.filter((element) => element.type === "blur").sort(byZIndex);
+  const blurredSource = blurElements.length > 0
+    ? createBlurredSourceCanvas(sourceImage, document.sourcePixelWidth, document.sourcePixelHeight, BLUR_RADIUS_PX)
+    : undefined;
+  for (const element of blurElements) {
+    if (!blurredSource) throw new Error("Blur source is unavailable");
+    drawBlurElement(context, element, blurredSource, document);
+  }
   const elements = [
     ...document.elements.filter((element) => element.type === "highlighter").sort(byZIndex),
-    ...document.elements.filter((element) => element.type !== "highlighter").sort(byZIndex),
+    ...document.elements.filter((element) => element.type !== "blur" && element.type !== "highlighter").sort(byZIndex),
   ];
   for (const element of elements) drawElement(context, element);
 
@@ -27,6 +36,22 @@ export async function renderDocumentToBlob(document: EditorDocument, sourceImage
       else reject(new Error("Unable to encode composite PNG"));
     }, "image/png");
   });
+}
+
+function drawBlurElement(
+  context: CanvasRenderingContext2D,
+  element: Extract<EditorElement, { type: "blur" }>,
+  blurredSource: HTMLCanvasElement,
+  document: EditorDocument,
+): void {
+  context.save();
+  context.translate(element.x, element.y);
+  context.rotate((element.rotation * Math.PI) / 180);
+  context.beginPath();
+  context.rect(0, 0, element.width, element.height);
+  context.clip();
+  context.drawImage(blurredSource, -element.x, -element.y, document.sourcePixelWidth, document.sourcePixelHeight);
+  context.restore();
 }
 
 function loadSourceImage(sourceImageURL: string): Promise<HTMLImageElement> {
@@ -60,6 +85,8 @@ function drawElement(context: CanvasRenderingContext2D, element: EditorElement):
     case "highlighter":
       drawPath(context, element.points, element.x, element.y, element.color, element.strokeWidth);
       break;
+    case "blur":
+      throw new Error("Blur elements must render before vector annotations");
     case "redaction":
       context.fillStyle = element.color;
       context.fillRect(0, 0, element.width, element.height);

@@ -6,6 +6,7 @@ import { CanvasViewport } from "./CanvasViewport";
 import { CanvasPointerController, moveElementWithinBounds, resizeElementWithinBounds } from "./SelectionController";
 import { createElement } from "./tools/createElement";
 import { renderElement } from "./renderElement";
+import { BLUR_RADIUS_PX, createBlurredSourceCanvas } from "./blurSource";
 
 export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectangleFillColor, selectedId, onSelect, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onPanChange }: {
   document: EditorDocument;
@@ -23,6 +24,17 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   onPanChange: (pan: Point) => void;
 }) {
   const image = useSourceImage(sourceImageURL);
+  const blurredSource = useMemo(
+    () => image
+      ? createBlurredSourceCanvas(
+          image,
+          document.sourcePixelWidth,
+          document.sourcePixelHeight,
+          BLUR_RADIUS_PX,
+        )
+      : undefined,
+    [image, document.sourcePixelWidth, document.sourcePixelHeight],
+  );
   const viewport = useMemo(() => new CanvasViewport({ sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight }), [document.sourcePixelWidth, document.sourcePixelHeight]);
   viewport.setTransform({ zoom, panX: pan.x, panY: pan.y });
   const nodes = useRef(new Map<string, Konva.Group>());
@@ -95,9 +107,11 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
     };
   });
   const orderedElements = [
+    ...document.elements.filter((element) => element.type === "blur").sort(byZIndex),
     ...document.elements.filter((element) => element.type === "highlighter").sort(byZIndex),
-    ...document.elements.filter((element) => element.type !== "highlighter").sort(byZIndex),
+    ...document.elements.filter((element) => element.type !== "blur" && element.type !== "highlighter").sort(byZIndex),
   ];
+  const selectedElement = selectedId ? document.elements.find((element) => element.id === selectedId) : undefined;
 
   return (
     <div className="canvas-shell" data-testid="editor-canvas">
@@ -254,13 +268,13 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                 if (node) nodes.current.set(id, node);
                 else nodes.current.delete(id);
               },
-            }))}
+            }, blurredSource))}
             {selectedId && document.elements.find((element) => element.id === selectedId) && (() => {
               const selected = document.elements.find((element) => element.id === selectedId);
               if (!selected) throw new Error(`Cannot outline missing selected element: ${selectedId}`);
               return <Rect x={selected.x} y={selected.y} width={selected.width} height={selected.height} stroke="#1677FF" dash={[4, 4]} listening={false} />;
             })()}
-            <Transformer ref={transformer} rotateEnabled={true} flipEnabled={false} />
+            <Transformer ref={transformer} rotateEnabled={selectedElement?.type !== "blur"} flipEnabled={false} />
           </Group>
         </Layer>
       </Stage>

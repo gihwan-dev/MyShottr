@@ -94,6 +94,8 @@ export function resizeElementWithinBounds(
   const dimensions = { width: translated.width * scaleX, height: translated.height * scaleY, rotation };
   const resized = (() => {
     switch (translated.type) {
+      case "blur":
+        return { ...translated, width: translated.width * scaleX, height: translated.height * scaleY, rotation: 0 as const };
       case "arrow":
       case "line":
         return {

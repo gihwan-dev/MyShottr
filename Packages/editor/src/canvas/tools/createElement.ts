@@ -84,6 +84,9 @@ export function createElement(
         strokeWidth: 8,
         opacity: highlighterOpacity(context.defaults.opacity),
       };
+    case "blur":
+      assertBoxGesture(gesture, tool);
+      return { ...base, type: "blur", radius: 12, opacity: 1, rotation: 0 };
     case "redaction":
       assertBoxGesture(gesture, tool);
       return { ...base, type: "redaction", color: "#000000", opacity: 1 };
@@ -115,7 +118,7 @@ function createBase(
 }
 
 function boundsFor(tool: Exclude<EditorTool, "selection">, gesture: CreationGesture) {
-  if (tool === "rectangle" || tool === "arrow" || tool === "line" || tool === "redaction") {
+  if (tool === "rectangle" || tool === "arrow" || tool === "line" || tool === "blur" || tool === "redaction") {
     assertBoxGesture(gesture, tool);
     return boxBounds(gesture.start, gesture.end);
   }

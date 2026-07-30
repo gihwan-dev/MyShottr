@@ -13,7 +13,7 @@ export function ContextStylePalette({ tool, defaults, fillColor, onChange, onFil
   onChange: (defaults: EditorDefaults) => void;
   onFillChange: (color: PaletteColor | null) => void;
 }) {
-  if (tool === "selection") return null;
+  if (tool === "selection" || tool === "blur") return null;
 
   const set = <K extends keyof EditorDefaults>(key: K, value: EditorDefaults[K]) => {
     onChange({ ...defaults, [key]: value });

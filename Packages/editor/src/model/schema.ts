@@ -75,6 +75,13 @@ const HighlighterElementSchema = ElementBaseSchema.extend({
   opacity: z.union([z.literal(0.25), z.literal(0.5)]),
 }).strict();
 
+const BlurElementSchema = ElementBaseSchema.extend({
+  type: z.literal("blur"),
+  radius: z.literal(12),
+  rotation: z.literal(0),
+  opacity: z.literal(1),
+}).strict();
+
 const RedactionElementSchema = ElementBaseSchema.extend({
   type: z.literal("redaction"),
   color: z.literal("#000000"),
@@ -94,6 +101,7 @@ export const EditorElementSchema = z.discriminatedUnion("type", [
   TextElementSchema,
   FreehandElementSchema,
   HighlighterElementSchema,
+  BlurElementSchema,
   RedactionElementSchema,
   NumberMarkerElementSchema,
 ]);
