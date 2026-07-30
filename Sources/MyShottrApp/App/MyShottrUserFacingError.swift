@@ -1,0 +1,666 @@
+import Foundation
+
+enum UserFacingErrorAction: Equatable {
+    case dismiss
+    case openScreenRecordingSettings
+    case openChromeSetupInstructions
+    case retrySameOperation
+}
+
+struct UserFacingErrorViewModel: Equatable {
+    let title: String
+    let message: String
+    let primaryAction: UserFacingErrorAction
+}
+
+enum ChromeNativeHostUserFacingError: Error, Equatable {
+    case hostUnavailable
+    case invalidMessage
+    case unsupportedCaptureMode
+    case invalidImage
+    case imageTooLarge
+    case stagingFailed
+    case appActivationFailed
+}
+
+enum UserFacingErrorContext {
+    case capture
+    case chromeImport
+    case chromeRegistration
+    case projectOpen
+    case projectSave
+    case pngExport
+    case clipboard
+    case editorBridge
+    case recovery
+    case globalShortcut
+    case application
+}
+
+enum MyShottrUserFacingError: Error {
+    case capture(CaptureError)
+    case chromeNativeHost(ChromeNativeHostUserFacingError)
+    case chromeRegistration(NativeMessagingRegistrarError)
+    case inbox(PendingCaptureInboxError)
+    case chromeImportUnavailable
+    case editorBridge(EditorBridgeError)
+    case editorProtocol(EditorBridgeEnvelopeError)
+    case project(ProjectPackageError)
+    case projectSave
+    case pngExport
+    case clipboard(PNGClipboardWriterError)
+    case compositeTransfer(CompositeTransferError)
+    case globalShortcut(GlobalHotKeyError)
+    case recoveryStore(RecoveryStoreError)
+    case recoveryScanIssue(RecoveryScanIssue)
+    case recoveryCoordinator(RecoveryCoordinatorError)
+    case sessionTermination(SessionTerminationStateError)
+    case documentSession(DocumentSessionError)
+    case recoveryOperation
+    case application
+
+    static func wrapping(
+        _ error: any Error,
+        context: UserFacingErrorContext
+    ) -> MyShottrUserFacingError {
+        switch context {
+        case .capture:
+            if let error = error as? CaptureError {
+                return .capture(error)
+            }
+            return .capture(
+                .captureFailed(error.localizedDescription)
+            )
+
+        case .chromeImport:
+            if let error = error as? PendingCaptureInboxError {
+                return .inbox(error)
+            }
+            if let error = error as? SafePNGValidationError {
+                switch error {
+                case .invalidPNG:
+                    return .inbox(.invalidPNG)
+                case .imageTooLarge:
+                    return .inbox(.imageTooLarge)
+                }
+            }
+            if error is CaptureInboxCoordinatorError {
+                return .chromeImportUnavailable
+            }
+            return .chromeImportUnavailable
+
+        case .chromeRegistration:
+            if let error = error as? NativeMessagingRegistrarError {
+                return .chromeRegistration(error)
+            }
+            return .chromeNativeHost(.hostUnavailable)
+
+        case .projectOpen:
+            if let error = error as? ProjectPackageError {
+                return .project(error)
+            }
+            return .project(.invalidManifest)
+
+        case .projectSave:
+            return .projectSave
+
+        case .pngExport:
+            if let error = error as? CompositeTransferError {
+                return .compositeTransfer(error)
+            }
+            if let error = error as? EditorBridgeError {
+                return .editorBridge(error)
+            }
+            return .pngExport
+
+        case .clipboard:
+            if let error = error as? CompositeTransferError {
+                return .compositeTransfer(error)
+            }
+            if let error = error as? EditorBridgeError {
+                return .editorBridge(error)
+            }
+            if let error = error as? PNGClipboardWriterError {
+                return .clipboard(error)
+            }
+            return .clipboard(.writeFailed)
+
+        case .editorBridge:
+            if let error = error as? EditorBridgeError {
+                return .editorBridge(error)
+            }
+            if let error = error as? EditorBridgeEnvelopeError {
+                return .editorProtocol(error)
+            }
+            return .editorBridge(.invalidMessage)
+
+        case .recovery:
+            if let error = error as? RecoveryScanIssue {
+                return .recoveryScanIssue(error)
+            }
+            if let error = error as? RecoveryStoreError {
+                return .recoveryStore(error)
+            }
+            if let error = error as? RecoveryCoordinatorError {
+                return .recoveryCoordinator(error)
+            }
+            if let error = error as? SessionTerminationStateError {
+                return .sessionTermination(error)
+            }
+            if let error = error as? DocumentSessionError {
+                return .documentSession(error)
+            }
+            return .recoveryOperation
+
+        case .globalShortcut:
+            if let error = error as? GlobalHotKeyError {
+                return .globalShortcut(error)
+            }
+            return .application
+
+        case .application:
+            return .application
+        }
+    }
+
+    var viewModel: UserFacingErrorViewModel {
+        switch self {
+        case .capture(let error):
+            return Self.captureViewModel(error)
+        case .chromeNativeHost(let error):
+            return Self.chromeHostViewModel(error)
+        case .chromeRegistration(let error):
+            return Self.chromeRegistrationViewModel(error)
+        case .inbox(let error):
+            return Self.inboxViewModel(error)
+        case .chromeImportUnavailable:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Could Not Be Opened",
+                message:
+                    "The captured image was not imported. "
+                    + "The existing editor documents were not changed.",
+                primaryAction: .dismiss
+            )
+        case .editorBridge(let error):
+            return Self.editorBridgeViewModel(error)
+        case .editorProtocol(let error):
+            return Self.editorProtocolViewModel(error)
+        case .project(let error):
+            return Self.projectViewModel(error)
+        case .projectSave:
+            return UserFacingErrorViewModel(
+                title: "Project Could Not Be Saved",
+                message:
+                    "Your document is still open and marked as modified. "
+                    + "The selected destination was not replaced.",
+                primaryAction: .dismiss
+            )
+        case .pngExport:
+            return UserFacingErrorViewModel(
+                title: "PNG Could Not Be Exported",
+                message:
+                    "The PNG was not written. "
+                    + "Your editable document is unchanged.",
+                primaryAction: .dismiss
+            )
+        case .clipboard(let error):
+            switch error {
+            case .writeFailed:
+                return UserFacingErrorViewModel(
+                    title: "Image Could Not Be Copied",
+                    message:
+                        "The image was not written to the clipboard. "
+                        + "Your editable document is unchanged.",
+                    primaryAction: .dismiss
+                )
+            }
+        case .compositeTransfer(let error):
+            return Self.compositeViewModel(error)
+        case .globalShortcut(let error):
+            switch error {
+            case .registrationFailed:
+                return UserFacingErrorViewModel(
+                    title: "Keyboard Shortcut Is Unavailable",
+                    message:
+                        "Command-Shift-2 could not be registered. "
+                        + "Capture Area remains available from the menu bar.",
+                    primaryAction: .dismiss
+                )
+            }
+        case .recoveryStore(let error):
+            return Self.recoveryStoreViewModel(error)
+        case .recoveryScanIssue(let issue):
+            return UserFacingErrorViewModel(
+                title: "Recovery Data Could Not Be Read",
+                message:
+                    "The recovery entry “\(issue.entryName)” is invalid. "
+                    + "Other valid recovery entries remain available.",
+                primaryAction: .dismiss
+            )
+        case .recoveryCoordinator(let error):
+            switch error {
+            case .invalidSelection, .restoreFailed:
+                return UserFacingErrorViewModel(
+                    title: "Project Could Not Be Recovered",
+                    message:
+                        "The selected recovery was not opened or removed. "
+                        + "Other recovery entries remain unchanged.",
+                    primaryAction: .dismiss
+                )
+            }
+        case .sessionTermination(let error):
+            switch error {
+            case .invalidRoot, .invalidState, .writeFailed:
+                return UserFacingErrorViewModel(
+                    title: "Recovery State Could Not Be Updated",
+                    message:
+                        "MyShottr could not update its local session state. "
+                        + "No document was discarded.",
+                    primaryAction: .dismiss
+                )
+            }
+        case .documentSession(let error):
+            switch error {
+            case .invalidDocument,
+                 .noOpenDocument,
+                 .noStagedDocument,
+                 .recoverySnapshotUnavailable:
+                return UserFacingErrorViewModel(
+                    title: "Document Recovery Could Not Be Updated",
+                    message:
+                        "The document remains open and modified. "
+                        + "Save the project before closing MyShottr.",
+                    primaryAction: .dismiss
+                )
+            }
+        case .recoveryOperation:
+            return UserFacingErrorViewModel(
+                title: "Recovery Operation Failed",
+                message:
+                    "The requested recovery change was not committed. "
+                    + "Existing recovery entries remain unchanged.",
+                primaryAction: .dismiss
+            )
+        case .application:
+            return UserFacingErrorViewModel(
+                title: "MyShottr Could Not Complete the Operation",
+                message:
+                    "The operation stopped without changing an existing "
+                    + "document or destination.",
+                primaryAction: .dismiss
+            )
+        }
+    }
+
+    private static func captureViewModel(
+        _ error: CaptureError
+    ) -> UserFacingErrorViewModel {
+        switch error {
+        case .screenRecordingPermissionDenied:
+            return UserFacingErrorViewModel(
+                title: "Screen Recording Permission Required",
+                message:
+                    "Allow MyShottr in System Settings > Privacy & "
+                    + "Security > Screen Recording, then capture again.",
+                primaryAction: .openScreenRecordingSettings
+            )
+        case .displayUnavailable:
+            return UserFacingErrorViewModel(
+                title: "Display Is No Longer Available",
+                message:
+                    "The selected display disconnected before the "
+                    + "capture completed. No document was created.",
+                primaryAction: .dismiss
+            )
+        case .emptySelection:
+            return UserFacingErrorViewModel(
+                title: "No Capture Area Selected",
+                message:
+                    "Drag a non-empty area before confirming the capture.",
+                primaryAction: .dismiss
+            )
+        case .captureAlreadyInProgress:
+            return UserFacingErrorViewModel(
+                title: "Capture Already in Progress",
+                message:
+                    "Finish or cancel the current region selection first.",
+                primaryAction: .dismiss
+            )
+        case .captureFailed(let detail):
+            return UserFacingErrorViewModel(
+                title: "Screen Capture Failed",
+                message:
+                    "ScreenCaptureKit could not capture the selected area. "
+                    + detail,
+                primaryAction: .dismiss
+            )
+        case .pngEncodingFailed:
+            return UserFacingErrorViewModel(
+                title: "Screenshot Could Not Be Created",
+                message:
+                    "The captured pixels could not be encoded as PNG. "
+                    + "No document was created.",
+                primaryAction: .dismiss
+            )
+        }
+    }
+
+    private static func chromeHostViewModel(
+        _ error: ChromeNativeHostUserFacingError
+    ) -> UserFacingErrorViewModel {
+        switch error {
+        case .hostUnavailable:
+            return UserFacingErrorViewModel(
+                title: "Chrome Connection Is Not Ready",
+                message:
+                    "Open MyShottr once to register the Chrome connection, "
+                    + "then try the Chrome capture again.",
+                primaryAction: .openChromeSetupInstructions
+            )
+        case .invalidMessage:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Message Was Rejected",
+                message:
+                    "The native host rejected an invalid capture message. "
+                    + "No image was imported.",
+                primaryAction: .dismiss
+            )
+        case .unsupportedCaptureMode:
+            return UserFacingErrorViewModel(
+                title: "Capture Mode Is Not Supported",
+                message:
+                    "This release supports only the visible Chrome viewport. "
+                    + "No other capture mode was used.",
+                primaryAction: .dismiss
+            )
+        case .invalidImage:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Image Is Invalid",
+                message:
+                    "The native host rejected the image before importing it.",
+                primaryAction: .dismiss
+            )
+        case .imageTooLarge:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Is Too Large",
+                message:
+                    "The image exceeds MyShottr’s local import limit and "
+                    + "was not staged.",
+                primaryAction: .dismiss
+            )
+        case .stagingFailed:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Could Not Be Staged",
+                message:
+                    "The image was not published to MyShottr’s local inbox.",
+                primaryAction: .dismiss
+            )
+        case .appActivationFailed:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Is Waiting",
+                message:
+                    "The image is safely staged in MyShottr’s local inbox. "
+                    + "Open MyShottr to import it.",
+                primaryAction: .dismiss
+            )
+        }
+    }
+
+    private static func chromeRegistrationViewModel(
+        _ error: NativeMessagingRegistrarError
+    ) -> UserFacingErrorViewModel {
+        let detail: String
+        switch error {
+        case .invalidHelperPath:
+            detail = "The bundled native helper path is invalid."
+        case .missingPublicKeyResource:
+            detail = "The bundled Chrome extension identity is missing."
+        case .systemCallFailed(let name, _):
+            detail = "The local Chrome registration step “\(name)” failed."
+        }
+        return UserFacingErrorViewModel(
+            title: "Chrome Setup Could Not Be Completed",
+            message:
+                detail
+                + " Native and project capture data remain unchanged.",
+            primaryAction: .openChromeSetupInstructions
+        )
+    }
+
+    private static func inboxViewModel(
+        _ error: PendingCaptureInboxError
+    ) -> UserFacingErrorViewModel {
+        switch error {
+        case .captureNotFound:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Is No Longer Available",
+                message:
+                    "The requested local inbox entry does not exist. "
+                    + "No editor document was opened.",
+                primaryAction: .dismiss
+            )
+        case .insecureInboxRoot:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Inbox Is Not Secure",
+                message:
+                    "MyShottr refused to read the inbox because its "
+                    + "ownership or permissions are unsafe.",
+                primaryAction: .dismiss
+            )
+        case .invalidEntry:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Entry Was Rejected",
+                message:
+                    "The inbox entry failed path or file validation. "
+                    + "No editor document was opened.",
+                primaryAction: .dismiss
+            )
+        case .invalidPNG:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Image Is Invalid",
+                message:
+                    "The inbox image is not a valid PNG. "
+                    + "No partial editor document was opened.",
+                primaryAction: .dismiss
+            )
+        case .imageTooLarge:
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Is Too Large",
+                message:
+                    "The inbox image exceeds MyShottr’s local import limit. "
+                    + "No editor document was opened.",
+                primaryAction: .dismiss
+            )
+        case .systemCallFailed(let name, _):
+            return UserFacingErrorViewModel(
+                title: "Chrome Capture Import Failed",
+                message:
+                    "The local inbox operation “\(name)” failed. "
+                    + "Existing documents were not changed.",
+                primaryAction: .dismiss
+            )
+        }
+    }
+
+    private static func editorBridgeViewModel(
+        _ error: EditorBridgeError
+    ) -> UserFacingErrorViewModel {
+        switch error {
+        case .editorNotReady:
+            return UserFacingErrorViewModel(
+                title: "Editor Is Not Ready",
+                message:
+                    "The editor did not finish loading. "
+                    + "The native document state is unchanged.",
+                primaryAction: .dismiss
+            )
+        case .invalidMessage:
+            return UserFacingErrorViewModel(
+                title: "Editor Message Was Rejected",
+                message:
+                    "MyShottr rejected an invalid editor message and kept "
+                    + "the current native document state.",
+                primaryAction: .dismiss
+            )
+        case .invalidDocument:
+            return UserFacingErrorViewModel(
+                title: "Editor Document Is Invalid",
+                message:
+                    "The editor could not accept the document. "
+                    + "No partial document was installed.",
+                primaryAction: .dismiss
+            )
+        case .cancelled:
+            return UserFacingErrorViewModel(
+                title: "Editor Operation Was Cancelled",
+                message:
+                    "The operation ended without replacing output or "
+                    + "discarding document changes.",
+                primaryAction: .dismiss
+            )
+        case .timedOut:
+            return UserFacingErrorViewModel(
+                title: "Editor Operation Timed Out",
+                message:
+                    "The editor did not respond in time. "
+                    + "Your native document state is unchanged.",
+                primaryAction: .dismiss
+            )
+        }
+    }
+
+    private static func editorProtocolViewModel(
+        _ error: EditorBridgeEnvelopeError
+    ) -> UserFacingErrorViewModel {
+        switch error {
+        case .unsupportedProtocolVersion:
+            return UserFacingErrorViewModel(
+                title: "Editor Protocol Is Not Supported",
+                message:
+                    "The editor message uses an unsupported protocol version "
+                    + "and was rejected.",
+                primaryAction: .dismiss
+            )
+        case .payloadTooLarge:
+            return UserFacingErrorViewModel(
+                title: "Editor Message Is Too Large",
+                message:
+                    "The editor message exceeded the local bridge limit "
+                    + "and was rejected.",
+                primaryAction: .dismiss
+            )
+        case .malformedMessage:
+            return UserFacingErrorViewModel(
+                title: "Editor Message Was Rejected",
+                message:
+                    "The editor message did not match the bridge protocol. "
+                    + "The native document state is unchanged.",
+                primaryAction: .dismiss
+            )
+        }
+    }
+
+    private static func projectViewModel(
+        _ error: ProjectPackageError
+    ) -> UserFacingErrorViewModel {
+        switch error {
+        case .unsupportedFormatVersion(let version):
+            return UserFacingErrorViewModel(
+                title: "Project Version Is Not Supported",
+                message:
+                    "Project format version \(version) is not supported. "
+                    + "The project was not opened.",
+                primaryAction: .dismiss
+            )
+        case .unsupportedAnnotationSchemaVersion(let version):
+            return UserFacingErrorViewModel(
+                title: "Project Version Is Not Supported",
+                message:
+                    "Editor document version \(version) is not supported. "
+                    + "The project was not opened.",
+                primaryAction: .dismiss
+            )
+        case .notDirectoryPackage,
+             .invalidMemberSet,
+             .invalidManifest,
+             .invalidAnnotationJSON,
+             .invalidPNG,
+             .sourceDimensionsMismatch:
+            return UserFacingErrorViewModel(
+                title: "Project Could Not Be Opened",
+                message:
+                    "The project package is corrupt or invalid. "
+                    + "No editor document was opened.",
+                primaryAction: .dismiss
+            )
+        }
+    }
+
+    private static func compositeViewModel(
+        _ error: CompositeTransferError
+    ) -> UserFacingErrorViewModel {
+        let detail: String
+        switch error {
+        case .temporaryFile:
+            detail = "A secure temporary output file could not be created."
+        case .invalidBase64:
+            detail = "An output chunk contained invalid encoded data."
+        case .unexpectedChunk:
+            detail = "Output chunks arrived out of order."
+        case .inconsistentChunkTotal:
+            detail = "Output chunks reported inconsistent totals."
+        case .incomplete:
+            detail = "The editor did not send every output chunk."
+        case .invalidPNG:
+            detail = "The completed output is not a valid PNG."
+        case .invalidDimensions:
+            detail = "The completed output has invalid pixel dimensions."
+        case .dimensionsMismatch:
+            detail = "The completed output does not match the source size."
+        case .notFinished:
+            detail = "The output transfer did not finish."
+        case .moveFailed:
+            detail = "The validated PNG could not replace the destination."
+        }
+        return UserFacingErrorViewModel(
+            title: "Image Transfer Failed",
+            message:
+                detail
+                + " Partial output was removed and the document is unchanged.",
+            primaryAction: .dismiss
+        )
+    }
+
+    private static func recoveryStoreViewModel(
+        _ error: RecoveryStoreError
+    ) -> UserFacingErrorViewModel {
+        switch error {
+        case .invalidRoot,
+             .invalidPackagePath,
+             .invalidPackage,
+             .documentIdentifierMismatch,
+             .readFailed,
+             .invalidDiscardTransactionPath:
+            return UserFacingErrorViewModel(
+                title: "Recovery Data Could Not Be Read",
+                message:
+                    "One recovery operation failed validation. "
+                    + "Valid recovery entries remain available.",
+                primaryAction: .dismiss
+            )
+        case .writeFailed,
+             .removeFailed,
+             .discardStageFailed,
+             .discardRollbackFailed,
+             .discardRollbackConflict,
+             .discardCleanupFailed:
+            return UserFacingErrorViewModel(
+                title: "Recovery Data Could Not Be Updated",
+                message:
+                    "MyShottr did not commit the recovery change. "
+                    + "The open document remains modified.",
+                primaryAction: .dismiss
+            )
+        }
+    }
+}

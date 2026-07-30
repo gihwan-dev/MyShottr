@@ -83,6 +83,49 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         )
     }
 
+    func testStartReportsOneTypedErrorAndStillImportsOtherValidCapture() {
+        let invalid = StagedCapture(
+            id: ChromeFixtures.captureID,
+            pngURL: URL(fileURLWithPath: "/inbox/invalid.png")
+        )
+        let valid = StagedCapture(
+            id: ChromeFixtures.secondCaptureID,
+            pngURL: URL(fileURLWithPath: "/inbox/valid.png")
+        )
+        let inbox = StubPendingCaptureInbox(
+            pending: [invalid, valid],
+            dataByID: [
+                invalid.id: ProjectFixtures.pngData,
+                valid.id: ProjectFixtures.pngData,
+            ]
+        )
+        inbox.claimErrorByID[invalid.id] =
+            PendingCaptureInboxError.invalidPNG
+        let windows = SpyDocumentWindowPresenter()
+        var reportedErrors: [MyShottrUserFacingError] = []
+        let coordinator = CaptureInboxCoordinator(
+            inbox: inbox,
+            projectFactory: StubNewProjectFactory(),
+            windows: windows,
+            reportError: {
+                reportedErrors.append($0)
+            }
+        )
+
+        coordinator.start()
+        coordinator.stop()
+
+        XCTAssertEqual(reportedErrors.count, 1)
+        XCTAssertEqual(
+            reportedErrors.first?.viewModel.title,
+            "Chrome Capture Image Is Invalid"
+        )
+        XCTAssertEqual(
+            windows.presentedProjects.map(\.manifest.documentId),
+            [valid.id]
+        )
+    }
+
     func testProjectFactoryFailureLeavesClaimUncommitted() {
         let inbox = StubPendingCaptureInbox()
         let windows = SpyDocumentWindowPresenter()
@@ -255,7 +298,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
     func testUnknownCaptureNotificationDoesNotReportError() {
         let inbox = StubPendingCaptureInbox(dataByID: [:])
         let windows = SpyDocumentWindowPresenter()
-        var reportedErrors: [any Error] = []
+        var reportedErrors: [MyShottrUserFacingError] = []
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
             projectFactory: StubNewProjectFactory(),
@@ -280,7 +323,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         inbox.claimErrorByID[ChromeFixtures.captureID] =
             PendingCaptureInboxError.invalidPNG
         let windows = SpyDocumentWindowPresenter()
-        var reportedErrors: [any Error] = []
+        var reportedErrors: [MyShottrUserFacingError] = []
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
             projectFactory: StubNewProjectFactory(),
@@ -296,8 +339,8 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            reportedErrors.first as? PendingCaptureInboxError,
-            .invalidPNG
+            reportedErrors.first?.viewModel.title,
+            "Chrome Capture Image Is Invalid"
         )
         XCTAssertTrue(windows.presentedProjects.isEmpty)
     }

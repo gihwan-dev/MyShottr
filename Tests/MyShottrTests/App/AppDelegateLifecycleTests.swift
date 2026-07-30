@@ -106,6 +106,38 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(application.activationCount, 0)
     }
 
+    func testGlobalShortcutConflictReportsTypedErrorAndKeepsAccessoryPolicy() {
+        let application = SpyApplicationLifecycle()
+        var reportedErrors: [MyShottrUserFacingError] = []
+        let delegate = AppDelegate(
+            applicationLifecycle: application.lifecycle,
+            nativeMessagingHostInstaller: {},
+            chromeCaptureCoordinatorFactory:
+                makeEmptyChromeCoordinator,
+            launchErrorReporter: {
+                reportedErrors.append($0)
+            },
+            sessionTerminationStateFactory:
+                makeCleanTerminationState,
+            recoveryStoreFactory: { SpyRecoveryStore() },
+            recoveryPrompt: SpyRecoveryPrompt(),
+            hotKeyAPI: makeFailingHotKeyAPI()
+        )
+
+        delegate.applicationDidFinishLaunching(
+            Notification(
+                name: NSApplication.didFinishLaunchingNotification
+            )
+        )
+
+        XCTAssertEqual(
+            reportedErrors.map(\.viewModel.title),
+            ["Keyboard Shortcut Is Unavailable"]
+        )
+        XCTAssertEqual(application.activationPolicies, [.accessory])
+        XCTAssertEqual(delegate.activeDocumentWindowCount, 0)
+    }
+
     func testLaunchInstallsHostThenScansPendingChromeCaptures() {
         let application = SpyApplicationLifecycle()
         let window = SpyEditorWindowController()
@@ -183,7 +215,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 ),
             ]
         )
-        var reportedErrors: [any Error] = []
+        var reportedErrors: [MyShottrUserFacingError] = []
         var events: [String] = []
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
@@ -223,8 +255,8 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            reportedErrors.first as? AppDelegateLifecycleTestError,
-            .registration
+            reportedErrors.first?.viewModel.title,
+            "Chrome Connection Is Not Ready"
         )
         XCTAssertEqual(
             events,
@@ -1093,6 +1125,21 @@ private func makeNoOpHotKeyAPI() -> GlobalHotKeyAPI {
         installEventHandler: { _, _, outputHandler in
             outputHandler.pointee = nil
             return noErr
+        },
+        registerEventHotKey: { _, _, _, outputHotKey in
+            outputHotKey.pointee = nil
+            return noErr
+        },
+        unregisterEventHotKey: { _ in noErr },
+        removeEventHandler: { _ in noErr }
+    )
+}
+
+private func makeFailingHotKeyAPI() -> GlobalHotKeyAPI {
+    GlobalHotKeyAPI(
+        installEventHandler: { _, _, outputHandler in
+            outputHandler.pointee = nil
+            return OSStatus(eventInternalErr)
         },
         registerEventHotKey: { _, _, _, outputHotKey in
             outputHotKey.pointee = nil

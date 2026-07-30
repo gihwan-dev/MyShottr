@@ -31,8 +31,7 @@ final class ScreenCaptureClientTests: XCTestCase {
     func testCaptureRequiresPermissionBeforeCallingCaptureAdapter() async {
         let permission = ScreenCapturePermission(
             preflight: { false },
-            request: { false },
-            openSettings: {}
+            request: { false }
         )
         let client = ScreenCaptureClient(
             permission: permission,
@@ -53,8 +52,7 @@ final class ScreenCaptureClientTests: XCTestCase {
     func testCaptureMapsAdapterFailureToActionableCaptureError() async {
         let permission = ScreenCapturePermission(
             preflight: { true },
-            request: { false },
-            openSettings: {}
+            request: { false }
         )
         let client = ScreenCaptureClient(
             permission: permission,
@@ -95,9 +93,6 @@ final class ScreenCaptureClientTests: XCTestCase {
             request: {
                 XCTFail("Preflight access must skip the permission request")
                 return false
-            },
-            openSettings: {
-                XCTFail("Granted permission must not open System Settings")
             }
         )
         let client = ScreenCaptureClient(

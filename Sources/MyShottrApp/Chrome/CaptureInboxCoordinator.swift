@@ -43,7 +43,7 @@ final class CaptureInboxCoordinator: NSObject {
     private weak var windows: (any DocumentWindowPresenting)?
     private let now: () -> Date
     private let notificationAPI: CaptureReadyNotificationAPI
-    private let reportError: (any Error) -> Void
+    private let reportError: (MyShottrUserFacingError) -> Void
     private var presentedStates:
         [UUID: PresentedInMemoryState] = [:]
     private var isObserving = false
@@ -54,8 +54,9 @@ final class CaptureInboxCoordinator: NSObject {
         windows: any DocumentWindowPresenting,
         now: @escaping () -> Date = Date.init,
         notificationAPI: CaptureReadyNotificationAPI = .live,
-        reportError: @escaping (any Error) -> Void = {
-            NSAlert(error: $0).runModal()
+        reportError:
+            @escaping (MyShottrUserFacingError) -> Void = {
+                UserFacingErrorPresenter().present($0, from: nil)
         }
     ) {
         self.inbox = inbox
@@ -67,7 +68,7 @@ final class CaptureInboxCoordinator: NSObject {
         super.init()
     }
 
-    func start() throws {
+    func start() {
         if !isObserving {
             notificationAPI.addObserver(
                 self,
@@ -76,7 +77,13 @@ final class CaptureInboxCoordinator: NSObject {
             )
             isObserving = true
         }
-        try consumePendingCaptures()
+        do {
+            try consumePendingCaptures()
+        } catch {
+            reportError(
+                .wrapping(error, context: .chromeImport)
+            )
+        }
     }
 
     func stop() {
@@ -184,7 +191,9 @@ final class CaptureInboxCoordinator: NSObject {
         } catch PendingCaptureInboxError.captureNotFound {
             return
         } catch {
-            reportError(error)
+            reportError(
+                .wrapping(error, context: .chromeImport)
+            )
         }
     }
 

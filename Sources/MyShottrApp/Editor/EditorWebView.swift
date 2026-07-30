@@ -12,6 +12,11 @@ final class EditorWebView: NSObject, WKNavigationDelegate {
     private(set) var navigationFinished = false
     var onNavigationFinished: (() -> Void)?
     var onNavigationFailure: ((Error) -> Void)?
+    var onBridgeFailure: ((EditorBridgeError) -> Void)? {
+        didSet {
+            bridge.onUncorrelatedError = onBridgeFailure
+        }
+    }
 
     convenience init(session: DocumentSession, preferences: any EditorPreferencesStoring = UserDefaultsEditorPreferencesStore()) {
         guard let resourcesURL = Bundle.main.resourceURL

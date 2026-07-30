@@ -29,9 +29,9 @@ final class RegionCaptureCoordinator {
     }
 
     @discardableResult
-    func captureArea() async -> (any Error)? {
+    func captureArea() async -> MyShottrUserFacingError? {
         guard !captureIsActive else {
-            return CaptureError.captureAlreadyInProgress
+            return .capture(.captureAlreadyInProgress)
         }
 
         captureIsActive = true
@@ -55,7 +55,7 @@ final class RegionCaptureCoordinator {
             try windows?.present(project: project)
             return nil
         } catch {
-            return error
+            return .wrapping(error, context: .capture)
         }
     }
 }

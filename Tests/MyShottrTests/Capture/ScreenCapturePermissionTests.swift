@@ -5,8 +5,7 @@ final class ScreenCapturePermissionTests: XCTestCase {
     func testDeniedPermissionReturnsActionableError() {
         let permission = ScreenCapturePermission(
             preflight: { false },
-            request: { false },
-            openSettings: {}
+            request: { false }
         )
 
         XCTAssertThrowsError(try permission.requireAccess()) {
@@ -21,8 +20,7 @@ final class ScreenCapturePermissionTests: XCTestCase {
             request: {
                 requestCount += 1
                 return false
-            },
-            openSettings: {}
+            }
         )
 
         try permission.requireAccess()
@@ -37,8 +35,7 @@ final class ScreenCapturePermissionTests: XCTestCase {
             request: {
                 requestCount += 1
                 return true
-            },
-            openSettings: {}
+            }
         )
 
         try permission.requireAccess()
@@ -46,16 +43,18 @@ final class ScreenCapturePermissionTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
-    func testDeniedPermissionOpensScreenRecordingSettings() {
-        var didOpenSettings = false
+    func testDeniedPermissionDoesNotPerformASecondRequest() {
+        var requestCount = 0
         let permission = ScreenCapturePermission(
             preflight: { false },
-            request: { false },
-            openSettings: { didOpenSettings = true }
+            request: {
+                requestCount += 1
+                return false
+            }
         )
 
         XCTAssertThrowsError(try permission.requireAccess())
 
-        XCTAssertTrue(didOpenSettings)
+        XCTAssertEqual(requestCount, 1)
     }
 }

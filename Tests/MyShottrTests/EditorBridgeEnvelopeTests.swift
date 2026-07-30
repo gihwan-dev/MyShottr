@@ -173,6 +173,10 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         let session = DocumentSession()
         var outgoing: [NativeToEditorEnvelope] = []
         let bridge = EditorBridge(session: session) { outgoing.append($0) }
+        var reportedErrors: [EditorBridgeError] = []
+        bridge.onUncorrelatedError = {
+            reportedErrors.append($0)
+        }
 
         try bridge.load(project: try project(annotationDocument: validDocument()))
         bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
@@ -187,6 +191,20 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         XCTAssertFalse(session.isOpen)
         XCTAssertNil(session.sourcePNG(for: loadDocumentID(from: load)))
         XCTAssertEqual(bridge.lastError, .invalidDocument)
+        XCTAssertEqual(reportedErrors, [.invalidDocument])
+    }
+
+    @MainActor
+    func testMalformedUncorrelatedMessageReportsExactlyOnce() {
+        let bridge = EditorBridge(session: DocumentSession())
+        var reportedErrors: [EditorBridgeError] = []
+        bridge.onUncorrelatedError = {
+            reportedErrors.append($0)
+        }
+
+        bridge.receive(data: Data("{}".utf8))
+
+        XCTAssertEqual(reportedErrors, [.invalidMessage])
     }
 
     @MainActor

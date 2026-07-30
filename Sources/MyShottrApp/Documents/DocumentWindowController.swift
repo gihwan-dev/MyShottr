@@ -27,6 +27,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private let session: DocumentSession
     private let editorWebView: EditorWebView
     private let projectStore: any ProjectPackageStoring
+    private let errorPresenter: any UserFacingErrorPresenting
     let representedDocumentID: UUID
     private var projectURL: URL?
     private var closeAfterPrompt = false
@@ -42,7 +43,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         preferences: any EditorPreferencesStoring =
             UserDefaultsEditorPreferencesStore(),
         recoveryStore: (any RecoveryStoring)? = nil,
-        isRecoveredDocument: Bool = false
+        isRecoveredDocument: Bool = false,
+        errorPresenter: any UserFacingErrorPresenting =
+            UserFacingErrorPresenter()
     ) throws {
         let resolvedRecoveryStore: any RecoveryStoring
         if let recoveryStore {
@@ -56,6 +59,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         self.session = session
         self.editorWebView = EditorWebView(session: session, preferences: preferences)
         self.projectStore = projectStore
+        self.errorPresenter = errorPresenter
         self.representedDocumentID =
             project.manifest.documentId
         self.projectURL = projectURL
@@ -84,7 +88,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             window?.isDocumentEdited = modified
         }
         session.onRecoveryFailure = { [weak self] error in
-            self?.present(error)
+            self?.present(
+                .wrapping(error, context: .recovery)
+            )
         }
         session.recoverySnapshotProvider = {
             [weak editorWebView] in
@@ -96,7 +102,13 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         }
         editorWebView.onNavigationFailure = {
             [weak self] error in
-            self?.present(error)
+            self?.present(
+                .wrapping(error, context: .editorBridge)
+            )
+        }
+        editorWebView.onBridgeFailure = {
+            [weak self] error in
+            self?.present(.editorBridge(error))
         }
         if isRecoveredDocument {
             session.prepareForRecoveryRestore()
@@ -120,7 +132,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                     closeAfterPrompt = true
                     window?.performClose(nil)
                 } catch {
-                    present(error)
+                    present(
+                        .wrapping(error, context: .recovery)
+                    )
                 }
             }
         }
@@ -248,7 +262,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                 defer { transfer.discard() }
                 try PNGClipboardWriter().write(data: transfer.data())
             } catch {
-                present(error)
+                present(
+                    .wrapping(error, context: .clipboard)
+                )
             }
         }
         return true
@@ -268,7 +284,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                 defer { transfer.discard() }
                 try transfer.move(to: destinationURL)
             } catch {
-                present(error)
+                present(
+                    .wrapping(error, context: .pngExport)
+                )
             }
         }
         return true
@@ -299,7 +317,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             window?.title = url.deletingPathExtension().lastPathComponent
             return true
         } catch {
-            present(error)
+            present(
+                .wrapping(error, context: .projectSave)
+            )
             return false
         }
     }
@@ -328,9 +348,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     }
 
     @discardableResult
-    func present(_ error: Error) -> Bool {
-        guard let window else { return false }
-        NSAlert(error: error).beginSheetModal(for: window)
+    func present(_ error: MyShottrUserFacingError) -> Bool {
+        errorPresenter.present(error, from: window)
         return true
     }
 }

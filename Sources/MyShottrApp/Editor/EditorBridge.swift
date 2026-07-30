@@ -29,6 +29,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private let javaScriptEvaluationObserver: ((UUID, @escaping (Error?) -> Void) -> Void)?
     private let outgoingMessageObserver: ((NativeToEditorEnvelope) -> Void)?
     private(set) var lastError: EditorBridgeError?
+    var onUncorrelatedError: ((EditorBridgeError) -> Void)?
 
     init(
         session: DocumentSession,
@@ -166,7 +167,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
               JSONSerialization.isValidJSONObject(message.body),
               let data = try? JSONSerialization.data(withJSONObject: message.body)
         else {
-            lastError = .invalidMessage
+            reportUncorrelatedError(.invalidMessage)
             return
         }
         receive(data: data)
@@ -181,7 +182,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 failPendingRequest(requestID, error: EditorBridgeError.invalidMessage)
                 return
             }
-            lastError = .invalidMessage
+            reportUncorrelatedError(.invalidMessage)
             return
         }
         if retiredRequestIDs.contains(message.requestId) { return }
@@ -201,14 +202,14 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                     try sendLoadDocument(pendingProject)
                 } catch {
                     discardPendingLoad()
-                    lastError = .invalidDocument
+                    reportUncorrelatedError(.invalidDocument)
                 }
             }
         case .documentChanged:
             do {
                 try session.markModified()
             } catch {
-                lastError = .invalidDocument
+                reportUncorrelatedError(.invalidDocument)
             }
         case .editorPreferencesChanged:
             installPreferences(message)
@@ -226,7 +227,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                     recordInvalidMessage: false
                 )
             } else {
-                lastError = .invalidMessage
+                reportUncorrelatedError(.invalidMessage)
             }
         case .compositeChunk:
             installCompositeChunk(message)
@@ -248,7 +249,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
               let roughness = Int(exactly: roughness),
               case let .number(opacity)? = defaults["opacity"]
         else {
-            lastError = .invalidMessage
+            reportUncorrelatedError(.invalidMessage)
             return
         }
         do {
@@ -261,7 +262,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 opacity: opacity
             ))
         } catch {
-            lastError = .invalidMessage
+            reportUncorrelatedError(.invalidMessage)
         }
     }
 
@@ -269,10 +270,15 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         guard case let .object(payload) = message.payload,
               case let .object(document)? = payload["document"]
         else {
-            if snapshotContinuations[message.requestId] != nil {
-                failSnapshotRequest(message.requestId, error: EditorBridgeError.invalidDocument)
+            if message.requestId == pendingLoadRequestID
+                || snapshotContinuations[message.requestId] != nil {
+                failPendingRequest(
+                    message.requestId,
+                    error: EditorBridgeError.invalidDocument
+                )
+            } else {
+                reportUncorrelatedError(.invalidDocument)
             }
-            lastError = .invalidDocument
             return
         }
         do {
@@ -287,15 +293,16 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 try session.install(annotationJSON: data)
                 completeSnapshotRequest(message.requestId, data: data)
             } else {
-                lastError = .invalidMessage
+                reportUncorrelatedError(.invalidMessage)
             }
         } catch {
             if message.requestId == pendingLoadRequestID {
                 failLoadRequest(message.requestId, error: .invalidDocument)
-            } else {
+            } else if snapshotContinuations[message.requestId] != nil {
                 failSnapshotRequest(message.requestId, error: error)
+            } else {
+                reportUncorrelatedError(.invalidDocument)
             }
-            lastError = .invalidDocument
         }
     }
 
@@ -337,7 +344,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
 
     private func installCompositeChunk(_ message: EditorToNativeEnvelope) {
         guard compositeContinuations[message.requestId] != nil else {
-            lastError = .invalidMessage
+            reportUncorrelatedError(.invalidMessage)
             return
         }
         guard
@@ -374,7 +381,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
 
     private func finishComposite(_ message: EditorToNativeEnvelope) {
         guard compositeContinuations[message.requestId] != nil else {
-            lastError = .invalidMessage
+            reportUncorrelatedError(.invalidMessage)
             return
         }
         guard case let .object(payload) = message.payload,
@@ -476,7 +483,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private func failLoadRequest(_ requestID: UUID, error: EditorBridgeError) {
         guard requestID == pendingLoadRequestID else { return }
         discardPendingLoad()
-        lastError = error
+        reportUncorrelatedError(error)
     }
 
     private func failCompositeRequest(
@@ -570,5 +577,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             return nil
         }
         return requestID
+    }
+
+    private func reportUncorrelatedError(
+        _ error: EditorBridgeError
+    ) {
+        lastError = error
+        onUncorrelatedError?(error)
     }
 }

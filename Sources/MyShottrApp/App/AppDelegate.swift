@@ -34,7 +34,7 @@ final class AppDelegate:
         _ projectFactory: any NewProjectCreating,
         _ windows: any DocumentWindowPresenting
     ) throws -> CaptureInboxCoordinator
-    typealias LaunchErrorReporter = (any Error) -> Void
+    typealias LaunchErrorReporter = (MyShottrUserFacingError) -> Void
     typealias SessionTerminationStateFactory =
         () throws -> any SessionTerminationTracking
     typealias RecoveryStoreFactory =
@@ -125,7 +125,10 @@ final class AppDelegate:
             },
         launchErrorReporter:
             @escaping LaunchErrorReporter = {
-                NSAlert(error: $0).runModal()
+                UserFacingErrorPresenter().present(
+                    $0,
+                    from: nil
+                )
             },
         sessionTerminationStateFactory:
             @escaping SessionTerminationStateFactory = {
@@ -186,16 +189,26 @@ final class AppDelegate:
                 self
             )
             chromeCaptureCoordinator = chromeCoordinator
-            try chromeCoordinator.start()
+            chromeCoordinator.start()
         } catch {
             chromeStartupError = error
         }
 
         if let registrationError {
-            launchErrorReporter(registrationError)
+            launchErrorReporter(
+                MyShottrUserFacingError.wrapping(
+                    registrationError,
+                    context: .chromeRegistration
+                )
+            )
         }
         if let chromeStartupError {
-            launchErrorReporter(chromeStartupError)
+            launchErrorReporter(
+                MyShottrUserFacingError.wrapping(
+                    chromeStartupError,
+                    context: .chromeImport
+                )
+            )
         }
 
         do {
@@ -210,14 +223,30 @@ final class AppDelegate:
                     NSApp.terminate(nil)
                 }
             )
+        } catch {
+            launchErrorReporter(
+                MyShottrUserFacingError.wrapping(
+                    error,
+                    context: .application
+                )
+            )
+            NSApp.terminate(nil)
+            return
+        }
+
+        do {
             hotKeyRegistrar = try GlobalHotKeyRegistrar(
                 api: hotKeyAPI
             ) { [weak self] in
                 self?.captureArea()
             }
         } catch {
-            NSAlert(error: error).runModal()
-            NSApp.terminate(nil)
+            launchErrorReporter(
+                MyShottrUserFacingError.wrapping(
+                    error,
+                    context: .globalShortcut
+                )
+            )
         }
     }
 
@@ -234,7 +263,12 @@ final class AppDelegate:
         do {
             try sessionTerminationState.markCleanExit()
         } catch {
-            launchErrorReporter(error)
+            launchErrorReporter(
+                MyShottrUserFacingError.wrapping(
+                    error,
+                    context: .recovery
+                )
+            )
         }
     }
 
@@ -284,10 +318,12 @@ final class AppDelegate:
         }
 
         Task { @MainActor in
-            if let error = await captureCoordinator.captureArea(),
-               error as? CaptureError != .captureAlreadyInProgress {
-                NSAlert(error: error).runModal()
+            guard let error =
+                    await captureCoordinator.captureArea()
+            else {
+                return
             }
+            launchErrorReporter(error)
         }
     }
 
@@ -318,7 +354,12 @@ final class AppDelegate:
                 isRecoveredDocument: false
             )
         } catch {
-            NSAlert(error: error).runModal()
+            launchErrorReporter(
+                MyShottrUserFacingError.wrapping(
+                    error,
+                    context: .projectOpen
+                )
+            )
         }
     }
 
@@ -373,14 +414,17 @@ final class AppDelegate:
             let recoveryStore = try recoveryStoreFactory()
             terminationRecoveryStore = recoveryStore
 
-            let issueReporter = launchErrorReporter
             let coordinator = RecoveryCoordinator(
                 recoveryStore: recoveryStore,
                 previousSessionWasClean:
                     previousSessionWasClean,
                 prompt: recoveryPrompt,
                 reportIssue: {
-                    issueReporter($0)
+                    [launchErrorReporter] issue in
+                    launchErrorReporter(
+                        MyShottrUserFacingError
+                            .recoveryScanIssue(issue)
+                    )
                 },
                 restore: { [weak self] recovered in
                     guard let self else {
@@ -403,7 +447,12 @@ final class AppDelegate:
             recoveryCoordinator = coordinator
             try coordinator.offerRecoveryIfNeeded()
         } catch {
-            launchErrorReporter(error)
+            launchErrorReporter(
+                MyShottrUserFacingError.wrapping(
+                    error,
+                    context: .recovery
+                )
+            )
         }
     }
 
@@ -476,7 +525,12 @@ final class AppDelegate:
                     flushedRevisions[identity] = revision
                 }
             } catch {
-                launchErrorReporter(error)
+                launchErrorReporter(
+                    MyShottrUserFacingError.wrapping(
+                        error,
+                        context: .recovery
+                    )
+                )
                 return false
             }
             if shouldRestart {
@@ -558,7 +612,12 @@ final class AppDelegate:
                     )
                 }
             } catch {
-                launchErrorReporter(error)
+                launchErrorReporter(
+                    MyShottrUserFacingError.wrapping(
+                        error,
+                        context: .recovery
+                    )
+                )
                 return false
             }
 

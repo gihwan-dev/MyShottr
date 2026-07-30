@@ -80,10 +80,11 @@ final class RegionCaptureCoordinatorTests: XCTestCase {
 
         let secondError = await coordinator.captureArea()
 
-        XCTAssertEqual(
-            secondError as? CaptureError,
-            .captureAlreadyInProgress
-        )
+        if case .capture(.captureAlreadyInProgress)? = secondError {
+            // Expected typed duplicate-trigger result.
+        } else {
+            XCTFail("Expected captureAlreadyInProgress")
+        }
         XCTAssertEqual(selector.selectionCount, 1)
         XCTAssertTrue(windows.presentedProjects.isEmpty)
 
@@ -110,8 +111,8 @@ final class RegionCaptureCoordinatorTests: XCTestCase {
         let capturedSelections = await recorder.selections
 
         XCTAssertEqual(
-            error as? CapturePipelineTestError,
-            .selection
+            error?.viewModel.title,
+            "Screen Capture Failed"
         )
         XCTAssertTrue(capturedSelections.isEmpty)
         XCTAssertTrue(windows.presentedProjects.isEmpty)
@@ -136,8 +137,8 @@ final class RegionCaptureCoordinatorTests: XCTestCase {
         let capturedSelections = await recorder.selections
 
         XCTAssertEqual(
-            error as? CapturePipelineTestError,
-            .capture
+            error?.viewModel.title,
+            "Screen Capture Failed"
         )
         XCTAssertEqual(capturedSelections, [CaptureFixtures.selection])
         XCTAssertTrue(windows.presentedProjects.isEmpty)
@@ -159,8 +160,8 @@ final class RegionCaptureCoordinatorTests: XCTestCase {
         let error = await coordinator.captureArea()
 
         XCTAssertEqual(
-            error as? CapturePipelineTestError,
-            .projectCreation
+            error?.viewModel.title,
+            "Screen Capture Failed"
         )
         XCTAssertTrue(windows.presentedProjects.isEmpty)
     }
@@ -180,8 +181,8 @@ final class RegionCaptureCoordinatorTests: XCTestCase {
         let error = await coordinator.captureArea()
 
         XCTAssertEqual(
-            error as? CapturePipelineTestError,
-            .presentation
+            error?.viewModel.title,
+            "Screen Capture Failed"
         )
         XCTAssertTrue(windows.presentedProjects.isEmpty)
     }
