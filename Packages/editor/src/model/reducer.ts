@@ -40,7 +40,7 @@ export function applyCommand(document: EditorDocument, command: EditorCommand): 
         if (currentElement.type !== element.type) {
           throw new Error(`Cannot change element type for: ${element.id}`);
         }
-        return [element.id, element];
+        return [element.id, { ...element, zIndex: currentElement.zIndex }];
       }));
       const elements = current.elements.map((candidate) => updates.get(candidate.id) ?? candidate);
       return EditorDocumentSchema.parse({ ...current, elements }) as EditorDocument;

@@ -8,6 +8,7 @@ import { KONVA_DEFAULT_FONT_FAMILY, NUMBER_MARKER_FONT_SIZE } from "./renderingC
 export type ElementInteractionHandlers = {
   selected: boolean;
   draggable: boolean;
+  textEditingEnabled: boolean;
   onSelect: (id: string) => void;
   onEditText: (id: string) => void;
   onDragStart: (node: Konva.Group) => void;
@@ -45,7 +46,7 @@ export function renderElement(
     onTransformEnd: (event) => handlers.onTransformEnd(element.id, event.currentTarget as Konva.Group),
   };
 
-  if (element.type === "text") {
+  if (element.type === "text" && handlers.textEditingEnabled) {
     groupProps.onDblClick = () => handlers.onEditText(element.id);
   }
 

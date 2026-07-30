@@ -3,7 +3,7 @@ import Konva from "konva";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createHistoryStore } from "../model/history";
-import { fixtureDocument } from "../test/fixtures";
+import { fixtureDocument, fixtureText } from "../test/fixtures";
 import { cancelAnnotationInteraction, EditorCanvas } from "./EditorCanvas";
 
 const konvaControl = vi.hoisted(() => ({
@@ -51,6 +51,11 @@ vi.mock("react-konva", async () => {
     const onDragEnd = props.onDragEnd as (() => void) | undefined;
     const onTransformStart = props.onTransformStart as ((event: { currentTarget: typeof node }) => void) | undefined;
     const onTransformEnd = props.onTransformEnd as ((event: { currentTarget: typeof node }) => void) | undefined;
+    const onDblClick = props.onDblClick as (() => void) | undefined;
+    if (onDblClick || props["data-testid"] === "element-text-1") return React.createElement("div", {
+      "data-testid": props["data-testid"],
+      onDoubleClick: onDblClick,
+    }, props.children);
     if (!onDragStart) return React.createElement("div", null, props.children);
     return React.createElement("div", {
       "data-testid": "annotation-node",
@@ -173,6 +178,37 @@ describe("cancelAnnotationInteraction", () => {
 });
 
 describe("EditorCanvas gesture terminals", () => {
+  it("does not begin text editing from a non-selection tool", () => {
+    const document = fixtureDocument({ elements: [fixtureText()] });
+    const history = createHistoryStore(document);
+    const onEditText = vi.fn();
+    render(
+      <EditorCanvas
+        document={document}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="rectangle"
+        zoom={1}
+        pan={{ x: 0, y: 0 }}
+        rectangleFillColor={null}
+        selectedId={undefined}
+        onSelect={() => {}}
+        onEditText={onEditText}
+        onCommand={(command) => history.dispatch(command)}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={() => history.commitTransaction()}
+        onCancelTransaction={() => history.cancelTransaction()}
+        onPanChange={() => {}}
+        textEditorOverlay={undefined}
+      />,
+    );
+
+    fireEvent.doubleClick(screen.getByTestId("element-text-1"));
+
+    expect(onEditText).not.toHaveBeenCalled();
+    expect(history.undo()).toBe(false);
+    expect(history.document.elements).toEqual(document.elements);
+  });
+
   it.each(["mouseup", "pointercancel"] as const)(
     "clears an abandoned creation on window %s so create undo and redo remain usable",
     (terminalEvent) => {

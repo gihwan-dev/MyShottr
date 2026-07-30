@@ -173,6 +173,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
             {orderedElements.map((element) => renderElement(element, {
               selected: selectedId === element.id,
               draggable: tool === "selection" && selectedId === element.id,
+              textEditingEnabled: tool === "selection",
               onSelect: (id) => onSelect(id),
               onEditText: (id) => onEditText(id),
               onDragStart: (node) => {

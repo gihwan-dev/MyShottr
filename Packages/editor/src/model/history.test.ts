@@ -63,6 +63,21 @@ describe("applyCommand", () => {
       elements: [{ ...fixtureRect(), id: "missing" }],
     })).toThrow("Element not found: missing");
   });
+
+  it("preserves existing z-index values for updateMany replacements", () => {
+    const document = fixtureDocument({ elements: [fixtureRect(), fixtureText()] });
+
+    const next = applyCommand(document, {
+      type: "updateMany",
+      elements: [
+        { ...fixtureRect(), opacity: 0.5, zIndex: 99 },
+        { ...fixtureText(), opacity: 0.5, zIndex: 100 },
+      ],
+    });
+
+    expect(next.elements.map((element) => element.zIndex)).toEqual([0, 3]);
+    expect(next.elements.map((element) => element.opacity)).toEqual([0.5, 0.5]);
+  });
 });
 
 describe("createHistoryStore", () => {

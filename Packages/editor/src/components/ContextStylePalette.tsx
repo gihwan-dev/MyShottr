@@ -5,6 +5,7 @@ const strokeWidths: EditorDefaults["strokeWidth"][] = [2, 4, 8];
 const textSizes: EditorDefaults["textSize"][] = [16, 24, 36];
 const roughnesses: EditorDefaults["roughness"][] = [0, 1, 2];
 const opacities: EditorDefaults["opacity"][] = [0.25, 0.5, 0.75, 1];
+const highlighterOpacities: EditorDefaults["opacity"][] = [0.25, 0.5];
 
 export function ContextStylePalette({
   tool,
@@ -36,10 +37,6 @@ export function ContextStylePalette({
   const defaultShowRoughness = tool === "rectangle" || tool === "arrow" || tool === "line";
   const defaultShowTextSize = tool === "text";
   const defaultShowOpacity = tool !== "redaction";
-  const defaultVisibleOpacity = tool === "highlighter" && defaults.opacity !== 0.25 && defaults.opacity !== 0.5
-    ? 0.5
-    : defaults.opacity;
-
   if (!isSelection && (tool === "selection" || tool === "blur")) return null;
 
   const showColor = isSelection ? selectedElements.some(supportsColor) : true;
@@ -48,14 +45,16 @@ export function ContextStylePalette({
   const showRoughness = isSelection ? selectedElements.some(supportsRoughness) : defaultShowRoughness;
   const showTextSize = isSelection ? selectedElements.some(supportsTextSize) : defaultShowTextSize;
   const showOpacity = isSelection ? selectedElements.some(supportsOpacity) : defaultShowOpacity;
-  const selectionOpacityValues = selectedElements.some((element) => element.type === "highlighter")
-    ? opacities.slice(0, 2)
-    : opacities;
+  const opacityValues = isSelection
+    ? selectedElements.some((element) => element.type === "highlighter") ? highlighterOpacities : opacities
+    : tool === "highlighter" ? highlighterOpacities : opacities;
   const firstColor = selectedElements.find(supportsColor);
   const firstStrokeWidth = selectedElements.find(supportsStrokeWidth);
   const firstRoughness = selectedElements.find(supportsRoughness);
   const firstTextSize = selectedElements.find(supportsTextSize);
-  const firstOpacity = selectedElements.find(supportsOpacity);
+  const opacityValue = isSelection
+    ? selectedOpacity(selectedElements)
+    : opacityValues.includes(defaults.opacity) ? defaults.opacity : "";
 
   return (
     <section className="context-style-palette" aria-label={`${isSelection ? "selection" : tool} style controls`}>
@@ -130,15 +129,15 @@ export function ContextStylePalette({
           Opacity
           <select
             aria-label="Opacity"
-            value={isSelection
-              ? selectionOpacityValues.includes(firstOpacity!.opacity) ? firstOpacity!.opacity : 0.5
-              : defaultVisibleOpacity}
-            onChange={(event) => isSelection
-              ? apply((element) => setOpacity(element, Number(event.target.value) as EditorDefaults["opacity"]))
-              : setDefault("opacity", Number(event.target.value) as EditorDefaults["opacity"])}
+            value={opacityValue}
+            onChange={(event) => {
+              const opacity = parseOpacity(event.target.value, opacityValues);
+              if (isSelection) apply((element) => setOpacity(element, opacity));
+              else setDefault("opacity", opacity);
+            }}
           >
-            {(isSelection ? selectionOpacityValues : tool === "highlighter" ? opacities.slice(0, 2) : opacities)
-              .map((opacity) => <option key={opacity} value={opacity}>{opacity}</option>)}
+            {opacityValue === "" && <option value="" disabled>Mixed</option>}
+            {opacityValues.map((opacity) => <option key={opacity} value={opacity}>{opacity}</option>)}
           </select>
         </label>
       )}
@@ -203,8 +202,26 @@ function supportsOpacity(element: EditorElement): element is Exclude<EditorEleme
 
 function setOpacity(element: EditorElement, opacity: EditorDefaults["opacity"]): EditorElement {
   if (!supportsOpacity(element)) return element;
-  if (element.type === "highlighter") return { ...element, opacity: opacity === 0.25 || opacity === 0.5 ? opacity : 0.5 };
+  if (element.type === "highlighter") {
+    if (opacity !== 0.25 && opacity !== 0.5) {
+      throw new Error(`Unsupported highlighter opacity: ${opacity}`);
+    }
+    return { ...element, opacity };
+  }
   return { ...element, opacity };
+}
+
+function selectedOpacity(elements: EditorElement[]): EditorDefaults["opacity"] | "" {
+  const values = new Set(elements.filter(supportsOpacity).map((element) => element.opacity));
+  return values.size === 1 ? [...values][0]! : "";
+}
+
+function parseOpacity(value: string, allowed: EditorDefaults["opacity"][]): EditorDefaults["opacity"] {
+  const opacity = Number(value) as EditorDefaults["opacity"];
+  if (!allowed.includes(opacity)) {
+    throw new Error(`Unsupported opacity: ${value}`);
+  }
+  return opacity;
 }
 
 function parseFillColor(value: string): PaletteColor | null {
