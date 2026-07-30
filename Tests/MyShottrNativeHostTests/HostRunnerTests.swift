@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import XCTest
 
 final class HostRunnerTests: TemporaryDirectoryTestCase {
@@ -27,6 +28,13 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
     func testRejectsUnsupportedProtocolVersionWithoutStaging() throws {
         try assertRejected(
             message: HostFixtures.protocolMessage(protocolVersion: 2),
+            code: .invalidMessage
+        )
+    }
+
+    func testRejectsDuplicateJSONMemberWithoutStaging() throws {
+        try assertRejected(
+            message: HostFixtures.duplicateProtocolVersionMessage(),
             code: .invalidMessage
         )
     }
@@ -95,6 +103,29 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
                 dataBase64: HostFixtures.validGIFBase64
             ),
             code: .invalidImage
+        )
+    }
+
+    func testRejectsHighlyCompressiblePNGWithOversizedWidthBeforeStaging() throws {
+        let png = try HostFixtures.compressibleGrayscalePNG(
+            width: 100_000,
+            height: 1
+        )
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(png as CFData, nil))
+        let properties = try XCTUnwrap(
+            CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        )
+        XCTAssertEqual(
+            (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+            100_000
+        )
+        XCTAssertLessThan(png.count, 1_024)
+
+        try assertRejected(
+            message: HostFixtures.protocolMessage(
+                dataBase64: png.base64EncodedString()
+            ),
+            code: .imageTooLarge
         )
     }
 

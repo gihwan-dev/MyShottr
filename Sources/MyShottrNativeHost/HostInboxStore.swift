@@ -46,8 +46,9 @@ struct HostInboxStore: HostCaptureStaging {
         }
 
         let captureID = idGenerator()
-        let filename = "\(captureID.uuidString).png"
-        let descriptor = filename.withCString {
+        let finalFilename = "\(captureID.uuidString).png"
+        let temporaryFilename = ".\(UUID().uuidString).tmp"
+        let descriptor = temporaryFilename.withCString {
             Darwin.openat(
                 rootDescriptor,
                 $0,
@@ -56,30 +57,61 @@ struct HostInboxStore: HostCaptureStaging {
             )
         }
         guard descriptor >= 0 else {
-            throw systemCallError("open staged capture")
+            throw systemCallError("open temporary capture")
         }
 
         var descriptorIsOpen = true
+        var temporaryFileExists = true
+        var finalFileExists = false
         do {
             guard Darwin.fchmod(descriptor, 0o600) == 0 else {
-                throw systemCallError("fchmod staged capture")
+                throw systemCallError("fchmod temporary capture")
             }
             try writeOperation(descriptor, pngData)
             guard synchronizeOperation(descriptor) == 0 else {
-                throw systemCallError("fsync staged capture")
+                throw systemCallError("fsync temporary capture")
             }
-            guard Darwin.close(descriptor) == 0 else {
-                descriptorIsOpen = false
-                throw systemCallError("close staged capture")
-            }
+            let closeStatus = Darwin.close(descriptor)
             descriptorIsOpen = false
+            guard closeStatus == 0 else {
+                throw systemCallError("close temporary capture")
+            }
+
+            let renameStatus = temporaryFilename.withCString { temporaryName in
+                finalFilename.withCString { finalName in
+                    Darwin.renameatx_np(
+                        rootDescriptor,
+                        temporaryName,
+                        rootDescriptor,
+                        finalName,
+                        UInt32(RENAME_EXCL)
+                    )
+                }
+            }
+            guard renameStatus == 0 else {
+                throw systemCallError("publish staged capture")
+            }
+            temporaryFileExists = false
+            finalFileExists = true
+
+            guard synchronizeOperation(rootDescriptor) == 0 else {
+                throw systemCallError("fsync inbox")
+            }
             return captureID
         } catch {
             if descriptorIsOpen {
                 Darwin.close(descriptor)
             }
-            filename.withCString {
-                _ = Darwin.unlinkat(rootDescriptor, $0, 0)
+            if temporaryFileExists {
+                temporaryFilename.withCString {
+                    _ = Darwin.unlinkat(rootDescriptor, $0, 0)
+                }
+            }
+            if finalFileExists {
+                finalFilename.withCString {
+                    _ = Darwin.unlinkat(rootDescriptor, $0, 0)
+                }
+                _ = Darwin.fsync(rootDescriptor)
             }
             throw error
         }

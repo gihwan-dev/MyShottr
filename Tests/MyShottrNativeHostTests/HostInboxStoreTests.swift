@@ -50,6 +50,10 @@ final class HostInboxStoreTests: TemporaryDirectoryTestCase {
 
         XCTAssertThrowsError(try store.stage(pngData: HostFixtures.validPNG))
         XCTAssertEqual(try Data(contentsOf: destination), existing)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: root.path),
+            ["\(captureID.uuidString).png"]
+        )
     }
 
     func testDeletesPartialFileWhenWriteFails() throws {
@@ -69,6 +73,52 @@ final class HostInboxStoreTests: TemporaryDirectoryTestCase {
 
         XCTAssertThrowsError(try store.stage(pngData: HostFixtures.validPNG))
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+
+    func testFinalCaptureIsInvisibleUntilOwnerOnlyTemporaryFileIsComplete() throws {
+        let root = temporaryDirectory.appendingPathComponent("Inbox", isDirectory: true)
+        let destination = root.appendingPathComponent("\(captureID.uuidString).png")
+        var synchronizationCount = 0
+        let store = HostInboxStore(
+            rootURL: root,
+            idGenerator: { self.captureID },
+            writeOperation: { descriptor, data in
+                XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+                let entries = try FileManager.default.contentsOfDirectory(
+                    at: root,
+                    includingPropertiesForKeys: nil
+                )
+                XCTAssertEqual(entries.count, 1)
+                let temporaryFile = try XCTUnwrap(entries.first)
+                XCTAssertTrue(temporaryFile.lastPathComponent.hasPrefix("."))
+                XCTAssertEqual(temporaryFile.pathExtension, "tmp")
+                XCTAssertEqual(try self.permissions(at: temporaryFile), 0o600)
+
+                let written = data.withUnsafeBytes {
+                    Darwin.write(descriptor, $0.baseAddress, $0.count)
+                }
+                XCTAssertEqual(written, data.count)
+            },
+            synchronizeOperation: { descriptor in
+                synchronizationCount += 1
+                if synchronizationCount == 1 {
+                    XCTAssertFalse(
+                        FileManager.default.fileExists(atPath: destination.path)
+                    )
+                }
+                return Darwin.fsync(descriptor)
+            }
+        )
+
+        _ = try store.stage(pngData: HostFixtures.validPNG)
+
+        XCTAssertEqual(try Data(contentsOf: destination), HostFixtures.validPNG)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: root.path),
+            ["\(captureID.uuidString).png"]
+        )
+        XCTAssertEqual(synchronizationCount, 2)
     }
 
     func testSynchronizesStagedFileBeforeReturning() throws {
@@ -86,6 +136,28 @@ final class HostInboxStoreTests: TemporaryDirectoryTestCase {
         _ = try store.stage(pngData: HostFixtures.validPNG)
 
         XCTAssertTrue(synchronized)
+    }
+
+    func testRemovesPublishedCaptureWhenDirectorySynchronizationFails() throws {
+        let root = temporaryDirectory.appendingPathComponent("Inbox", isDirectory: true)
+        var synchronizationCount = 0
+        let store = HostInboxStore(
+            rootURL: root,
+            idGenerator: { self.captureID },
+            synchronizeOperation: { descriptor in
+                synchronizationCount += 1
+                if synchronizationCount == 1 {
+                    return Darwin.fsync(descriptor)
+                }
+                errno = EIO
+                return -1
+            }
+        )
+
+        XCTAssertThrowsError(try store.stage(pngData: HostFixtures.validPNG))
+
+        XCTAssertEqual(synchronizationCount, 2)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
     }
 
     func testRejectsSymbolicLinkInboxRoot() throws {

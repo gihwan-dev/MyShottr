@@ -1,3 +1,4 @@
+import Compression
 import Foundation
 import XCTest
 
@@ -25,6 +26,68 @@ enum HostFixtures {
         ]
         object.merge(extraFields) { _, replacement in replacement }
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+
+    static func duplicateProtocolVersionMessage(
+        captureMode: String = "visibleViewport"
+    ) -> Data {
+        Data(
+            """
+            {"protocolVersion":1,"protocolVersion":1,"type":"capture","captureMode":"\(captureMode)","mimeType":"image/png","dataBase64":"\(validPNGBase64)"}
+            """.utf8
+        )
+    }
+
+    static func compressibleGrayscalePNG(width: Int, height: Int) throws -> Data {
+        let rowByteCountResult = width.addingReportingOverflow(1)
+        let rawByteCountResult = rowByteCountResult.partialValue
+            .multipliedReportingOverflow(by: height)
+        guard
+            width > 0,
+            height > 0,
+            width <= Int(UInt32.max),
+            height <= Int(UInt32.max),
+            !rowByteCountResult.overflow,
+            !rawByteCountResult.overflow
+        else {
+            throw FixtureError.invalidDimensions
+        }
+
+        let rawByteCount = rawByteCountResult.partialValue
+        let raw = [UInt8](repeating: 0, count: rawByteCount)
+        let compressedCapacity = max(
+            1_024,
+            rawByteCount + rawByteCount / 100 + 64
+        )
+        var compressed = [UInt8](repeating: 0, count: compressedCapacity)
+        let compressedByteCount = raw.withUnsafeBytes { rawBytes in
+            compressed.withUnsafeMutableBytes { compressedBytes in
+                compression_encode_buffer(
+                    compressedBytes.bindMemory(to: UInt8.self).baseAddress!,
+                    compressedCapacity,
+                    rawBytes.bindMemory(to: UInt8.self).baseAddress!,
+                    raw.count,
+                    nil,
+                    COMPRESSION_ZLIB
+                )
+            }
+        }
+        guard compressedByteCount > 0 else {
+            throw FixtureError.compressionFailed
+        }
+
+        var image = Data([137, 80, 78, 71, 13, 10, 26, 10])
+        var header = Data()
+        header.append(bigEndian: UInt32(width))
+        header.append(bigEndian: UInt32(height))
+        header.append(contentsOf: [8, 0, 0, 0, 0])
+        image.appendPNGChunk(type: "IHDR", payload: header)
+        image.appendPNGChunk(
+            type: "IDAT",
+            payload: Data(compressed.prefix(compressedByteCount))
+        )
+        image.appendPNGChunk(type: "IEND", payload: Data())
+        return image
     }
 
     static func framed(_ body: Data) -> Data {
@@ -74,8 +137,35 @@ enum HostFixtures {
 }
 
 private enum FixtureError: Error {
+    case compressionFailed
+    case invalidDimensions
     case missingLength
     case unexpectedFramedLength
+}
+
+private extension Data {
+    mutating func append(bigEndian value: UInt32) {
+        var encoded = value.bigEndian
+        Swift.withUnsafeBytes(of: &encoded) { append(contentsOf: $0) }
+    }
+
+    mutating func appendPNGChunk(type: String, payload: Data) {
+        let typeData = Data(type.utf8)
+        append(bigEndian: UInt32(payload.count))
+        append(typeData)
+        append(payload)
+        append(bigEndian: Self.crc32(typeData + payload))
+    }
+
+    static func crc32(_ data: Data) -> UInt32 {
+        data.reduce(UInt32.max) { crc, byte in
+            var value = crc ^ UInt32(byte)
+            for _ in 0..<8 {
+                value = (value >> 1) ^ (value & 1 == 1 ? 0xEDB8_8320 : 0)
+            }
+            return value
+        } ^ UInt32.max
+    }
 }
 
 final class StagingSpy: HostCaptureStaging {

@@ -14,6 +14,8 @@ targets:
     platform: macOS
     dependencies:
       - target: MyShottrNativeHost
+        embed: false
+        link: false
     sources:
       - Sources/MyShottrApp
       - path: Resources/Assets.xcassets
