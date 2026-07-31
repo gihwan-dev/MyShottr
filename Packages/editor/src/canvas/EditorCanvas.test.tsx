@@ -204,6 +204,49 @@ describe("cancelAnnotationInteraction", () => {
 });
 
 describe("EditorCanvas gesture terminals", () => {
+  it("renders a rectangle preview during drag before committing the element", () => {
+    const initial = fixtureDocument({ elements: [] });
+    const history = createHistoryStore(initial);
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="rectangle"
+        zoom={1}
+        pan={{ x: 0, y: 0 }}
+        rectangleFillColor={null}
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={(command) => history.dispatch(command)}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={() => history.commitTransaction()}
+        onCancelTransaction={() => history.cancelTransaction()}
+        onPanChange={() => {}}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20 });
+    fireEvent.mouseMove(stage, { clientX: 70, clientY: 90 });
+
+    expect(screen.getByTestId("annotation-node")).toBeTruthy();
+    expect(history.document.elements).toHaveLength(0);
+
+    fireEvent.mouseUp(stage, { clientX: 70, clientY: 90 });
+
+    expect(history.document.elements).toEqual([
+      expect.objectContaining({
+        type: "rectangle",
+        x: 10,
+        y: 20,
+        width: 60,
+        height: 70,
+      }),
+    ]);
+  });
+
   it("does not begin text editing from a non-selection tool", () => {
     const document = fixtureDocument({ elements: [fixtureText()] });
     const history = createHistoryStore(document);

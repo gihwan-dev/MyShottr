@@ -9,7 +9,10 @@ import {
   resizeElementWithinBounds,
 } from "./SelectionController";
 import { createElement } from "./tools/createElement";
-import { renderElement } from "./renderElement";
+import {
+  renderElement,
+  type ElementInteractionHandlers,
+} from "./renderElement";
 import { BLUR_RADIUS_PX, createBlurredSourceCanvas } from "./blurSource";
 
 export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectangleFillColor, selectedIds, onSelect, onEditText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onPanChange, textEditorOverlay }: {
@@ -45,7 +48,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   viewport.setTransform({ zoom, panX: pan.x, panY: pan.y });
   const nodes = useRef(new Map<string, Konva.Group>());
   const transformer = useRef<Konva.Transformer | null>(null);
-  const gesture = useRef<{ start: Point; points: Point[] } | undefined>(undefined);
+  const gesture = useRef<ActiveCreationGesture | undefined>(undefined);
   const panGesture = useRef<{ start: Point; pan: Point } | undefined>(undefined);
   const pointerController = useRef(new CanvasPointerController());
   const selectionToggle = useRef(false);
@@ -53,6 +56,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   const suppressedTransform = useRef(false);
   const activeAnnotationInteraction = useRef<ActiveAnnotationInteraction | undefined>(undefined);
   const [isTransforming, setIsTransforming] = useState(false);
+  const [creationPreview, setCreationPreview] = useState<EditorElement | undefined>(undefined);
 
   useEffect(() => {
     const selectedNodes = selectedIds.flatMap((id) => {
@@ -74,12 +78,13 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
     const activeGesture = gesture.current;
     if (!activeGesture) return;
     gesture.current = undefined;
+    setCreationPreview(undefined);
     const end = sourcePoint(stage);
-    const creationGesture = tool === "freehand" || tool === "highlighter"
-      ? { kind: "path" as const, points: [...activeGesture.points, end] }
-      : tool === "text" || tool === "numberMarker"
-        ? { kind: "point" as const, point: activeGesture.start }
-        : { kind: "box" as const, start: activeGesture.start, end };
+    const creationGesture = creationGestureFor(
+      tool as Exclude<EditorTool, "selection">,
+      activeGesture,
+      end,
+    );
     onCommand({ type: "create", element: createCanvasElement(document, tool as Exclude<EditorTool, "selection">, creationGesture, rectangleFillColor) });
   };
   const cancelAnnotationTransaction = () => {
@@ -99,6 +104,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
   useEffect(() => {
     const clearPointerInteraction = () => {
       gesture.current = undefined;
+      setCreationPreview(undefined);
       panGesture.current = undefined;
       pointerController.current.end();
     };
@@ -148,7 +154,21 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
             return;
           }
           const start = sourcePoint(stage);
-          gesture.current = { start, points: [start] };
+          const preview = createCanvasElement(
+            document,
+            tool as Exclude<EditorTool, "selection">,
+            creationGestureFor(
+              tool as Exclude<EditorTool, "selection">,
+              { start, points: [start] },
+              start,
+            ),
+            rectangleFillColor,
+          );
+          gesture.current = {
+            start,
+            points: [start],
+            previewId: preview.id,
+          };
         }}
         onMouseMove={(event) => {
           const stage = event.target.getStage();
@@ -162,8 +182,25 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
             });
             return;
           }
-          if (!gesture.current || (tool !== "freehand" && tool !== "highlighter")) return;
-          gesture.current.points.push(sourcePoint(stage));
+          const activeGesture = gesture.current;
+          if (!activeGesture) return;
+          const end = sourcePoint(stage);
+          if (tool === "freehand" || tool === "highlighter") {
+            activeGesture.points.push(end);
+          }
+          setCreationPreview({
+            ...createCanvasElement(
+              document,
+              tool as Exclude<EditorTool, "selection">,
+              creationGestureFor(
+                tool as Exclude<EditorTool, "selection">,
+                activeGesture,
+                end,
+              ),
+              rectangleFillColor,
+            ),
+            id: activeGesture.previewId,
+          });
         }}
         onMouseUp={(event) => {
           const stage = event.target.getStage();
@@ -325,6 +362,15 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                 else nodes.current.delete(id);
               },
             }, blurredSource))}
+            {creationPreview && (
+              <Group listening={false}>
+                {renderElement(
+                  creationPreview,
+                  previewInteractionHandlers,
+                  blurredSource,
+                )}
+              </Group>
+            )}
             {selectedElements.map((selected) => (
               <Rect
                 key={`selection-outline-${selected.id}`}
@@ -348,6 +394,45 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
       {textEditorOverlay}
     </div>
   );
+}
+
+const previewInteractionHandlers = {
+  selected: false,
+  draggable: false,
+  textEditingEnabled: false,
+  onSelect: () => {},
+  onEditText: () => {},
+  onDragStart: () => {},
+  onDragMove: () => {},
+  onDragEnd: () => {},
+  onTransformStart: () => {},
+  onTransformEnd: () => {},
+  registerNode: () => {},
+} satisfies ElementInteractionHandlers;
+
+type ActiveCreationGesture = {
+  start: Point;
+  points: Point[];
+  previewId: string;
+};
+
+function creationGestureFor(
+  tool: Exclude<EditorTool, "selection">,
+  gesture: Pick<ActiveCreationGesture, "start" | "points">,
+  end: Point,
+): CreationGesture {
+  if (tool === "freehand" || tool === "highlighter") {
+    return {
+      kind: "path",
+      points: gesture.points.at(-1) === end
+        ? gesture.points
+        : [...gesture.points, end],
+    };
+  }
+  if (tool === "text" || tool === "numberMarker") {
+    return { kind: "point", point: gesture.start };
+  }
+  return { kind: "box", start: gesture.start, end };
 }
 
 function byZIndex(left: EditorElement, right: EditorElement): number {
