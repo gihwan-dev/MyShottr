@@ -4,7 +4,6 @@ enum UserFacingErrorAction: Equatable {
     case dismiss
     case openScreenRecordingSettings
     case openChromeSetupInstructions
-    case retrySameOperation
 }
 
 struct UserFacingErrorViewModel: Equatable {
@@ -23,24 +22,6 @@ enum ChromeNativeHostUserFacingError: Error, Equatable {
     case appActivationFailed
 }
 
-enum RetryableUserFacingError: Error {
-    case recoveryCleanupAfterSave
-
-    var viewModel: UserFacingErrorViewModel {
-        switch self {
-        case .recoveryCleanupAfterSave:
-            return UserFacingErrorViewModel(
-                title: "Document Saved; Recovery Cleanup Failed",
-                message:
-                    "The document was saved to the selected destination, "
-                    + "but its local crash recovery entry could not be "
-                    + "removed.",
-                primaryAction: .retrySameOperation
-            )
-        }
-    }
-}
-
 enum UserFacingErrorContext {
     case capture
     case chromeImport
@@ -50,7 +31,6 @@ enum UserFacingErrorContext {
     case pngExport
     case clipboard
     case editorBridge
-    case recovery
     case globalShortcut
     case application
 }
@@ -72,12 +52,7 @@ enum MyShottrUserFacingError: Error {
     case clipboard(PNGClipboardWriterError)
     case compositeTransfer(CompositeTransferError)
     case globalShortcut(GlobalHotKeyError)
-    case recoveryStore(RecoveryStoreError)
-    case recoveryScanIssue(RecoveryScanIssue)
-    case recoveryCoordinator(RecoveryCoordinatorError)
-    case sessionTermination(SessionTerminationStateError)
     case documentSession(DocumentSessionError)
-    case recoveryOperation
     case application
 
     static func wrapping(
@@ -158,24 +133,6 @@ enum MyShottrUserFacingError: Error {
                 return .editorProtocol(error)
             }
             return .editorBridge(.invalidMessage)
-
-        case .recovery:
-            if let error = error as? RecoveryScanIssue {
-                return .recoveryScanIssue(error)
-            }
-            if let error = error as? RecoveryStoreError {
-                return .recoveryStore(error)
-            }
-            if let error = error as? RecoveryCoordinatorError {
-                return .recoveryCoordinator(error)
-            }
-            if let error = error as? SessionTerminationStateError {
-                return .sessionTermination(error)
-            }
-            if let error = error as? DocumentSessionError {
-                return .documentSession(error)
-            }
-            return .recoveryOperation
 
         case .globalShortcut:
             if let error = error as? GlobalHotKeyError {
@@ -258,60 +215,19 @@ enum MyShottrUserFacingError: Error {
                     primaryAction: .dismiss
                 )
             }
-        case .recoveryStore(let error):
-            return Self.recoveryStoreViewModel(error)
-        case .recoveryScanIssue:
-            return UserFacingErrorViewModel(
-                title: "Recovery Data Could Not Be Read",
-                message:
-                    "A local recovery entry is invalid. "
-                    + "Other valid recovery entries remain available.",
-                primaryAction: .dismiss
-            )
-        case .recoveryCoordinator(let error):
-            switch error {
-            case .invalidSelection, .restoreFailed:
-                return UserFacingErrorViewModel(
-                    title: "Project Could Not Be Recovered",
-                    message:
-                        "The selected recovery was not opened or removed. "
-                        + "Other recovery entries remain unchanged.",
-                    primaryAction: .dismiss
-                )
-            }
-        case .sessionTermination(let error):
-            switch error {
-            case .invalidRoot, .invalidState, .writeFailed:
-                return UserFacingErrorViewModel(
-                    title: "Recovery State Could Not Be Updated",
-                    message:
-                        "MyShottr could not update its local session state. "
-                        + "No document was discarded.",
-                    primaryAction: .dismiss
-                )
-            }
         case .documentSession(let error):
             switch error {
             case .invalidDocument,
                  .noOpenDocument,
-                 .noStagedDocument,
-                 .recoverySnapshotUnavailable:
+                 .noStagedDocument:
                 return UserFacingErrorViewModel(
-                    title: "Document Recovery Could Not Be Updated",
+                    title: "Document Could Not Be Updated",
                     message:
                         "The document remains open and modified. "
                         + "Save the project before closing MyShottr.",
                     primaryAction: .dismiss
                 )
             }
-        case .recoveryOperation:
-            return UserFacingErrorViewModel(
-                title: "Recovery Operation Failed",
-                message:
-                    "The requested recovery change was not committed. "
-                    + "Existing recovery entries remain unchanged.",
-                primaryAction: .dismiss
-            )
         case .application:
             return UserFacingErrorViewModel(
                 title: "MyShottr Could Not Complete the Operation",
@@ -595,8 +511,8 @@ enum MyShottrUserFacingError: Error {
                 title: "Chrome Capture Is Waiting for Retry",
                 message:
                     "The editor did not acknowledge the document, so the "
-                    + "inbox handoff was not committed. The inbox entry and "
-                    + "native recovery copy remain available.",
+                    + "inbox handoff was not committed. The local inbox "
+                    + "entry remains available.",
                 primaryAction: .dismiss
             )
         case .editorProtocol:
@@ -604,8 +520,8 @@ enum MyShottrUserFacingError: Error {
                 title: "Chrome Capture Is Waiting for Retry",
                 message:
                     "The editor rejected the document protocol, so the "
-                    + "inbox handoff was not committed. The inbox entry and "
-                    + "native recovery copy remain available.",
+                    + "inbox handoff was not committed. The local inbox "
+                    + "entry remains available.",
                 primaryAction: .dismiss
             )
         case .durableCommitFailedAfterOpen:
@@ -839,36 +755,4 @@ enum MyShottrUserFacingError: Error {
         )
     }
 
-    private static func recoveryStoreViewModel(
-        _ error: RecoveryStoreError
-    ) -> UserFacingErrorViewModel {
-        switch error {
-        case .invalidRoot,
-             .invalidPackagePath,
-             .invalidPackage,
-             .documentIdentifierMismatch,
-             .readFailed,
-             .invalidDiscardTransactionPath:
-            return UserFacingErrorViewModel(
-                title: "Recovery Data Could Not Be Read",
-                message:
-                    "One recovery operation failed validation. "
-                    + "Valid recovery entries remain available.",
-                primaryAction: .dismiss
-            )
-        case .writeFailed,
-             .removeFailed,
-             .discardStageFailed,
-             .discardRollbackFailed,
-             .discardRollbackConflict,
-             .discardCleanupFailed:
-            return UserFacingErrorViewModel(
-                title: "Recovery Data Could Not Be Updated",
-                message:
-                    "MyShottr did not commit the recovery change. "
-                    + "The open document remains modified.",
-                primaryAction: .dismiss
-            )
-        }
-    }
 }

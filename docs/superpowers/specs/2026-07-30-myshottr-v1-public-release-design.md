@@ -89,7 +89,7 @@ exported image.
 - copy a source-resolution composited PNG to the clipboard;
 - export a source-resolution PNG;
 - atomically save and reopen an editable `.myshottr` document;
-- recover modified documents after abnormal termination;
+- show annotation geometry continuously while a drag is in progress;
 - keep separate documents in separate windows so a new capture cannot overwrite
   an existing edit.
 
@@ -393,20 +393,18 @@ contracts.
 Saving writes a complete sibling package and atomically replaces the
 destination only after validation succeeds.
 
-## 10. Recovery and Document Lifecycle
+## 10. Document Lifecycle
 
 - Every capture opens a separate document window.
-- A modified document writes an atomic recovery snapshot after a short debounce.
-- Recovery snapshots live under
-  `~/Library/Application Support/MyShottr/Recovery/`.
-- An abnormal exit causes the next launch to offer recoverable documents.
-- A successful save or explicit discard removes the corresponding snapshot.
+- Every completed capture opens directly in the editor as a modified, unsaved
+  document.
 - Closing a modified document presents `Save`, `Discard`, and `Cancel`.
 - Failed save, export, or clipboard operations leave the document open and do
   not show success.
-- Cancelling capture does not create a document or recovery entry.
-
-Recovery is a temporary safety mechanism, not a screenshot history feature.
+- Cancelling capture does not create a document.
+- The app does not write background recovery snapshots or show a recovery
+  prompt on launch. Editable work persists only when the user saves a
+  `.myshottr` project.
 
 ## 11. Privacy and Security
 
@@ -501,7 +499,7 @@ Release automation must fail closed. A failed test, build, validation, or
 packaging step prevents publication.
 
 Live ScreenCaptureKit permission behavior, a real Chrome connection, Retina
-coordinate fidelity, common-app paste behavior, abnormal-termination recovery,
+coordinate fidelity, common-app paste behavior, direct cold-launch capture,
 and Gatekeeper installation cannot be proven by headless CI alone. Before
 tagging, the release candidate's exact commit receives the documented manual
 acceptance run on a Mac. After publication, the uploaded archives are downloaded
@@ -548,7 +546,7 @@ release finish line. The implementation plan created from this design must:
 3. implement Chrome capture, the helper, the durable inbox, and registration;
 4. add the presentation boundary and format migration without implementing a
    mockup UI;
-5. add recovery, permission UX, and security hardening;
+5. add document lifecycle, permission UX, and security hardening;
 6. create Quick Ink icon assets and polish the editor;
 7. add README, license, CI, packaging, checksums, and release automation;
 8. verify a clean install from the final GitHub Release.

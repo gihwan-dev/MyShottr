@@ -29,42 +29,6 @@ final class DocumentTerminationResolutionGate {
 }
 
 @MainActor
-final class RecoveryCleanupRetryCoordinator {
-    private let operation: RecoveryCleanupOperation
-    private let presenter: any UserFacingErrorPresenting
-    private weak var window: NSWindow?
-
-    init(
-        operation: RecoveryCleanupOperation,
-        presenter: any UserFacingErrorPresenting,
-        window: NSWindow?
-    ) {
-        self.operation = operation
-        self.presenter = presenter
-        self.window = window
-    }
-
-    func present() {
-        presenter.present(
-            .recoveryCleanupAfterSave,
-            from: window,
-            retry: {
-                [self] in
-                retry()
-            }
-        )
-    }
-
-    private func retry() {
-        do {
-            try operation.perform()
-        } catch {
-            present()
-        }
-    }
-}
-
-@MainActor
 final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     private let session: DocumentSession
     private let editorWebView: EditorWebView
@@ -74,7 +38,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     let representedDocumentID: UUID
     private var projectURL: URL?
     private var closeAfterPrompt = false
-    private var discardRecoveryOnApprovedTermination = false
     private let annotationSnapshotProvider:
         (@MainActor () async throws -> Data)?
     private let pendingChangesDecisionProvider:
@@ -92,8 +55,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         projectStore: any ProjectPackageStoring = ProjectPackageStore(),
         preferences: any EditorPreferencesStoring =
             UserDefaultsEditorPreferencesStore(),
-        recoveryStore: (any RecoveryStoring)? = nil,
-        isRecoveredDocument: Bool = false,
         errorPresenter: any UserFacingErrorPresenting =
             UserFacingErrorPresenter.shared,
         testSession: DocumentSession? = nil,
@@ -110,15 +71,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         if let testSession {
             session = testSession
         } else {
-            let resolvedRecoveryStore: any RecoveryStoring
-            if let recoveryStore {
-                resolvedRecoveryStore = recoveryStore
-            } else {
-                resolvedRecoveryStore = try RecoveryStore()
-            }
-            session = DocumentSession(
-                recoveryStore: resolvedRecoveryStore
-            )
+            session = DocumentSession()
         }
         let editorWebView = EditorWebView(
             session: session,
@@ -126,9 +79,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         )
         let editorLoadOperation: EditorLoadOperation?
         if testSession == nil {
-            if isRecoveredDocument {
-                session.prepareForRecoveryRestore()
-            } else if projectURL == nil {
+            if projectURL == nil {
                 try session.openUnsaved(project: project)
             } else {
                 try session.open(project: project)
@@ -166,30 +117,13 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         window.title = projectURL?
             .deletingPathExtension()
             .lastPathComponent
-            ?? (
-                isRecoveredDocument
-                    ? "Recovered MyShottr Project"
-                    : "Untitled MyShottr Project"
-            )
+            ?? "Untitled MyShottr Project"
         window.contentView = editorWebView.webView
         window.delegate = self
         window.toolbar = makeToolbar()
         session.onModifiedStateChange = {
             [weak window] modified in
             window?.isDocumentEdited = modified
-        }
-        session.onRecoveryFailure = { [weak self] error in
-            self?.present(
-                .wrapping(error, context: .recovery)
-            )
-        }
-        session.recoverySnapshotProvider = {
-            [weak editorWebView] in
-            guard let editorWebView else {
-                throw EditorBridgeError.cancelled
-            }
-            return try await editorWebView
-                .requestAnnotationSnapshot()
         }
         editorWebView.onNavigationFailure = {
             [weak self] error in
@@ -218,18 +152,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                 return
             }
             if await resolvePendingChangesForTermination() {
-                do {
-                    try finalizePendingTermination()
-                    closeAfterPrompt = true
-                    if let closeWindow {
-                        closeWindow()
-                    } else {
-                        window?.performClose(nil)
-                    }
-                } catch {
-                    present(
-                        .wrapping(error, context: .recovery)
-                    )
+                closeAfterPrompt = true
+                if let closeWindow {
+                    closeWindow()
+                } else {
+                    window?.performClose(nil)
                 }
             }
         }
@@ -247,7 +174,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     }
 
     private func presentPendingChangesResolution() async -> Bool {
-        discardRecoveryOnApprovedTermination = false
         guard session.isModified,
               let window
         else {
@@ -265,7 +191,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         case .save:
             return await saveProject()
         case .discard:
-            discardRecoveryOnApprovedTermination = true
             return true
         case .cancel:
             return false
@@ -296,22 +221,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                 }
             }
         }
-    }
-
-    func finalizePendingTermination() throws {
-        guard discardRecoveryOnApprovedTermination else {
-            return
-        }
-        try session.discardRecovery()
-        discardRecoveryOnApprovedTermination = false
-    }
-
-    func completePendingTerminationAfterDiscardStaged() {
-        discardRecoveryOnApprovedTermination = false
-    }
-
-    func flushRecoveryForTermination() async throws {
-        try await session.flushRecoveryForTermination()
     }
 
     func focusWindow() {
@@ -439,15 +348,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
                     modificationRevision
             )
             window?.title = url.deletingPathExtension().lastPathComponent
-            if case let .savedRecoveryCleanupPending(
-                cleanupOperation
-            ) = completion {
-                RecoveryCleanupRetryCoordinator(
-                    operation: cleanupOperation,
-                    presenter: errorPresenter,
-                    window: window
-                ).present()
-            }
             if case .savedWithNewerChanges = completion {
                 return false
             }
@@ -506,14 +406,11 @@ protocol EditorWindowControlling: AnyObject {
     var representedProjectURL: URL? { get }
     var hasModifiedDocument: Bool { get }
     var modificationRevision: UInt64 { get }
-    var pendingTerminationDiscardDocumentID: UUID? { get }
     func presentWindow() throws
     func waitForEditorLoad() async throws
     func discardFailedPresentation()
     func focusWindow()
-    func flushRecoveryForTermination() async throws
     func resolvePendingChangesForTermination() async -> Bool
-    func completePendingTerminationAfterDiscardStaged()
 }
 
 extension DocumentWindowController: EditorWindowControlling {
@@ -527,12 +424,6 @@ extension DocumentWindowController: EditorWindowControlling {
 
     var modificationRevision: UInt64 {
         session.modificationRevision
-    }
-
-    var pendingTerminationDiscardDocumentID: UUID? {
-        discardRecoveryOnApprovedTermination
-            ? representedDocumentID
-            : nil
     }
 
     func presentWindow() {

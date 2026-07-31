@@ -15,9 +15,9 @@ the current verification boundary.
 - Clean Chrome viewport capture without tabs, address bar, or toolbars
 - Rectangle, arrow, line, text, freehand, highlighter, blur, redaction, and
   numbered-marker annotations
+- Live annotation previews while dragging
 - Move, resize, rotate, duplicate, reorder, multi-select, undo, and redo
 - Copy Image, source-resolution PNG export, and editable `.myshottr` projects
-- Crash recovery for unsaved documents
 - Local-only capture processing with no account, upload, analytics, telemetry,
   or background network transfer
 
@@ -107,8 +107,8 @@ be fully covered in the exported image.
 
 ## Privacy
 
-Captures, projects, recovery files, inbox files, clipboard output, and exports
-stay on the Mac. MyShottr has no account, cloud upload, analytics, or telemetry.
+Captures, projects, inbox files, clipboard output, and exports stay on the Mac.
+MyShottr has no account, cloud upload, analytics, or telemetry.
 The bundled editor blocks remote navigation and network access. The Chrome
 extension uses only `activeTab` and `nativeMessaging`; it has no content script,
 persistent host permission, page URL storage, or alternate capture mechanism.

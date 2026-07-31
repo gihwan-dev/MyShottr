@@ -390,16 +390,13 @@ Saving uses an atomic replacement. The app writes a complete package to a
 temporary sibling URL and replaces the destination only after every member is
 validated.
 
-## 11. Recovery
+## 11. Document Lifecycle
 
-When a document changes, the native app writes a debounced recovery package
-after two seconds of inactivity. Recovery packages live under
-`~/Library/Application Support/MyShottr/Recovery/`.
-
-After a clean save or explicit discard, the associated recovery package is
-deleted. After an abnormal exit, the next launch offers to restore the latest
-modified document. Recovery is not presented as a capture history and retains
-only the current recoverable state per open document.
+Every capture opens directly in a modified, unsaved document. Closing a
+modified document offers Save, Discard, and Cancel. The app does not persist
+background recovery snapshots or interrupt a later capture with a recovery
+prompt; users save `.myshottr` projects explicitly when they want editable work
+to survive app termination.
 
 ## 12. Error Handling
 
@@ -439,7 +436,7 @@ data.
 - AppKit-point to display-pixel coordinate conversion at 1x and 2x scales
 - negative display origins and multiple-display selection boundaries
 - project package validation, atomic save, and reopen
-- recovery creation and cleanup
+- modified-document save, discard, and cancel behavior
 - Native Messaging validation and 45 MiB decoded-size enforcement
 - inbox path traversal and symbolic-link rejection
 - chunked composite assembly and partial-file cleanup
@@ -482,7 +479,7 @@ v1 is complete when:
 6. exported PNG dimensions match the source image dimensions.
 7. a saved `.myshottr` project reopens with pixel-identical source content and
    equivalent element state.
-8. abnormal termination can recover the latest modified document.
+8. a cold-launch capture opens directly in the editor without a recovery prompt.
 9. denied permissions, missing native host registration, corrupt projects, and
    failed exports produce explicit actionable errors.
 10. no capture or document data is transmitted to an external server.

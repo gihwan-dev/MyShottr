@@ -55,18 +55,13 @@ final class AppDelegateLifecycleTests: XCTestCase {
             applicationLifecycle: application.lifecycle,
             documentWindowFactory: {
                 openedProject,
-                openedURL,
-                isRecoveredDocument in
+                openedURL in
                 XCTAssertEqual(openedProject, project)
                 XCTAssertEqual(openedURL, projectURL)
-                XCTAssertFalse(isRecoveredDocument)
                 return window
             },
             nativeMessagingHostInstaller: {},
             chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
-            sessionTerminationStateFactory: makeCleanTerminationState,
-            recoveryStoreFactory: { SpyRecoveryStore() },
-            recoveryPrompt: SpyRecoveryPrompt(),
             hotKeyAPI: makeNoOpHotKeyAPI()
         )
 
@@ -89,9 +84,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
             applicationLifecycle: application.lifecycle,
             nativeMessagingHostInstaller: {},
             chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
-            sessionTerminationStateFactory: makeCleanTerminationState,
-            recoveryStoreFactory: { SpyRecoveryStore() },
-            recoveryPrompt: SpyRecoveryPrompt(),
             hotKeyAPI: makeNoOpHotKeyAPI()
         )
 
@@ -117,10 +109,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
             launchErrorReporter: {
                 reportedErrors.append($0)
             },
-            sessionTerminationStateFactory:
-                makeCleanTerminationState,
-            recoveryStoreFactory: { SpyRecoveryStore() },
-            recoveryPrompt: SpyRecoveryPrompt(),
             hotKeyAPI: makeFailingHotKeyAPI()
         )
 
@@ -160,15 +148,13 @@ final class AppDelegateLifecycleTests: XCTestCase {
             applicationLifecycle: application.lifecycle,
             documentWindowFactory: {
                 project,
-                projectURL,
-                isRecoveredDocument in
+                projectURL in
                 events.append("window")
                 XCTAssertEqual(
                     project.manifest.documentId,
                     ChromeFixtures.captureID
                 )
                 XCTAssertNil(projectURL)
-                XCTAssertFalse(isRecoveredDocument)
                 return window
             },
             nativeMessagingHostInstaller: {
@@ -185,9 +171,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
                     reportError: { XCTFail("Unexpected Chrome import error: \($0)") }
                 )
             },
-            sessionTerminationStateFactory: makeCleanTerminationState,
-            recoveryStoreFactory: { SpyRecoveryStore() },
-            recoveryPrompt: SpyRecoveryPrompt(),
             hotKeyAPI: makeNoOpHotKeyAPI()
         )
 
@@ -228,7 +211,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         var events: [String] = []
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { _, _, _ in
+            documentWindowFactory: { _, _ in
                 events.append("window")
                 return window
             },
@@ -251,9 +234,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 events.append("report")
                 reportedErrors.append($0)
             },
-            sessionTerminationStateFactory: makeCleanTerminationState,
-            recoveryStoreFactory: { SpyRecoveryStore() },
-            recoveryPrompt: SpyRecoveryPrompt(),
             hotKeyAPI: makeNoOpHotKeyAPI()
         )
 
@@ -285,7 +265,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         let window = SpyEditorWindowController()
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { _, _, _ in window }
+            documentWindowFactory: { _, _ in window }
         )
 
         try await delegate.present(
@@ -305,7 +285,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
             AppDelegateLifecycleTestError.presentation
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { _, _, _ in window }
+            documentWindowFactory: { _, _ in window }
         )
 
         do {
@@ -339,7 +319,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         }
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { _, _, _ in window }
+            documentWindowFactory: { _, _ in window }
         )
 
         let presentation = Task { @MainActor in
@@ -387,7 +367,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         }
         var factoryCalls = 0
         let delegate = AppDelegate(
-            documentWindowFactory: { _, _, _ in
+            documentWindowFactory: { _, _ in
                 factoryCalls += 1
                 return window
             }
@@ -432,7 +412,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         firstWindow.representedDocumentID =
             ProjectFixtures.documentID
         secondWindow.representedDocumentID =
-            RecoveryFixtures.secondDocumentID
+            AdditionalProjectFixtures.secondDocumentID
         var windows: [SpyEditorWindowController] = [
             firstWindow,
             secondWindow,
@@ -440,16 +420,16 @@ final class AppDelegateLifecycleTests: XCTestCase {
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
             documentWindowFactory: {
-                _, _, _ in windows.removeFirst()
+                _, _ in windows.removeFirst()
             }
         )
         try await delegate.present(
             project: ProjectFixtures.project(text: "First")
         )
         try await delegate.present(
-            project: RecoveryFixtures.project(
+            project: AdditionalProjectFixtures.project(
                 text: "Second",
-                documentID: RecoveryFixtures.secondDocumentID
+                documentID: AdditionalProjectFixtures.secondDocumentID
             )
         )
 
@@ -480,7 +460,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         var factoryCalls = 0
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
-            documentWindowFactory: { _, _, _ in
+            documentWindowFactory: { _, _ in
                 factoryCalls += 1
                 return window
             }
@@ -497,7 +477,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(delegate.activeDocumentWindowCount, 1)
         XCTAssertEqual(window.presentationCount, 1)
         XCTAssertEqual(window.focusCount, 1)
-        XCTAssertEqual(window.finalizeCount, 0)
     }
 
     func testDuplicateProjectURLWithDifferentIdentifierFocusesExisting()
@@ -507,9 +486,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
             fileURLWithPath: "/tmp/duplicate-url.myshottr"
         )
         let first = ProjectFixtures.project(text: "first")
-        let second = RecoveryFixtures.project(
+        let second = AdditionalProjectFixtures.project(
             text: "second",
-            documentID: RecoveryFixtures.secondDocumentID
+            documentID: AdditionalProjectFixtures.secondDocumentID
         )
         let store = SequentialProjectStore(
             projects: [first, second]
@@ -522,8 +501,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
             dependencies: AppDependencies(projectStore: store),
             documentWindowFactory: {
                 project,
-                projectURL,
-                _ in
+                projectURL in
                 factoryCalls += 1
                 XCTAssertEqual(project, first)
                 XCTAssertEqual(projectURL, url)
@@ -537,23 +515,16 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(store.loadCount, 2)
         XCTAssertEqual(delegate.activeDocumentWindowCount, 1)
         XCTAssertEqual(window.focusCount, 1)
-        XCTAssertEqual(window.finalizeCount, 0)
     }
 
-    func testNoModifiedWindowsTerminateImmediatelyAndMarkClean()
+    func testNoModifiedWindowsTerminateImmediately()
         async throws
     {
-        let terminationState = SpySessionTerminationState()
         let window = SpyEditorWindowController()
         let delegate = AppDelegate(
-            documentWindowFactory: { _, _, _ in window },
+            documentWindowFactory: { _, _ in window },
             nativeMessagingHostInstaller: {},
             chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
-            sessionTerminationStateFactory: {
-                terminationState
-            },
-            recoveryStoreFactory: { SpyRecoveryStore() },
-            recoveryPrompt: SpyRecoveryPrompt(),
             terminationReply: { _ in
                 XCTFail("Immediate termination must not reply later")
             },
@@ -574,19 +545,13 @@ final class AppDelegateLifecycleTests: XCTestCase {
             ),
             NSApplication.TerminateReply.terminateNow
         )
-        delegate.applicationWillTerminate(
-            Notification(name: NSApplication.willTerminateNotification)
-        )
 
-        XCTAssertEqual(terminationState.cleanExitCount, 1)
-        XCTAssertEqual(window.flushCount, 0)
         XCTAssertEqual(window.resolveCount, 0)
     }
 
-    func testCancelQuitRepliesFalseAndDoesNotMarkCleanOrDiscard()
+    func testCancelQuitRepliesFalse()
         async throws
     {
-        let terminationState = SpySessionTerminationState()
         let window = SpyEditorWindowController()
         window.hasModifiedDocument = true
         window.resolutionResult = false
@@ -595,14 +560,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
         var replies: [Bool] = []
         let delegate = AppDelegate(
-            documentWindowFactory: { _, _, _ in window },
+            documentWindowFactory: { _, _ in window },
             nativeMessagingHostInstaller: {},
             chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
-            sessionTerminationStateFactory: {
-                terminationState
-            },
-            recoveryStoreFactory: { SpyRecoveryStore() },
-            recoveryPrompt: SpyRecoveryPrompt(),
             terminationReply: {
                 replies.append($0)
                 replyExpectation.fulfill()
@@ -625,21 +585,14 @@ final class AppDelegateLifecycleTests: XCTestCase {
             .terminateLater
         )
         await fulfillment(of: [replyExpectation], timeout: 1)
-        delegate.applicationWillTerminate(
-            Notification(name: NSApplication.willTerminateNotification)
-        )
 
         XCTAssertEqual(replies, [false])
-        XCTAssertEqual(window.flushCount, 1)
         XCTAssertEqual(window.resolveCount, 1)
-        XCTAssertEqual(window.finalizeCount, 0)
-        XCTAssertEqual(terminationState.cleanExitCount, 0)
     }
 
-    func testFailedSaveCancelsQuitWithoutMarkingClean()
+    func testFailedSaveCancelsQuit()
         async throws
     {
-        let terminationState = SpySessionTerminationState()
         let window = SpyEditorWindowController()
         window.hasModifiedDocument = true
         window.resolutionResult = false
@@ -649,14 +602,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
         var replies: [Bool] = []
         let delegate = AppDelegate(
-            documentWindowFactory: { _, _, _ in window },
+            documentWindowFactory: { _, _ in window },
             nativeMessagingHostInstaller: {},
             chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
-            sessionTerminationStateFactory: {
-                terminationState
-            },
-            recoveryStoreFactory: { SpyRecoveryStore() },
-            recoveryPrompt: SpyRecoveryPrompt(),
             terminationReply: {
                 replies.append($0)
                 replyExpectation.fulfill()
@@ -679,20 +627,14 @@ final class AppDelegateLifecycleTests: XCTestCase {
             .terminateLater
         )
         await fulfillment(of: [replyExpectation], timeout: 1)
-        delegate.applicationWillTerminate(
-            Notification(name: NSApplication.willTerminateNotification)
-        )
 
         XCTAssertEqual(replies, [false])
         XCTAssertEqual(window.resolutionLabel, "failed-save")
-        XCTAssertEqual(window.finalizeCount, 0)
-        XCTAssertEqual(terminationState.cleanExitCount, 0)
     }
 
-    func testMultipleModifiedWindowsFlushAllBeforeResolving()
+    func testMultipleModifiedWindowsResolveBeforeQuit()
         async throws
     {
-        let terminationState = SpySessionTerminationState()
         var events: [String] = []
         let firstWindow = SpyEditorWindowController()
         firstWindow.representedDocumentID =
@@ -702,7 +644,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         firstWindow.events = { events.append($0) }
         let secondWindow = SpyEditorWindowController()
         secondWindow.representedDocumentID =
-            RecoveryFixtures.secondDocumentID
+            AdditionalProjectFixtures.secondDocumentID
         secondWindow.hasModifiedDocument = true
         secondWindow.eventPrefix = "second"
         secondWindow.events = { events.append($0) }
@@ -713,15 +655,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
         var replies: [Bool] = []
         let delegate = AppDelegate(
             documentWindowFactory: {
-                _, _, _ in windows.removeFirst()
+                _, _ in windows.removeFirst()
             },
             nativeMessagingHostInstaller: {},
             chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
-            sessionTerminationStateFactory: {
-                terminationState
-            },
-            recoveryStoreFactory: { SpyRecoveryStore() },
-            recoveryPrompt: SpyRecoveryPrompt(),
             terminationReply: {
                 replies.append($0)
                 replyExpectation.fulfill()
@@ -737,9 +674,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
             project: ProjectFixtures.project(text: "first")
         )
         try await delegate.present(
-            project: RecoveryFixtures.project(
+            project: AdditionalProjectFixtures.project(
                 text: "second",
-                documentID: RecoveryFixtures.secondDocumentID
+                documentID: AdditionalProjectFixtures.secondDocumentID
             )
         )
 
@@ -750,28 +687,18 @@ final class AppDelegateLifecycleTests: XCTestCase {
             .terminateLater
         )
         await fulfillment(of: [replyExpectation], timeout: 1)
-        delegate.applicationWillTerminate(
-            Notification(name: NSApplication.willTerminateNotification)
-        )
 
         XCTAssertEqual(
             events,
             [
-                "first-flush",
-                "second-flush",
                 "first-resolve",
                 "second-resolve",
-                "first-finalize",
-                "second-finalize",
             ]
         )
         XCTAssertEqual(replies, [true])
-        XCTAssertEqual(firstWindow.finalizeCount, 1)
-        XCTAssertEqual(secondWindow.finalizeCount, 1)
-        XCTAssertEqual(terminationState.cleanExitCount, 1)
     }
 
-    func testNewModifiedWindowDuringPromptIsFlushedAndResolved()
+    func testNewModifiedWindowDuringPromptIsResolved()
         async throws
     {
         let firstWindow = SpyEditorWindowController()
@@ -788,7 +715,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         }
         let secondWindow = SpyEditorWindowController()
         secondWindow.representedDocumentID =
-            RecoveryFixtures.secondDocumentID
+            AdditionalProjectFixtures.secondDocumentID
         secondWindow.hasModifiedDocument = true
         secondWindow.modificationRevision = 1
         secondWindow.pauseResolution = true
@@ -807,7 +734,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
         let delegate = AppDelegate(
             documentWindowFactory: {
-                _, _, _ in windows.removeFirst()
+                _, _ in windows.removeFirst()
             },
             terminationReply: {
                 replies.append($0)
@@ -826,16 +753,15 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
         await fulfillment(of: [firstPrompt], timeout: 1)
         try await delegate.present(
-            project: RecoveryFixtures.project(
+            project: AdditionalProjectFixtures.project(
                 text: "new",
-                documentID: RecoveryFixtures.secondDocumentID
+                documentID: AdditionalProjectFixtures.secondDocumentID
             )
         )
         firstWindow.resumeResolution()
 
         await fulfillment(of: [secondPrompt], timeout: 1)
         XCTAssertTrue(replies.isEmpty)
-        XCTAssertEqual(secondWindow.flushCount, 1)
         secondWindow.resumeResolution()
         await fulfillment(of: [reply], timeout: 1)
 
@@ -844,7 +770,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(secondWindow.resolveCount, 1)
     }
 
-    func testWindowModifiedDuringOtherPromptIsFlushedAndResolved()
+    func testWindowModifiedDuringOtherPromptIsResolved()
         async throws
     {
         let firstWindow = SpyEditorWindowController()
@@ -861,7 +787,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         }
         let secondWindow = SpyEditorWindowController()
         secondWindow.representedDocumentID =
-            RecoveryFixtures.secondDocumentID
+            AdditionalProjectFixtures.secondDocumentID
         secondWindow.pauseResolution = true
         let secondPrompt = expectation(
             description: "newly modified prompt"
@@ -878,7 +804,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
         let delegate = AppDelegate(
             documentWindowFactory: {
-                _, _, _ in windows.removeFirst()
+                _, _ in windows.removeFirst()
             },
             terminationReply: {
                 replies.append($0)
@@ -889,9 +815,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
             project: ProjectFixtures.project(text: "first")
         )
         try await delegate.present(
-            project: RecoveryFixtures.project(
+            project: AdditionalProjectFixtures.project(
                 text: "second",
-                documentID: RecoveryFixtures.secondDocumentID
+                documentID: AdditionalProjectFixtures.secondDocumentID
             )
         )
 
@@ -907,7 +833,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
 
         await fulfillment(of: [secondPrompt], timeout: 1)
         XCTAssertTrue(replies.isEmpty)
-        XCTAssertEqual(secondWindow.flushCount, 1)
         secondWindow.resumeResolution()
         await fulfillment(of: [reply], timeout: 1)
 
@@ -931,7 +856,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         }
         let secondWindow = SpyEditorWindowController()
         secondWindow.representedDocumentID =
-            RecoveryFixtures.secondDocumentID
+            AdditionalProjectFixtures.secondDocumentID
         secondWindow.hasModifiedDocument = true
         secondWindow.modificationRevision = 1
         secondWindow.pauseResolution = true
@@ -950,7 +875,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
         let delegate = AppDelegate(
             documentWindowFactory: {
-                _, _, _ in windows.removeFirst()
+                _, _ in windows.removeFirst()
             },
             terminationReply: {
                 replies.append($0)
@@ -961,9 +886,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
             project: ProjectFixtures.project(text: "first")
         )
         try await delegate.present(
-            project: RecoveryFixtures.project(
+            project: AdditionalProjectFixtures.project(
                 text: "second",
-                documentID: RecoveryFixtures.secondDocumentID
+                documentID: AdditionalProjectFixtures.secondDocumentID
             )
         )
 
@@ -984,12 +909,11 @@ final class AppDelegateLifecycleTests: XCTestCase {
         await fulfillment(of: [reply], timeout: 1)
 
         XCTAssertEqual(replies, [true])
-        XCTAssertEqual(firstWindow.flushCount, 2)
         XCTAssertEqual(firstWindow.resolveCount, 2)
         XCTAssertEqual(secondWindow.resolveCount, 1)
     }
 
-    func testLaterCancelDoesNotFinalizeEarlierWindow()
+    func testLaterCancelDoesNotApproveQuit()
         async throws
     {
         let firstWindow = SpyEditorWindowController()
@@ -998,7 +922,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         firstWindow.hasModifiedDocument = true
         let secondWindow = SpyEditorWindowController()
         secondWindow.representedDocumentID =
-            RecoveryFixtures.secondDocumentID
+            AdditionalProjectFixtures.secondDocumentID
         secondWindow.hasModifiedDocument = true
         secondWindow.resolutionResult = false
         var windows = [firstWindow, secondWindow]
@@ -1008,7 +932,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         var replies: [Bool] = []
         let delegate = AppDelegate(
             documentWindowFactory: {
-                _, _, _ in windows.removeFirst()
+                _, _ in windows.removeFirst()
             },
             terminationReply: {
                 replies.append($0)
@@ -1019,9 +943,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
             project: ProjectFixtures.project(text: "first")
         )
         try await delegate.present(
-            project: RecoveryFixtures.project(
+            project: AdditionalProjectFixtures.project(
                 text: "second",
-                documentID: RecoveryFixtures.secondDocumentID
+                documentID: AdditionalProjectFixtures.secondDocumentID
             )
         )
 
@@ -1036,73 +960,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(replies, [false])
         XCTAssertEqual(firstWindow.resolveCount, 1)
         XCTAssertEqual(secondWindow.resolveCount, 1)
-        XCTAssertEqual(firstWindow.finalizeCount, 0)
-        XCTAssertEqual(secondWindow.finalizeCount, 0)
-    }
-
-    func testBatchDiscardFailureRejectsTerminationWithoutCompletion()
-        async throws
-    {
-        let recoveryStore = SpyRecoveryStore()
-        recoveryStore.error = .discardStageFailed(
-            RecoveryFixtures.secondDocumentID
-        )
-        let firstWindow = SpyEditorWindowController()
-        firstWindow.hasModifiedDocument = true
-        firstWindow.modificationRevision = 1
-        firstWindow.pendingTerminationDiscardDocumentID =
-            ProjectFixtures.documentID
-        let secondWindow = SpyEditorWindowController()
-        secondWindow.representedDocumentID =
-            RecoveryFixtures.secondDocumentID
-        secondWindow.hasModifiedDocument = true
-        secondWindow.modificationRevision = 1
-        secondWindow.pendingTerminationDiscardDocumentID =
-            RecoveryFixtures.secondDocumentID
-        var windows = [firstWindow, secondWindow]
-        var replies: [Bool] = []
-        let reply = expectation(
-            description: "rejected termination"
-        )
-        let delegate = AppDelegate(
-            documentWindowFactory: {
-                _, _, _ in windows.removeFirst()
-            },
-            launchErrorReporter: { _ in },
-            recoveryStoreFactory: { recoveryStore },
-            terminationReply: {
-                replies.append($0)
-                reply.fulfill()
-            }
-        )
-        try await delegate.present(
-            project: ProjectFixtures.project(text: "first")
-        )
-        try await delegate.present(
-            project: RecoveryFixtures.project(
-                text: "second",
-                documentID: RecoveryFixtures.secondDocumentID
-            )
-        )
-
-        XCTAssertEqual(
-            delegate.applicationShouldTerminate(
-                NSApplication.shared
-            ),
-            .terminateLater
-        )
-        await fulfillment(of: [reply], timeout: 1)
-
-        XCTAssertEqual(replies, [false])
-        XCTAssertEqual(
-            recoveryStore.attemptedDiscardBatches,
-            [[
-                ProjectFixtures.documentID,
-                RecoveryFixtures.secondDocumentID,
-            ]]
-        )
-        XCTAssertEqual(firstWindow.finalizeCount, 0)
-        XCTAssertEqual(secondWindow.finalizeCount, 0)
     }
 
     func testRepeatedTerminateRequestStartsOneResolutionAndRepliesOnce()
@@ -1110,13 +967,13 @@ final class AppDelegateLifecycleTests: XCTestCase {
     {
         let window = SpyEditorWindowController()
         window.hasModifiedDocument = true
-        window.pauseFlush = true
+        window.pauseResolution = true
         let replyExpectation = expectation(
             description: "single termination reply"
         )
         var replies: [Bool] = []
         let delegate = AppDelegate(
-            documentWindowFactory: { _, _, _ in window },
+            documentWindowFactory: { _, _ in window },
             terminationReply: {
                 replies.append($0)
                 replyExpectation.fulfill()
@@ -1139,9 +996,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
             .terminateLater
         )
         await Task.yield()
-        XCTAssertEqual(window.flushCount, 1)
+        XCTAssertEqual(window.resolveCount, 1)
+        XCTAssertTrue(replies.isEmpty)
 
-        window.resumeFlush()
+        window.resumeResolution()
         await fulfillment(of: [replyExpectation], timeout: 1)
 
         XCTAssertEqual(
@@ -1151,9 +1009,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
             .terminateNow
         )
         XCTAssertEqual(replies, [true])
-        XCTAssertEqual(window.flushCount, 1)
         XCTAssertEqual(window.resolveCount, 1)
-        XCTAssertEqual(window.finalizeCount, 1)
     }
 }
 
@@ -1197,41 +1053,6 @@ private final class SequentialProjectStore:
 private enum AppDelegateLifecycleTestError: Error, Equatable {
     case presentation
     case registration
-}
-
-private func makeCleanTerminationState()
-    -> any SessionTerminationTracking
-{
-    StubSessionTerminationState(previousSessionWasClean: true)
-}
-
-private struct StubSessionTerminationState:
-    SessionTerminationTracking
-{
-    let previousSessionWasClean: Bool
-
-    func beginSession() throws -> Bool {
-        previousSessionWasClean
-    }
-
-    func markCleanExit() throws {}
-}
-
-private final class SpySessionTerminationState:
-    SessionTerminationTracking,
-    @unchecked Sendable
-{
-    private(set) var beginCount = 0
-    private(set) var cleanExitCount = 0
-
-    func beginSession() throws -> Bool {
-        beginCount += 1
-        return true
-    }
-
-    func markCleanExit() throws {
-        cleanExitCount += 1
-    }
 }
 
 private func makeNoOpHotKeyAPI() -> GlobalHotKeyAPI {
@@ -1286,12 +1107,10 @@ private final class SpyEditorWindowController: EditorWindowControlling {
     var representedProjectURL: URL?
     var hasModifiedDocument = false
     var modificationRevision: UInt64 = 0
-    var pendingTerminationDiscardDocumentID: UUID?
     var resolutionResult = true
     var resolutionLabel = "approved"
     var eventPrefix = "window"
     var events: ((String) -> Void)?
-    var pauseFlush = false
     var pauseResolution = false
     var pauseEditorLoad = false
     var onPresent: (() -> Void)?
@@ -1299,17 +1118,13 @@ private final class SpyEditorWindowController: EditorWindowControlling {
     var onResolve: ((Int) -> Void)?
     private var editorLoadContinuations:
         [CheckedContinuation<Void, Never>] = []
-    private var flushContinuation:
-        CheckedContinuation<Void, Never>?
     private var resolutionContinuation:
         CheckedContinuation<Void, Never>?
     private(set) var presentationCount = 0
     private(set) var failedPresentationDiscardCount = 0
     private(set) var editorLoadWaitCount = 0
     private(set) var focusCount = 0
-    private(set) var flushCount = 0
     private(set) var resolveCount = 0
-    private(set) var finalizeCount = 0
 
     func presentWindow() throws {
         if let presentationError {
@@ -1340,16 +1155,6 @@ private final class SpyEditorWindowController: EditorWindowControlling {
         focusCount += 1
     }
 
-    func flushRecoveryForTermination() async throws {
-        flushCount += 1
-        events?("\(eventPrefix)-flush")
-        if pauseFlush {
-            await withCheckedContinuation {
-                flushContinuation = $0
-            }
-        }
-    }
-
     func resolvePendingChangesForTermination() async -> Bool {
         resolveCount += 1
         events?("\(eventPrefix)-resolve")
@@ -1360,23 +1165,6 @@ private final class SpyEditorWindowController: EditorWindowControlling {
             }
         }
         return resolutionResult
-    }
-
-    func finalizePendingTermination() throws {
-        finalizeCount += 1
-        events?("\(eventPrefix)-finalize")
-    }
-
-    func completePendingTerminationAfterDiscardStaged() {
-        finalizeCount += 1
-        events?("\(eventPrefix)-finalize")
-        pendingTerminationDiscardDocumentID = nil
-    }
-
-    func resumeFlush() {
-        pauseFlush = false
-        flushContinuation?.resume()
-        flushContinuation = nil
     }
 
     func resumeEditorLoad() {

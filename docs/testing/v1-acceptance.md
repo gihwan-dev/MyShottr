@@ -108,9 +108,10 @@ Closing a modified document offers Save, Discard, and Cancel.
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
 
-### 13. Abnormal-termination recovery
+### 13. Direct capture launch
 
-Forced app termination offers the latest recovery package on next launch.
+Starting a capture from a cold app launch opens the captured image directly in
+the editor without an intervening recovery prompt.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:

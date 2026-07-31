@@ -7,11 +7,6 @@ protocol UserFacingErrorPresenting {
         _ error: MyShottrUserFacingError,
         from window: NSWindow?
     )
-    func present(
-        _ error: RetryableUserFacingError,
-        from window: NSWindow?,
-        retry: @escaping () -> Void
-    )
 }
 
 @MainActor
@@ -123,20 +118,8 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
         }
     }
 
-    private enum AlertRequest {
-        case standard(UserFacingErrorViewModel)
-        case retry(
-            UserFacingErrorViewModel,
-            operation: () -> Void
-        )
-
-        var viewModel: UserFacingErrorViewModel {
-            switch self {
-            case .standard(let viewModel),
-                 .retry(let viewModel, _):
-                return viewModel
-            }
-        }
+    private struct AlertRequest {
+        let viewModel: UserFacingErrorViewModel
     }
 
     private struct WindowAlertQueue {
@@ -191,31 +174,8 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
         from window: NSWindow?
     ) {
         let viewModel = error.viewModel
-        precondition(
-            viewModel.primaryAction != .retrySameOperation,
-            "Retryable errors require a concrete retry operation."
-        )
         route(
-            .standard(viewModel),
-            from: window
-        )
-    }
-
-    func present(
-        _ error: RetryableUserFacingError,
-        from window: NSWindow?,
-        retry: @escaping () -> Void
-    ) {
-        let viewModel = error.viewModel
-        precondition(
-            viewModel.primaryAction == .retrySameOperation,
-            "Retry presentation requires the retry action."
-        )
-        route(
-            .retry(
-                viewModel,
-                operation: retry
-            ),
+            AlertRequest(viewModel: viewModel),
             from: window
         )
     }
@@ -350,12 +310,7 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
         guard response == .alertFirstButtonReturn else {
             return
         }
-        switch request {
-        case .standard(let viewModel):
-            perform(viewModel.primaryAction)
-        case .retry(_, let operation):
-            operation()
-        }
+        perform(request.viewModel.primaryAction)
     }
 
     private func windowDidClose(_ window: NSWindow) {
@@ -391,8 +346,6 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
             return "Open System Settings"
         case .openChromeSetupInstructions:
             return "Show Chrome Setup"
-        case .retrySameOperation:
-            return "Retry"
         }
     }
 
@@ -406,10 +359,6 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
             actions.openScreenRecordingSettings()
         case .openChromeSetupInstructions:
             actions.openChromeSetupInstructions()
-        case .retrySameOperation:
-            preconditionFailure(
-                "Retry actions must carry a concrete operation."
-            )
         }
     }
 }

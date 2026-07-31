@@ -331,23 +331,6 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             MyShottrUserFacingError.projectSave.viewModel.primaryAction,
             .dismiss
         )
-        let cleanupWarning = RetryableUserFacingError
-            .recoveryCleanupAfterSave
-            .viewModel
-        XCTAssertEqual(
-            cleanupWarning.title,
-            "Document Saved; Recovery Cleanup Failed"
-        )
-        XCTAssertEqual(
-            cleanupWarning.primaryAction,
-            .retrySameOperation
-        )
-        XCTAssertTrue(
-            cleanupWarning.message.contains("was saved")
-        )
-        XCTAssertFalse(
-            cleanupWarning.message.contains("not replaced")
-        )
         XCTAssertEqual(
             MyShottrUserFacingError.pngExport.viewModel.title,
             "PNG Could Not Be Exported"
@@ -426,101 +409,11 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         )
     }
 
-    func testRecoveryErrorsHaveExhaustiveMappings() {
-        let storeCases: [RecoveryStoreError] = [
-            .invalidRoot,
-            .invalidPackagePath("bad.myshottr"),
-            .invalidPackage(
-                UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
-                .invalidManifest
-            ),
-            .documentIdentifierMismatch(
-                path: UUID(
-                    uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
-                )!,
-                manifest: UUID(
-                    uuidString: "11111111-2222-3333-4444-555555555555"
-                )!
-            ),
-            .readFailed,
-            .writeFailed(
-                UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
-            ),
-            .removeFailed(
-                UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
-            ),
-            .discardStageFailed(
-                UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
-            ),
-            .discardRollbackFailed,
-            .discardRollbackConflict(
-                UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
-            ),
-            .discardCleanupFailed("transaction"),
-            .invalidDiscardTransactionPath("transaction"),
-        ]
-        for error in storeCases {
-            let viewModel = MyShottrUserFacingError
-                .recoveryStore(error)
-                .viewModel
-            XCTAssertTrue(
-                [
-                    "Recovery Data Could Not Be Read",
-                    "Recovery Data Could Not Be Updated",
-                ].contains(viewModel.title)
-            )
-            XCTAssertEqual(viewModel.primaryAction, .dismiss)
-        }
-
-        let coordinatorCases: [RecoveryCoordinatorError] = [
-            .invalidSelection(
-                UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
-            ),
-            .restoreFailed(
-                UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
-            ),
-        ]
-        for error in coordinatorCases {
-            let viewModel = MyShottrUserFacingError
-                .recoveryCoordinator(error)
-                .viewModel
-            XCTAssertEqual(viewModel.title, "Project Could Not Be Recovered")
-            XCTAssertEqual(viewModel.primaryAction, .dismiss)
-        }
-
-        let terminationCases: [SessionTerminationStateError] = [
-            .invalidRoot,
-            .invalidState,
-            .writeFailed,
-        ]
-        for error in terminationCases {
-            let viewModel = MyShottrUserFacingError
-                .sessionTermination(error)
-                .viewModel
-            XCTAssertEqual(viewModel.title, "Recovery State Could Not Be Updated")
-            XCTAssertEqual(viewModel.primaryAction, .dismiss)
-        }
-
-        let issue = RecoveryScanIssue(
-            entryName: "raw-secret.myshottr",
-            error: .invalidPackagePath("corrupt.myshottr")
-        )
-        let issueViewModel = MyShottrUserFacingError
-            .recoveryScanIssue(issue)
-            .viewModel
-        XCTAssertEqual(
-            issueViewModel.title,
-            "Recovery Data Could Not Be Read"
-        )
-        XCTAssertFalse(
-            issueViewModel.message.contains("raw-secret")
-        )
-
+    func testDocumentSessionErrorsHaveExhaustiveMappings() {
         let documentCases: [DocumentSessionError] = [
             .invalidDocument,
             .noOpenDocument,
             .noStagedDocument,
-            .recoverySnapshotUnavailable,
         ]
         for error in documentCases {
             let viewModel = MyShottrUserFacingError
@@ -528,7 +421,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
                 .viewModel
             XCTAssertEqual(
                 viewModel.title,
-                "Document Recovery Could Not Be Updated"
+                "Document Could Not Be Updated"
             )
             XCTAssertEqual(viewModel.primaryAction, .dismiss)
         }
@@ -834,47 +727,6 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         )
     }
 
-    func testQueuedRetryAfterWindowCloseIsActionableExactlyOnceAndReleases()
-    {
-        let recorder = AlertPresentationRecorder()
-        let presenter = UserFacingErrorPresenter(
-            presentation: recorder.api,
-            actions: .noOp
-        )
-        let window = NSWindow()
-        var owner: RetryClosureOwner? =
-            RetryClosureOwner()
-        let ownerReference = WeakReference(owner)
-        var retryCount = 0
-
-        presenter.present(.pngExport, from: window)
-        presenter.present(
-            .recoveryCleanupAfterSave,
-            from: window,
-            retry: { [owner] in
-                _ = owner
-                retryCount += 1
-            }
-        )
-        owner = nil
-        XCTAssertNotNil(ownerReference.value)
-
-        NotificationCenter.default.post(
-            name: NSWindow.willCloseNotification,
-            object: window
-        )
-        recorder.completeSheet(
-            with: .alertFirstButtonReturn
-        )
-
-        XCTAssertEqual(retryCount, 1)
-        XCTAssertEqual(
-            recorder.modalAlerts.map(\.messageText),
-            ["Document Saved; Recovery Cleanup Failed"]
-        )
-        XCTAssertNil(ownerReference.value)
-    }
-
     func testClosedWindowRegistryPrunesDeallocatedTombstones() {
         let registry = WeakWindowRegistry()
         weak var releasedWindow: NSWindow?
@@ -945,14 +797,4 @@ private extension UserFacingErrorActions {
         openChromeSetupInstructions: {},
         activateApplication: {}
     )
-}
-
-private final class RetryClosureOwner {}
-
-private final class WeakReference<Value: AnyObject> {
-    weak var value: Value?
-
-    init(_ value: Value?) {
-        self.value = value
-    }
 }

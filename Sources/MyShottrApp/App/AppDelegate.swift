@@ -26,8 +26,7 @@ final class AppDelegate:
 {
     typealias DocumentWindowFactory = (
         _ project: MyShottrProject,
-        _ projectURL: URL?,
-        _ isRecoveredDocument: Bool
+        _ projectURL: URL?
     ) throws -> any EditorWindowControlling
     typealias NativeMessagingHostInstaller = () throws -> Void
     typealias ChromeCaptureCoordinatorFactory = (
@@ -35,10 +34,6 @@ final class AppDelegate:
         _ windows: any DocumentWindowPresenting
     ) throws -> CaptureInboxCoordinator
     typealias LaunchErrorReporter = (MyShottrUserFacingError) -> Void
-    typealias SessionTerminationStateFactory =
-        () throws -> any SessionTerminationTracking
-    typealias RecoveryStoreFactory =
-        () throws -> any RecoveryStoring
     typealias TerminationReply = (Bool) -> Void
 
     private enum TerminationResolutionState: Equatable {
@@ -55,10 +50,6 @@ final class AppDelegate:
     private let chromeCaptureCoordinatorFactory:
         ChromeCaptureCoordinatorFactory
     private let launchErrorReporter: LaunchErrorReporter
-    private let sessionTerminationStateFactory:
-        SessionTerminationStateFactory
-    private let recoveryStoreFactory: RecoveryStoreFactory
-    private let recoveryPrompt: any RecoveryPrompting
     private let terminationReply: TerminationReply
     private let hotKeyAPI: GlobalHotKeyAPI
     private var documentWindows: [any EditorWindowControlling] = []
@@ -66,12 +57,6 @@ final class AppDelegate:
     private var chromeCaptureCoordinator: CaptureInboxCoordinator?
     private var menuBarController: MenuBarController?
     private var hotKeyRegistrar: GlobalHotKeyRegistrar?
-    private var sessionTerminationState: (
-        any SessionTerminationTracking
-    )?
-    private var terminationRecoveryStore:
-        (any RecoveryStoring)?
-    private var recoveryCoordinator: RecoveryCoordinator?
     private var terminationResolutionState:
         TerminationResolutionState = .idle
 
@@ -85,12 +70,10 @@ final class AppDelegate:
             applicationLifecycle: .live,
             documentWindowFactory: {
                 project,
-                projectURL,
-                isRecoveredDocument in
+                projectURL in
                 try DocumentWindowController(
                     project: project,
-                    projectURL: projectURL,
-                    isRecoveredDocument: isRecoveredDocument
+                    projectURL: projectURL
                 )
             }
         )
@@ -101,12 +84,10 @@ final class AppDelegate:
         applicationLifecycle: ApplicationLifecycle = .live,
         documentWindowFactory: @escaping DocumentWindowFactory = {
             project,
-            projectURL,
-            isRecoveredDocument in
+            projectURL in
             try DocumentWindowController(
                 project: project,
-                projectURL: projectURL,
-                isRecoveredDocument: isRecoveredDocument
+                projectURL: projectURL
             )
         },
         nativeMessagingHostInstaller:
@@ -130,16 +111,6 @@ final class AppDelegate:
                     from: nil
                 )
             },
-        sessionTerminationStateFactory:
-            @escaping SessionTerminationStateFactory = {
-                try SessionTerminationState()
-            },
-        recoveryStoreFactory:
-            @escaping RecoveryStoreFactory = {
-                try RecoveryStore()
-            },
-        recoveryPrompt:
-            any RecoveryPrompting = RecoveryAlertPrompt(),
         terminationReply:
             @escaping TerminationReply = {
                 NSApp.reply(
@@ -156,10 +127,6 @@ final class AppDelegate:
         self.chromeCaptureCoordinatorFactory =
             chromeCaptureCoordinatorFactory
         self.launchErrorReporter = launchErrorReporter
-        self.sessionTerminationStateFactory =
-            sessionTerminationStateFactory
-        self.recoveryStoreFactory = recoveryStoreFactory
-        self.recoveryPrompt = recoveryPrompt
         self.terminationReply = terminationReply
         self.hotKeyAPI = hotKeyAPI
         super.init()
@@ -169,7 +136,6 @@ final class AppDelegate:
         if documentWindows.isEmpty {
             applicationLifecycle.setActivationPolicy(.accessory)
         }
-        startRecovery()
         let coordinator = dependencies.makeCaptureCoordinator(
             windows: self
         )
@@ -254,24 +220,6 @@ final class AppDelegate:
         for url in urls { openProject(at: url) }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        guard terminationResolutionState == .approved,
-              let sessionTerminationState
-        else {
-            return
-        }
-        do {
-            try sessionTerminationState.markCleanExit()
-        } catch {
-            launchErrorReporter(
-                MyShottrUserFacingError.wrapping(
-                    error,
-                    context: .recovery
-                )
-            )
-        }
-    }
-
     func applicationShouldTerminate(
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {
@@ -309,8 +257,7 @@ final class AppDelegate:
     ) async throws {
         let opening = try beginOpeningDocument(
             project: project,
-            projectURL: nil,
-            isRecoveredDocument: false
+            projectURL: nil
         )
         do {
             try await opening.controller
@@ -359,8 +306,7 @@ final class AppDelegate:
             let project = try dependencies.projectStore.load(from: url)
             _ = try openDocument(
                 project: project,
-                projectURL: url,
-                isRecoveredDocument: false
+                projectURL: url
             )
         } catch {
             launchErrorReporter(
@@ -375,13 +321,11 @@ final class AppDelegate:
     @discardableResult
     private func openDocument(
         project: MyShottrProject,
-        projectURL: URL?,
-        isRecoveredDocument: Bool
+        projectURL: URL?
     ) throws -> Bool {
         let opening = try beginOpeningDocument(
             project: project,
-            projectURL: projectURL,
-            isRecoveredDocument: isRecoveredDocument
+            projectURL: projectURL
         )
         Task { @MainActor [weak self] in
             do {
@@ -405,8 +349,7 @@ final class AppDelegate:
 
     private func beginOpeningDocument(
         project: MyShottrProject,
-        projectURL: URL?,
-        isRecoveredDocument: Bool
+        projectURL: URL?
     ) throws -> (
         controller: any EditorWindowControlling,
         didCreate: Bool
@@ -423,8 +366,7 @@ final class AppDelegate:
 
         let controller = try documentWindowFactory(
             project,
-            projectURL,
-            isRecoveredDocument
+            projectURL
         )
         controller.onClose = { [weak self, weak controller] in
             guard let self, let controller else {
@@ -459,58 +401,6 @@ final class AppDelegate:
         if documentWindows.isEmpty {
             applicationLifecycle.setActivationPolicy(
                 .accessory
-            )
-        }
-    }
-
-    private func startRecovery() {
-        do {
-            let terminationState =
-                try sessionTerminationStateFactory()
-            let previousSessionWasClean =
-                try terminationState.beginSession()
-            sessionTerminationState = terminationState
-            let recoveryStore = try recoveryStoreFactory()
-            terminationRecoveryStore = recoveryStore
-
-            let coordinator = RecoveryCoordinator(
-                recoveryStore: recoveryStore,
-                previousSessionWasClean:
-                    previousSessionWasClean,
-                prompt: recoveryPrompt,
-                reportIssue: {
-                    [launchErrorReporter] issue in
-                    launchErrorReporter(
-                        MyShottrUserFacingError
-                            .recoveryScanIssue(issue)
-                    )
-                },
-                restore: { [weak self] recovered in
-                    guard let self else {
-                        throw AppDelegateRecoveryError
-                            .applicationUnavailable
-                    }
-                    let didOpen = try self.openDocument(
-                        project: recovered.project,
-                        projectURL: nil,
-                        isRecoveredDocument: true
-                    )
-                    guard didOpen else {
-                        throw AppDelegateRecoveryError
-                            .documentAlreadyOpen(
-                                recovered.documentId
-                            )
-                    }
-                }
-            )
-            recoveryCoordinator = coordinator
-            try coordinator.offerRecoveryIfNeeded()
-        } catch {
-            launchErrorReporter(
-                MyShottrUserFacingError.wrapping(
-                    error,
-                    context: .recovery
-                )
             )
         }
     }
@@ -561,56 +451,10 @@ final class AppDelegate:
                     ] != $0.modificationRevision
             }
 
-            var flushedRevisions:
-                [ObjectIdentifier: UInt64] = [:]
             var shouldRestart = false
-            do {
-                for window in targets {
-                    let identity = windowIdentity(window)
-                    let revision =
-                        window.modificationRevision
-                    try await window
-                        .flushRecoveryForTermination()
-                    guard documentWindows.contains(
-                        where: {
-                            windowIdentity($0) == identity
-                        }
-                    ),
-                    window.modificationRevision == revision
-                    else {
-                        shouldRestart = true
-                        break
-                    }
-                    flushedRevisions[identity] = revision
-                }
-            } catch {
-                launchErrorReporter(
-                    MyShottrUserFacingError.wrapping(
-                        error,
-                        context: .recovery
-                    )
-                )
-                return false
-            }
-            if shouldRestart {
-                continue
-            }
-            guard Set(
-                documentWindows.map(windowIdentity)
-            ) == cycleIdentities else {
-                continue
-            }
-
             for window in targets {
                 let identity = windowIdentity(window)
-                guard let revision =
-                        flushedRevisions[identity],
-                      window.modificationRevision
-                        == revision
-                else {
-                    shouldRestart = true
-                    break
-                }
+                let revision = window.modificationRevision
                 guard await window
                     .resolvePendingChangesForTermination()
                 else {
@@ -648,42 +492,6 @@ final class AppDelegate:
             ) else {
                 continue
             }
-
-            do {
-                let discardDocumentIDs = liveWindows
-                    .compactMap(
-                        \.pendingTerminationDiscardDocumentID
-                    )
-                if !discardDocumentIDs.isEmpty {
-                    let recoveryStore:
-                        any RecoveryStoring
-                    if let terminationRecoveryStore {
-                        recoveryStore =
-                            terminationRecoveryStore
-                    } else {
-                        recoveryStore =
-                            try recoveryStoreFactory()
-                        terminationRecoveryStore =
-                            recoveryStore
-                    }
-                    _ = try recoveryStore.stageDiscard(
-                        documentIds: discardDocumentIDs
-                    )
-                }
-            } catch {
-                launchErrorReporter(
-                    MyShottrUserFacingError.wrapping(
-                        error,
-                        context: .recovery
-                    )
-                )
-                return false
-            }
-
-            for window in liveWindows {
-                window
-                    .completePendingTerminationAfterDiscardStaged()
-            }
             return true
         }
     }
@@ -693,9 +501,4 @@ final class AppDelegate:
     ) -> ObjectIdentifier {
         ObjectIdentifier(window)
     }
-}
-
-private enum AppDelegateRecoveryError: Error {
-    case applicationUnavailable
-    case documentAlreadyOpen(UUID)
 }

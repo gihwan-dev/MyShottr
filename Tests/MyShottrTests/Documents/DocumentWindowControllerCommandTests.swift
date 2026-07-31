@@ -58,54 +58,6 @@ final class DocumentWindowControllerCommandTests:
         XCTAssertEqual(presenter.windowWasProvided, [true])
     }
 
-    func testRecoveryCleanupRetrySurvivesWindowCloseAndRequeuesOnFailure()
-        throws
-    {
-        let presenter = SpyUserFacingErrorPresenter()
-        let cleanup = RecoveryCleanupAttemptSpy(
-            failuresRemaining: 1
-        )
-        var operation: RecoveryCleanupOperation? =
-            cleanup.operation(
-                documentIDs: [
-                    ProjectFixtures.documentID,
-                ]
-            )
-        weak var releasedOperation = operation
-        var window: NSWindow? = NSWindow()
-        RecoveryCleanupRetryCoordinator(
-            operation: try XCTUnwrap(operation),
-            presenter: presenter,
-            window: window
-        ).present()
-        operation = nil
-
-        NotificationCenter.default.post(
-            name: NSWindow.willCloseNotification,
-            object: window
-        )
-        window = nil
-        XCTAssertNotNil(releasedOperation)
-
-        presenter.performNextRetry()
-
-        XCTAssertEqual(
-            presenter.presentedViewModels.map(\.primaryAction),
-            [.retrySameOperation, .retrySameOperation]
-        )
-        XCTAssertEqual(presenter.windowWasProvided.count, 2)
-        XCTAssertNotNil(releasedOperation)
-
-        presenter.performNextRetry()
-
-        XCTAssertEqual(
-            cleanup.attemptCount,
-            2
-        )
-        XCTAssertTrue(presenter.retryActions.isEmpty)
-        XCTAssertNil(releasedOperation)
-    }
-
     func testCloseSaveRaceKeepsWindowOpenUntilLatestRevisionIsSaved()
         async throws
     {
@@ -114,22 +66,9 @@ final class DocumentWindowControllerCommandTests:
             text: "first save"
         )
         let latest = ProjectFixtures.project(text: "latest")
-        let recoveryRoot = temporaryDirectory
-            .appendingPathComponent(
-                "Recovery",
-                isDirectory: true
-            )
-        let recoveryStore = try RecoveryStore(
-            root: recoveryRoot
-        )
-        let clock = ManualRecoveryClock()
-        let session = DocumentSession(
-            recoveryStore: recoveryStore,
-            recoveryClock: clock
-        )
+        let session = DocumentSession()
         try session.open(project: initial)
         try session.applySnapshot(firstSave.annotationJSON)
-        await clock.advance(by: .seconds(2))
         let projectStore = CapturingProjectStore()
         var snapshotRequestCount = 0
         var closeRequestCount = 0
@@ -141,7 +80,6 @@ final class DocumentWindowControllerCommandTests:
                     isDirectory: true
                 ),
             projectStore: projectStore,
-            recoveryStore: recoveryStore,
             testSession: session,
             annotationSnapshotProvider: {
                 snapshotRequestCount += 1
@@ -162,12 +100,9 @@ final class DocumentWindowControllerCommandTests:
         )
         let window = try XCTUnwrap(controller.window)
 
-        XCTAssertFalse(
-            controller.windowShouldClose(window)
-        )
-        await waitUntil {
-            projectStore.savedProjects.count == 1
-        }
+        let firstResolution = await controller
+            .resolvePendingChangesForTermination()
+        XCTAssertFalse(firstResolution)
 
         XCTAssertEqual(
             projectStore.savedProjects[0].annotationJSON,
@@ -179,13 +114,6 @@ final class DocumentWindowControllerCommandTests:
         )
         XCTAssertTrue(session.isModified)
         XCTAssertEqual(closeRequestCount, 0)
-
-        await clock.advance(by: .seconds(2))
-        XCTAssertEqual(
-            try recoveryStore.scanRecoverableProjects()
-                .projects.first?.project.annotationJSON,
-            latest.annotationJSON
-        )
 
         XCTAssertFalse(
             controller.windowShouldClose(window)
@@ -202,138 +130,6 @@ final class DocumentWindowControllerCommandTests:
             ]
         )
         XCTAssertFalse(session.isModified)
-    }
-
-    func testCloseAfterSaveReportsRecoveryCleanupWithoutRewritingDestination()
-        async throws
-    {
-        let initial = ProjectFixtures.project(text: "initial")
-        let saved = ProjectFixtures.project(
-            text: "saved destination"
-        )
-        let recovery = RecoveryFixtures.recovered(
-            text: "stale recovery",
-            documentID: ProjectFixtures.documentID,
-            modifiedAt: RecoveryFixtures.fixedNow
-        )
-        let recoveryStore = SpyRecoveryStore()
-        recoveryStore.projects = [recovery]
-        recoveryStore.removeErrors = [
-            .removeFailed(ProjectFixtures.documentID),
-            .removeFailed(ProjectFixtures.documentID),
-            nil,
-        ]
-        let session = DocumentSession(
-            recoveryStore: recoveryStore,
-            recoveryClock: ManualRecoveryClock()
-        )
-        try session.open(project: initial)
-        try session.applySnapshot(saved.annotationJSON)
-        let destination = temporaryDirectory
-            .appendingPathComponent(
-                "Saved.myshottr",
-                isDirectory: true
-            )
-        let projectStore =
-            PersistentCapturingProjectStore()
-        let presenter = SpyUserFacingErrorPresenter()
-        var closeRequestCount = 0
-        let controller = try DocumentWindowController(
-            project: initial,
-            projectURL: nil,
-            projectStore: projectStore,
-            recoveryStore: recoveryStore,
-            errorPresenter: presenter,
-            testSession: session,
-            annotationSnapshotProvider: {
-                saved.annotationJSON
-            },
-            pendingChangesDecisionProvider: {
-                .save
-            },
-            projectSaveURLProvider: {
-                destination
-            },
-            closeWindow: {
-                closeRequestCount += 1
-            }
-        )
-        let window = try XCTUnwrap(controller.window)
-
-        XCTAssertFalse(
-            controller.windowShouldClose(window)
-        )
-        await waitUntil {
-            closeRequestCount == 1
-        }
-
-        XCTAssertEqual(
-            try ProjectPackageStore()
-                .load(from: destination)
-                .annotationJSON,
-            saved.annotationJSON
-        )
-        XCTAssertEqual(
-            controller.representedProjectURL,
-            destination
-        )
-        XCTAssertFalse(session.isModified)
-        XCTAssertEqual(
-            projectStore.savedURLs,
-            [destination]
-        )
-        XCTAssertEqual(recoveryStore.projects, [recovery])
-        XCTAssertEqual(
-            presenter.presentedViewModels,
-            [
-                RetryableUserFacingError
-                    .recoveryCleanupAfterSave
-                    .viewModel,
-            ]
-        )
-        XCTAssertEqual(
-            presenter.retryActions.count,
-            1
-        )
-        XCTAssertTrue(
-            controller.windowShouldClose(window)
-        )
-
-        presenter.performNextRetry()
-
-        XCTAssertEqual(
-            presenter.presentedViewModels,
-            [
-                RetryableUserFacingError
-                    .recoveryCleanupAfterSave
-                    .viewModel,
-                RetryableUserFacingError
-                    .recoveryCleanupAfterSave
-                    .viewModel,
-            ]
-        )
-        XCTAssertEqual(
-            projectStore.savedURLs,
-            [destination]
-        )
-        XCTAssertEqual(recoveryStore.projects, [recovery])
-        XCTAssertEqual(
-            presenter.retryActions.count,
-            1
-        )
-
-        presenter.performNextRetry()
-
-        XCTAssertEqual(
-            recoveryStore.removedDocumentIDs,
-            [ProjectFixtures.documentID]
-        )
-        XCTAssertTrue(recoveryStore.projects.isEmpty)
-        XCTAssertEqual(
-            projectStore.savedURLs,
-            [destination]
-        )
-        XCTAssertTrue(presenter.retryActions.isEmpty)
     }
 
     private func waitUntil(
@@ -367,26 +163,6 @@ private final class CapturingProjectStore:
     }
 }
 
-private final class PersistentCapturingProjectStore:
-    ProjectPackageStoring,
-    @unchecked Sendable
-{
-    private let store = ProjectPackageStore()
-    private(set) var savedURLs: [URL] = []
-
-    func load(from url: URL) throws -> MyShottrProject {
-        try store.load(from: url)
-    }
-
-    func save(
-        _ project: MyShottrProject,
-        to url: URL
-    ) throws {
-        try store.save(project, to: url)
-        savedURLs.append(url)
-    }
-}
-
 private enum CapturingProjectStoreError: Error {
     case unexpectedLoad
 }
@@ -398,9 +174,6 @@ private final class SpyUserFacingErrorPresenter:
     private(set) var presentedViewModels:
         [UserFacingErrorViewModel] = []
     private(set) var windowWasProvided: [Bool] = []
-    private(set) var retryActions: [
-        () -> Void
-    ] = []
 
     func present(
         _ error: MyShottrUserFacingError,
@@ -408,19 +181,5 @@ private final class SpyUserFacingErrorPresenter:
     ) {
         presentedViewModels.append(error.viewModel)
         windowWasProvided.append(window != nil)
-    }
-
-    func present(
-        _ error: RetryableUserFacingError,
-        from window: NSWindow?,
-        retry: @escaping () -> Void
-    ) {
-        presentedViewModels.append(error.viewModel)
-        windowWasProvided.append(window != nil)
-        retryActions.append(retry)
-    }
-
-    func performNextRetry() {
-        retryActions.removeFirst()()
     }
 }

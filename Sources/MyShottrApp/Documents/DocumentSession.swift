@@ -4,131 +4,11 @@ enum DocumentSessionError: Error, Equatable {
     case invalidDocument
     case noOpenDocument
     case noStagedDocument
-    case recoverySnapshotUnavailable
-}
-
-final class RecoveryCleanupOperation: @unchecked Sendable {
-    let documentIDs: [UUID]
-    private let lock = NSLock()
-    private var cleanup: (@Sendable () throws -> Void)?
-
-    init(
-        documentIDs: [UUID],
-        cleanup: @escaping @Sendable () throws -> Void
-    ) {
-        self.documentIDs = documentIDs.sorted {
-            $0.uuidString < $1.uuidString
-        }
-        self.cleanup = cleanup
-    }
-
-    var isPending: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return cleanup != nil
-    }
-
-    func perform() throws {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let cleanup else {
-            return
-        }
-        try cleanup()
-        self.cleanup = nil
-    }
-}
-
-private final class RecoveryRemovalCleanup:
-    @unchecked Sendable
-{
-    private let store: any RecoveryStoring
-    private let documentID: UUID
-    private var committedCleanup:
-        RecoveryCleanupOperation?
-
-    init(
-        store: any RecoveryStoring,
-        documentID: UUID
-    ) {
-        self.store = store
-        self.documentID = documentID
-    }
-
-    func perform() throws {
-        if let committedCleanup {
-            try committedCleanup.perform()
-            return
-        }
-        switch try store.remove(documentId: documentID) {
-        case .noRecovery, .committed:
-            return
-        case let .committedAwaitingDurability(
-            cleanupOperation
-        ),
-        let .committedCleanupPending(cleanupOperation):
-            committedCleanup = cleanupOperation
-            try cleanupOperation.perform()
-        }
-    }
 }
 
 enum DocumentSaveCompletion {
     case saved
     case savedWithNewerChanges
-    case savedRecoveryCleanupPending(
-        RecoveryCleanupOperation
-    )
-}
-
-@MainActor
-protocol RecoveryScheduledOperation: AnyObject {
-    func cancel()
-}
-
-@MainActor
-protocol RecoveryDebounceClock {
-    func schedule(
-        after delay: Duration,
-        operation: @escaping @MainActor @Sendable () async -> Void
-    ) -> any RecoveryScheduledOperation
-}
-
-@MainActor
-private final class TaskRecoveryScheduledOperation:
-    RecoveryScheduledOperation
-{
-    var task: Task<Void, Never>?
-
-    func cancel() {
-        task?.cancel()
-        task = nil
-    }
-}
-
-@MainActor
-final class ContinuousRecoveryClock: RecoveryDebounceClock {
-    func schedule(
-        after delay: Duration,
-        operation: @escaping @MainActor @Sendable () async -> Void
-    ) -> any RecoveryScheduledOperation {
-        let scheduled = TaskRecoveryScheduledOperation()
-        scheduled.task = Task { @MainActor [weak scheduled] in
-            do {
-                try await ContinuousClock().sleep(for: delay)
-            } catch {
-                return
-            }
-            guard let scheduled,
-                  !Task.isCancelled
-            else {
-                return
-            }
-            await operation()
-            scheduled.task = nil
-        }
-        return scheduled
-    }
 }
 
 @MainActor
@@ -139,40 +19,18 @@ final class DocumentSession {
 
     private(set) var project: MyShottrProject?
     private var stagedProject: MyShottrProject?
-    private let recoveryStore: (any RecoveryStoring)?
-    private let recoveryClock: any RecoveryDebounceClock
-    private var recoveryTask: (
-        any RecoveryScheduledOperation
-    )?
-    private var restoreStagedProjectAsModified = false
     private(set) var modificationRevision: UInt64 = 0
     private(set) var isModified = false {
         didSet { onModifiedStateChange?(isModified) }
     }
     var onModifiedStateChange: ((Bool) -> Void)?
-    var onRecoveryFailure: ((any Error) -> Void)?
-    var recoverySnapshotProvider: (
-        @MainActor () async throws -> Data
-    )?
 
     var isOpen: Bool { project != nil }
 
-    init(
-        recoveryStore: (any RecoveryStoring)? = nil,
-        recoveryClock: any RecoveryDebounceClock =
-            ContinuousRecoveryClock()
-    ) {
-        self.recoveryStore = recoveryStore
-        self.recoveryClock = recoveryClock
-    }
-
     func open(project: MyShottrProject) throws {
         try validate(annotationJSON: project.annotationJSON, for: project.manifest)
-        recoveryTask?.cancel()
-        recoveryTask = nil
         self.project = project
         stagedProject = nil
-        restoreStagedProjectAsModified = false
         modificationRevision = 0
         isModified = false
     }
@@ -183,10 +41,6 @@ final class DocumentSession {
         try open(project: project)
         modificationRevision = 1
         isModified = true
-        try recoveryStore?.write(
-            project,
-            documentId: project.manifest.documentId
-        )
     }
 
     func stage(project: MyShottrProject) throws {
@@ -211,26 +65,16 @@ final class DocumentSession {
         stagedProject.annotationJSON = annotationJSON
         project = stagedProject
         self.stagedProject = nil
-        let restoredAsModified =
-            restoreStagedProjectAsModified
-        isModified = wasModified || restoredAsModified
-        if restoredAsModified && !wasModified {
-            modificationRevision &+= 1
-        }
-        restoreStagedProjectAsModified = false
+        isModified = wasModified
     }
 
     func discardStaged() {
         stagedProject = nil
-        restoreStagedProjectAsModified = false
     }
 
     func close() {
-        recoveryTask?.cancel()
-        recoveryTask = nil
         project = nil
         stagedProject = nil
-        restoreStagedProjectAsModified = false
         modificationRevision = 0
         isModified = false
     }
@@ -239,19 +83,14 @@ final class DocumentSession {
         guard project != nil else { throw DocumentSessionError.noOpenDocument }
         modificationRevision &+= 1
         isModified = true
-        scheduleRecovery(requestLatestSnapshot: true)
     }
 
     func applySnapshot(_ annotationJSON: Data) throws {
-        let wasModified = isModified
         let changed = project?.annotationJSON
             != annotationJSON
         try install(annotationJSON: annotationJSON)
         if changed {
             modificationRevision &+= 1
-        }
-        if isModified || wasModified {
-            scheduleRecovery(requestLatestSnapshot: false)
         }
     }
 
@@ -293,130 +132,14 @@ final class DocumentSession {
             return .savedWithNewerChanges
         }
         project = savedProject
-        recoveryTask?.cancel()
-        recoveryTask = nil
         isModified = false
-        guard let recoveryStore else {
-            return .saved
-        }
-        do {
-            switch try recoveryStore.remove(
-                documentId:
-                    savedProject.manifest.documentId
-            ) {
-            case .noRecovery, .committed:
-                return .saved
-            case let .committedAwaitingDurability(
-                cleanupOperation
-            ),
-            let .committedCleanupPending(
-                cleanupOperation
-            ):
-                return .savedRecoveryCleanupPending(
-                    cleanupOperation
-                )
-            }
-        } catch {
-            let cleanup =
-                RecoveryRemovalCleanup(
-                    store: recoveryStore,
-                    documentID:
-                        savedProject.manifest.documentId
-                )
-            return .savedRecoveryCleanupPending(
-                RecoveryCleanupOperation(
-                    documentIDs: [
-                        savedProject.manifest.documentId,
-                    ]
-                ) {
-                    try cleanup.perform()
-                }
-            )
-        }
-    }
-
-    func discardRecovery() throws {
-        guard let documentId = project?.manifest.documentId else {
-            throw DocumentSessionError.noOpenDocument
-        }
-        recoveryTask?.cancel()
-        recoveryTask = nil
-        try recoveryStore?.remove(documentId: documentId)
-    }
-
-    func flushRecoveryForTermination() async throws {
-        guard isModified else {
-            return
-        }
-        recoveryTask?.cancel()
-        recoveryTask = nil
-        try await captureAndWriteLatestRecovery()
-    }
-
-    func prepareForRecoveryRestore() {
-        restoreStagedProjectAsModified = true
+        return .saved
     }
 
     func sourcePNG(for documentID: UUID) -> Data? {
         if let project, project.manifest.documentId == documentID { return project.originalPNG }
         if let stagedProject, stagedProject.manifest.documentId == documentID { return stagedProject.originalPNG }
         return nil
-    }
-
-    private func scheduleRecovery(
-        requestLatestSnapshot: Bool
-    ) {
-        guard recoveryStore != nil,
-              project != nil,
-              !requestLatestSnapshot
-                || recoverySnapshotProvider != nil
-        else {
-            return
-        }
-        recoveryTask?.cancel()
-        recoveryTask = recoveryClock.schedule(
-            after: .seconds(2)
-        ) { [weak self] in
-            guard let self else {
-                return
-            }
-            do {
-                if requestLatestSnapshot {
-                    try await self
-                        .captureAndWriteLatestRecovery()
-                } else {
-                    try self.writeCurrentRecovery()
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                self.onRecoveryFailure?(error)
-            }
-        }
-    }
-
-    private func captureAndWriteLatestRecovery() async throws {
-        guard let recoverySnapshotProvider else {
-            throw DocumentSessionError
-                .recoverySnapshotUnavailable
-        }
-        let annotationJSON = try await recoverySnapshotProvider()
-        try Task.checkCancellation()
-        try install(annotationJSON: annotationJSON)
-        try writeCurrentRecovery()
-    }
-
-    private func writeCurrentRecovery() throws {
-        guard let project,
-              isModified,
-              let recoveryStore
-        else {
-            return
-        }
-        try recoveryStore.write(
-            project,
-            documentId: project.manifest.documentId
-        )
     }
 
     private func validate(annotationJSON: Data, for manifest: ProjectManifest) throws {
