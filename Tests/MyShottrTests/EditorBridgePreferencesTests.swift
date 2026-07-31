@@ -11,7 +11,9 @@ final class EditorBridgePreferencesTests: XCTestCase {
             strokeWidth: 8,
             textSize: 36,
             roughness: 2,
-            opacity: 0.75
+            opacity: 0.75,
+            rectangleFillColor: nil,
+            highlighterOpacity: 0.5
         )
         var outgoing: [NativeToEditorEnvelope] = []
         let bridge = EditorBridge(
@@ -46,7 +48,9 @@ final class EditorBridgePreferencesTests: XCTestCase {
             strokeWidth: 8,
             textSize: 36,
             roughness: 2,
-            opacity: 0.75
+            opacity: 0.75,
+            rectangleFillColor: nil,
+            highlighterOpacity: 0.25
         )
         let message = try EditorToNativeEnvelope(
             type: .editorPreferencesChanged,
@@ -58,6 +62,10 @@ final class EditorBridgePreferencesTests: XCTestCase {
                     "textSize": .number(Double(expected.textSize)),
                     "roughness": .number(Double(expected.roughness)),
                     "opacity": .number(expected.opacity),
+                    "rectangleFillColor": .null,
+                    "highlighterOpacity": .number(
+                        expected.highlighterOpacity
+                    ),
                 ]),
             ])
         )
@@ -67,6 +75,49 @@ final class EditorBridgePreferencesTests: XCTestCase {
         XCTAssertEqual(preferences.saved, [expected])
         XCTAssertEqual(session.project, project)
         XCTAssertFalse(session.isModified)
+        XCTAssertNil(bridge.lastError)
+        bridge.tearDown()
+    }
+
+    func testValidPreferenceMessageDecodesPaletteRectangleFill() throws {
+        let preferences = RecordingPreferences(initial: .approvedDefaults)
+        let bridge = EditorBridge(
+            session: DocumentSession(),
+            preferences: preferences
+        )
+        let expected = EditorPreferences(
+            tool: "rectangle",
+            color: "#FF4D4F",
+            strokeWidth: 8,
+            textSize: 36,
+            roughness: 2,
+            opacity: 0.75,
+            rectangleFillColor: "#FADB14",
+            highlighterOpacity: 0.5
+        )
+        let message = try EditorToNativeEnvelope(
+            type: .editorPreferencesChanged,
+            payload: .object([
+                "tool": .string(expected.tool),
+                "defaults": .object([
+                    "color": .string(expected.color),
+                    "strokeWidth": .number(Double(expected.strokeWidth)),
+                    "textSize": .number(Double(expected.textSize)),
+                    "roughness": .number(Double(expected.roughness)),
+                    "opacity": .number(expected.opacity),
+                    "rectangleFillColor": .string(
+                        try XCTUnwrap(expected.rectangleFillColor)
+                    ),
+                    "highlighterOpacity": .number(
+                        expected.highlighterOpacity
+                    ),
+                ]),
+            ])
+        )
+
+        bridge.receive(data: try message.encodedData())
+
+        XCTAssertEqual(preferences.saved, [expected])
         XCTAssertNil(bridge.lastError)
         bridge.tearDown()
     }

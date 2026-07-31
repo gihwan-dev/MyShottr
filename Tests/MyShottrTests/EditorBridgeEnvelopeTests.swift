@@ -4,44 +4,92 @@ import XCTest
 
 final class EditorBridgeEnvelopeTests: XCTestCase {
     func testPreferencesMessagesAcceptOnlyValidatedPayloads() throws {
-        let valid = Data("""
-        {
-          "protocolVersion": 1,
-          "requestId": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-          "type": "editorPreferencesChanged",
-          "payload": {
-            "tool": "arrow",
-            "defaults": {
-              "color": "#1677FF",
-              "strokeWidth": 4,
-              "textSize": 24,
-              "roughness": 1,
-              "opacity": 1
-            }
-          }
+        let makeEnvelope: ([String: Any]) throws -> Data = { payload in
+            try JSONSerialization.data(withJSONObject: [
+                "protocolVersion": 1,
+                "requestId": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                "type": "editorPreferencesChanged",
+                "payload": payload,
+            ])
         }
-        """.utf8)
+        let validDefaults: [String: Any] = [
+            "color": "#FF4D4F",
+            "strokeWidth": 8,
+            "textSize": 36,
+            "roughness": 2,
+            "opacity": 0.75,
+            "rectangleFillColor": NSNull(),
+            "highlighterOpacity": 0.25,
+        ]
+        let validPayload: [String: Any] = [
+            "tool": "rectangle",
+            "defaults": validDefaults,
+        ]
 
-        XCTAssertNoThrow(try EditorToNativeEnvelope.decode(from: valid))
+        XCTAssertNoThrow(
+            try EditorToNativeEnvelope.decode(
+                from: makeEnvelope(validPayload)
+            )
+        )
+        var linePayload = validPayload
+        linePayload["tool"] = "line"
         XCTAssertNoThrow(try EditorToNativeEnvelope.decode(
-            from: Data(String(decoding: valid, as: UTF8.self).replacingOccurrences(
-                of: "\"tool\": \"arrow\"",
-                with: "\"tool\": \"line\""
-            ).utf8)
+            from: makeEnvelope(linePayload)
         ))
 
-        for payload in [
-            "{\"tool\":\"unknown\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":1,\"opacity\":1}}",
-            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#FFFFFF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":1,\"opacity\":1}}",
-            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":3,\"textSize\":24,\"roughness\":1,\"opacity\":1}}",
-            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":12,\"roughness\":1,\"opacity\":1}}",
-            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":3,\"opacity\":1}}",
-            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":1,\"opacity\":0.6}}",
-            "{\"tool\":\"arrow\",\"defaults\":{\"color\":\"#1677FF\",\"strokeWidth\":4,\"textSize\":24,\"roughness\":1,\"opacity\":1},\"extra\":true}",
+        var missingDefault = validDefaults
+        missingDefault.removeValue(forKey: "rectangleFillColor")
+        var extraDefault = validDefaults
+        extraDefault["extra"] = true
+
+        for defaults in [
+            replacing(validDefaults, key: "color", value: "#FFFFFF"),
+            replacing(validDefaults, key: "strokeWidth", value: 3),
+            replacing(validDefaults, key: "textSize", value: 12),
+            replacing(validDefaults, key: "roughness", value: 3),
+            replacing(validDefaults, key: "opacity", value: 0.6),
+            missingDefault,
+            extraDefault,
+            replacing(
+                validDefaults,
+                key: "rectangleFillColor",
+                value: "#FFFFFF"
+            ),
+            replacing(validDefaults, key: "rectangleFillColor", value: 42),
+            replacing(
+                validDefaults,
+                key: "highlighterOpacity",
+                value: "0.5"
+            ),
+            replacing(validDefaults, key: "highlighterOpacity", value: 0.75),
         ] {
-            let envelope = "{\"protocolVersion\":1,\"requestId\":\"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\",\"type\":\"editorPreferencesChanged\",\"payload\":\(payload)}"
-            XCTAssertThrowsError(try EditorToNativeEnvelope.decode(from: Data(envelope.utf8)))
+            XCTAssertThrowsError(
+                try EditorToNativeEnvelope.decode(
+                    from: makeEnvelope([
+                        "tool": "rectangle",
+                        "defaults": defaults,
+                    ])
+                )
+            )
         }
+
+        XCTAssertThrowsError(
+            try EditorToNativeEnvelope.decode(
+                from: makeEnvelope([
+                    "tool": "unknown",
+                    "defaults": validDefaults,
+                ])
+            )
+        )
+        XCTAssertThrowsError(
+            try EditorToNativeEnvelope.decode(
+                from: makeEnvelope([
+                    "tool": "rectangle",
+                    "defaults": validDefaults,
+                    "extra": true,
+                ])
+            )
+        )
     }
 
     @MainActor
@@ -368,6 +416,16 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
               case let .string(sourceImageURL)? = payload["sourceImageURL"]
         else { fatalError("Invalid load fixture") }
         return sourceImageURL
+    }
+
+    private func replacing(
+        _ dictionary: [String: Any],
+        key: String,
+        value: Any
+    ) -> [String: Any] {
+        var result = dictionary
+        result[key] = value
+        return result
     }
 
     private func validDocument() -> [String: Any] {

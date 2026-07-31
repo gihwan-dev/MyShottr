@@ -314,8 +314,27 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
               let textSize = Int(exactly: textSize),
               case let .number(roughness)? = defaults["roughness"],
               let roughness = Int(exactly: roughness),
-              case let .number(opacity)? = defaults["opacity"]
+              case let .number(opacity)? = defaults["opacity"],
+              case let .number(highlighterOpacity)? =
+                defaults["highlighterOpacity"],
+              [0.25, 0.5].contains(highlighterOpacity)
         else {
+            reportUncorrelatedError(.invalidMessage)
+            return
+        }
+        let rectangleFillColor: String?
+        switch defaults["rectangleFillColor"] {
+        case .null?:
+            rectangleFillColor = nil
+        case let .string(fillColor)?
+            where [
+                "#000000",
+                "#FF4D4F",
+                "#1677FF",
+                "#FADB14",
+            ].contains(fillColor):
+            rectangleFillColor = fillColor
+        default:
             reportUncorrelatedError(.invalidMessage)
             return
         }
@@ -326,7 +345,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 strokeWidth: strokeWidth,
                 textSize: textSize,
                 roughness: roughness,
-                opacity: opacity
+                opacity: opacity,
+                rectangleFillColor: rectangleFillColor,
+                highlighterOpacity: highlighterOpacity
             ))
         } catch {
             reportUncorrelatedError(.invalidMessage)

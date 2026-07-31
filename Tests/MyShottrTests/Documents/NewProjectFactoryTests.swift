@@ -10,7 +10,9 @@ final class NewProjectFactoryTests: XCTestCase {
             strokeWidth: 8,
             textSize: 36,
             roughness: 2,
-            opacity: 0.75
+            opacity: 0.75,
+            rectangleFillColor: nil,
+            highlighterOpacity: 0.5
         )
         let factory = NewProjectFactory(preferences: StubPreferences(preferences))
         let artifact = try CaptureArtifact(

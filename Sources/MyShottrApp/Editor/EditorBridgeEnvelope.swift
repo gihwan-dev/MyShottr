@@ -98,13 +98,27 @@ extension EditorBridgeEnvelope where MessageType == EditorToNativeMessageType, P
                   case let .string(tool)? = payload["tool"],
                   ["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "blur", "redaction", "numberMarker"].contains(tool),
                   case let .object(defaults)? = payload["defaults"],
-                  Set(defaults.keys) == ["color", "strokeWidth", "textSize", "roughness", "opacity"],
+                  Set(defaults.keys) == [
+                    "color",
+                    "strokeWidth",
+                    "textSize",
+                    "roughness",
+                    "opacity",
+                    "rectangleFillColor",
+                    "highlighterOpacity",
+                  ],
                   case let .string(color)? = defaults["color"],
                   ["#000000", "#FF4D4F", "#1677FF", "#FADB14"].contains(color),
                   let strokeWidth = integer(defaults["strokeWidth"]), [2, 4, 8].contains(strokeWidth),
                   let textSize = integer(defaults["textSize"]), [16, 24, 36].contains(textSize),
                   let roughness = integer(defaults["roughness"]), [0, 1, 2].contains(roughness),
-                  case let .number(opacity)? = defaults["opacity"], [0.25, 0.5, 0.75, 1].contains(opacity)
+                  case let .number(opacity)? = defaults["opacity"], [0.25, 0.5, 0.75, 1].contains(opacity),
+                  defaults["rectangleFillColor"] == .null
+                    || validPaletteString(
+                        defaults["rectangleFillColor"]
+                    ),
+                  case let .number(highlighterOpacity)? = defaults["highlighterOpacity"],
+                  [0.25, 0.5].contains(highlighterOpacity)
             else { throw EditorBridgeEnvelopeError.malformedMessage }
         case .annotationSnapshot:
             guard exact(["document"]), case let .object(document)? = payload["document"],
@@ -138,6 +152,20 @@ extension EditorBridgeEnvelope where MessageType == EditorToNativeMessageType, P
     private func integer(_ value: BridgeJSONValue?) -> Int? {
         guard case let .number(number)? = value, number.isFinite, number.rounded() == number else { return nil }
         return Int(exactly: number)
+    }
+
+    private func validPaletteString(
+        _ value: BridgeJSONValue?
+    ) -> Bool {
+        guard case let .string(color)? = value else {
+            return false
+        }
+        return [
+            "#000000",
+            "#FF4D4F",
+            "#1677FF",
+            "#FADB14",
+        ].contains(color)
     }
 }
 
