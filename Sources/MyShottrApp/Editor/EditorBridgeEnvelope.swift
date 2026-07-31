@@ -101,6 +101,24 @@ extension EditorBridgeEnvelope where Payload == BridgeJSONValue {
 }
 
 extension EditorBridgeEnvelope where MessageType == NativeToEditorMessageType, Payload == BridgeJSONValue {
+    init(
+        requestId: UUID = UUID(),
+        type: MessageType,
+        payload: Payload
+    ) throws {
+        self.protocolVersion = Self.protocolVersion
+        self.requestId = requestId
+        self.type = type
+        self.payload = payload
+        try validatePayloadSize()
+        try validatePayload()
+    }
+
+    func encodedData() throws -> Data {
+        try validatePayload()
+        return try JSONEncoder().encode(self)
+    }
+
     static func decode(from data: Data) throws -> Self {
         guard
             let object = try JSONSerialization.jsonObject(

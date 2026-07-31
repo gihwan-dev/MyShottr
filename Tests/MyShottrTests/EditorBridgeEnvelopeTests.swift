@@ -196,6 +196,21 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         )
     }
 
+    func testPerformHistoryActionRejectsInvalidOutboundPayloadsAtConstructionAndEncoding()
+        throws
+    {
+        for payload: [String: Any] in [
+            [:],
+            ["action": "revert"],
+            ["action": "undo", "operationId": UUID().uuidString],
+        ] {
+            try assertNativeOutboundPayloadRejected(
+                type: .performHistoryAction,
+                payload: payload
+            )
+        }
+    }
+
     func testOperationStatusAcceptsOnlyTheExactOperationPhaseMatrix()
         throws
     {
@@ -302,6 +317,78 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
                         payload: payload
                     )
                 )
+            )
+        }
+    }
+
+    func testOperationStatusRejectsInvalidOutboundMatrixAtConstructionAndEncoding()
+        throws
+    {
+        let requestID = UUID()
+        let invalidPayloads: [[String: Any]] = [
+            ["phase": "started"],
+            ["operation": "save"],
+            ["operation": "print", "phase": "started"],
+            ["operation": "save", "phase": "queued"],
+            ["operation": "export", "phase": "superseded"],
+            [
+                "operation": "save",
+                "phase": "completed",
+                "displayName": "Capture.myshottr",
+            ],
+            ["operation": "export", "phase": "completed"],
+            [
+                "operation": "export",
+                "phase": "completed",
+                "displayName": 7,
+            ],
+            [
+                "operation": "save",
+                "phase": "started",
+                "displayName": "Capture.myshottr",
+            ],
+            [
+                "operation": "export",
+                "phase": "started",
+                "displayName": "Capture.png",
+            ],
+            [
+                "operation": "save",
+                "phase": "cancelled",
+                "displayName": "Capture.myshottr",
+            ],
+            [
+                "operation": "export",
+                "phase": "cancelled",
+                "displayName": "Capture.png",
+            ],
+            [
+                "operation": "save",
+                "phase": "failed",
+                "displayName": "Capture.myshottr",
+            ],
+            [
+                "operation": "export",
+                "phase": "failed",
+                "displayName": "Capture.png",
+            ],
+            [
+                "operation": "save",
+                "phase": "started",
+                "operationId": requestID.uuidString,
+            ],
+            [
+                "operation": "export",
+                "phase": "completed",
+                "displayName": "Capture.png",
+                "extra": true,
+            ],
+        ]
+
+        for payload in invalidPayloads {
+            try assertNativeOutboundPayloadRejected(
+                type: .operationStatus,
+                payload: payload
             )
         }
     }
@@ -660,6 +747,39 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         ]
         envelope.merge(extraEnvelopeFields) { _, replacement in replacement }
         return try JSONSerialization.data(withJSONObject: envelope)
+    }
+
+    private func assertNativeOutboundPayloadRejected(
+        type: NativeToEditorMessageType,
+        payload: [String: Any],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let payloadValue = try JSONDecoder().decode(
+            BridgeJSONValue.self,
+            from: JSONSerialization.data(withJSONObject: payload)
+        )
+        XCTAssertThrowsError(
+            try NativeToEditorEnvelope(
+                type: type,
+                payload: payloadValue
+            ),
+            file: file,
+            line: line
+        )
+
+        let decodedWithoutStrictBoundary = try JSONDecoder().decode(
+            NativeToEditorEnvelope.self,
+            from: bridgeEnvelopeData(
+                type: type.rawValue,
+                payload: payload
+            )
+        )
+        XCTAssertThrowsError(
+            try decodedWithoutStrictBoundary.encodedData(),
+            file: file,
+            line: line
+        )
     }
 
     private func loadDocumentID(from envelope: NativeToEditorEnvelope) -> UUID {
