@@ -2,11 +2,36 @@ import Foundation
 
 enum NativeToEditorMessageType: String, Codable, Sendable {
     case loadDocument, saveCompleted, saveFailed, requestComposite, setAppearance
+    case performHistoryAction, operationStatus
 }
 
 enum EditorToNativeMessageType: String, Codable, Sendable {
     case editorReady, documentChanged, editorPreferencesChanged, annotationSnapshot
-    case compositeChunk, compositeCompleted, bridgeError
+    case compositeChunk, compositeCompleted, bridgeError, historyStateChanged
+}
+
+struct EditorHistoryState: Equatable, Sendable {
+    let canUndo: Bool
+    let canRedo: Bool
+}
+
+enum EditorHistoryAction: String, Equatable, Sendable {
+    case undo
+    case redo
+}
+
+enum EditorOutputOperation: String, Equatable, Sendable {
+    case save
+    case export
+}
+
+enum EditorOperationStatus: Equatable, Sendable {
+    case started(EditorOutputOperation)
+    case saveCompleted
+    case saveSuperseded
+    case exportCompleted(displayName: String)
+    case cancelled(EditorOutputOperation)
+    case failed(EditorOutputOperation)
 }
 
 enum EditorBridgeEnvelopeError: Error, Equatable {
@@ -75,6 +100,83 @@ extension EditorBridgeEnvelope where Payload == BridgeJSONValue {
     }
 }
 
+extension EditorBridgeEnvelope where MessageType == NativeToEditorMessageType, Payload == BridgeJSONValue {
+    static func decode(from data: Data) throws -> Self {
+        guard
+            let object = try JSONSerialization.jsonObject(
+                with: data
+            ) as? [String: Any],
+            Set(object.keys) == [
+                "protocolVersion",
+                "requestId",
+                "type",
+                "payload",
+            ]
+        else {
+            throw EditorBridgeEnvelopeError.malformedMessage
+        }
+        let envelope = try JSONDecoder().decode(Self.self, from: data)
+        try envelope.validatePayload()
+        return envelope
+    }
+
+    private func validatePayload() throws {
+        guard case let .object(payload) = payload else {
+            throw EditorBridgeEnvelopeError.malformedMessage
+        }
+        let exact: (Set<String>) -> Bool = {
+            Set(payload.keys) == $0
+        }
+        switch type {
+        case
+            .loadDocument,
+            .saveCompleted,
+            .saveFailed,
+            .requestComposite,
+            .setAppearance:
+            return
+        case .performHistoryAction:
+            guard
+                exact(["action"]),
+                case let .string(action)? = payload["action"],
+                ["undo", "redo"].contains(action)
+            else {
+                throw EditorBridgeEnvelopeError.malformedMessage
+            }
+        case .operationStatus:
+            guard
+                case let .string(operation)? = payload["operation"],
+                case let .string(phase)? = payload["phase"]
+            else {
+                throw EditorBridgeEnvelopeError.malformedMessage
+            }
+            switch (operation, phase) {
+            case
+                ("save", "started"),
+                ("export", "started"),
+                ("save", "completed"),
+                ("save", "superseded"),
+                ("save", "cancelled"),
+                ("export", "cancelled"),
+                ("save", "failed"),
+                ("export", "failed"):
+                guard exact(["operation", "phase"]) else {
+                    throw EditorBridgeEnvelopeError.malformedMessage
+                }
+            case ("export", "completed"):
+                guard
+                    exact(["operation", "phase", "displayName"]),
+                    case .string = payload["displayName"]
+                else {
+                    throw EditorBridgeEnvelopeError.malformedMessage
+                }
+            default:
+                throw EditorBridgeEnvelopeError.malformedMessage
+            }
+        }
+    }
+}
+
 extension EditorBridgeEnvelope where MessageType == EditorToNativeMessageType, Payload == BridgeJSONValue {
     static func decode(from data: Data) throws -> Self {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -93,6 +195,14 @@ extension EditorBridgeEnvelope where MessageType == EditorToNativeMessageType, P
         switch type {
         case .editorReady, .documentChanged:
             guard exact([]) else { throw EditorBridgeEnvelopeError.malformedMessage }
+        case .historyStateChanged:
+            guard
+                exact(["canUndo", "canRedo"]),
+                case .bool = payload["canUndo"],
+                case .bool = payload["canRedo"]
+            else {
+                throw EditorBridgeEnvelopeError.malformedMessage
+            }
         case .editorPreferencesChanged:
             guard exact(["tool", "defaults"]),
                   case let .string(tool)? = payload["tool"],

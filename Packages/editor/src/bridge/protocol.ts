@@ -30,6 +30,10 @@ const EnvelopeBaseSchema = z.object({
 
 const EditorReadyPayloadSchema = z.object({}).strict();
 const DocumentChangedPayloadSchema = z.object({}).strict();
+const HistoryStateChangedPayloadSchema = z.object({
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
+}).strict();
 const EditorPreferencesChangedPayloadSchema = z.object({
   tool: z.enum(["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "blur", "redaction", "numberMarker"]),
   defaults: EditorDefaultsSchema,
@@ -56,6 +60,7 @@ const BridgeErrorPayloadSchema = z.object({
 const EditorToNativeMessageSchema = z.discriminatedUnion("type", [
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("editorReady"), payload: EditorReadyPayloadSchema }).strict(),
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("documentChanged"), payload: DocumentChangedPayloadSchema }).strict(),
+  z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("historyStateChanged"), payload: HistoryStateChangedPayloadSchema }).strict(),
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("editorPreferencesChanged"), payload: EditorPreferencesChangedPayloadSchema }).strict(),
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("annotationSnapshot"), payload: AnnotationSnapshotPayloadSchema }).strict(),
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("compositeChunk"), payload: CompositeChunkPayloadSchema }).strict(),
@@ -82,6 +87,32 @@ const SaveCompletedPayloadSchema = z.object({ requestId: RequestIDSchema }).stri
 const SaveFailedPayloadSchema = z.object({ requestId: RequestIDSchema, message: z.string().min(1) }).strict();
 const RequestCompositePayloadSchema = z.object({ requestId: RequestIDSchema }).strict();
 const SetAppearancePayloadSchema = z.object({ colorScheme: z.enum(["light", "dark"]) }).strict();
+const PerformHistoryActionPayloadSchema = z.object({
+  action: z.enum(["undo", "redo"]),
+}).strict();
+const OperationStatusPayloadSchema = z.union([
+  z.object({
+    operation: z.enum(["save", "export"]),
+    phase: z.literal("started"),
+  }).strict(),
+  z.object({
+    operation: z.literal("save"),
+    phase: z.literal("completed"),
+  }).strict(),
+  z.object({
+    operation: z.literal("save"),
+    phase: z.literal("superseded"),
+  }).strict(),
+  z.object({
+    operation: z.literal("export"),
+    phase: z.literal("completed"),
+    displayName: z.string(),
+  }).strict(),
+  z.object({
+    operation: z.enum(["save", "export"]),
+    phase: z.enum(["cancelled", "failed"]),
+  }).strict(),
+]);
 
 const NativeToEditorMessageSchema = z.discriminatedUnion("type", [
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("loadDocument"), payload: LoadDocumentPayloadSchema }).strict(),
@@ -89,6 +120,8 @@ const NativeToEditorMessageSchema = z.discriminatedUnion("type", [
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("saveFailed"), payload: SaveFailedPayloadSchema }).strict(),
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("requestComposite"), payload: RequestCompositePayloadSchema }).strict(),
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("setAppearance"), payload: SetAppearancePayloadSchema }).strict(),
+  z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("performHistoryAction"), payload: PerformHistoryActionPayloadSchema }).strict(),
+  z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), requestId: RequestIDSchema, type: z.literal("operationStatus"), payload: OperationStatusPayloadSchema }).strict(),
 ]);
 
 export const EditorToNativeEnvelopeSchema = EnvelopeBaseSchema.pipe(EditorToNativeMessageSchema);
@@ -104,6 +137,7 @@ export type Envelope<T extends string, P> = {
 export type EditorToNativePayloads = {
   editorReady: {};
   documentChanged: {};
+  historyStateChanged: EditorHistoryState;
   editorPreferencesChanged: { tool: EditorTool; defaults: EditorDefaults };
   annotationSnapshot: { document: EditorDocument };
   compositeChunk: { requestId: string; index: number; total: number; dataBase64: string };
@@ -111,12 +145,28 @@ export type EditorToNativePayloads = {
   bridgeError: { code: "INVALID_DOCUMENT" | "INVALID_MESSAGE" | "RENDER_FAILED"; message: string };
 };
 
+export type EditorHistoryState = {
+  canUndo: boolean;
+  canRedo: boolean;
+};
+
+export type EditorHistoryAction = "undo" | "redo";
+export type EditorOutputOperation = "save" | "export";
+export type EditorOperationStatus =
+  | { operation: EditorOutputOperation; phase: "started" }
+  | { operation: "save"; phase: "completed" }
+  | { operation: "save"; phase: "superseded" }
+  | { operation: "export"; phase: "completed"; displayName: string }
+  | { operation: EditorOutputOperation; phase: "cancelled" | "failed" };
+
 export type NativeToEditorEnvelope =
   | Envelope<"loadDocument", { documentId: string; sourceImageURL: string; annotationDocument: EditorDocument; initialTool: EditorTool }>
   | Envelope<"saveCompleted", { requestId: string }>
   | Envelope<"saveFailed", { requestId: string; message: string }>
   | Envelope<"requestComposite", { requestId: string }>
-  | Envelope<"setAppearance", { colorScheme: "light" | "dark" }>;
+  | Envelope<"setAppearance", { colorScheme: "light" | "dark" }>
+  | Envelope<"performHistoryAction", { action: EditorHistoryAction }>
+  | Envelope<"operationStatus", EditorOperationStatus>;
 
 export type EditorToNativeType = keyof EditorToNativePayloads;
 export type PayloadFor<T extends EditorToNativeType> = EditorToNativePayloads[T];

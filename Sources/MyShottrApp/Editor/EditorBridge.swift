@@ -78,6 +78,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private(set) var lastProtocolError: EditorBridgeEnvelopeError?
     var onUncorrelatedError: ((EditorBridgeError) -> Void)?
     var onProtocolError: ((EditorBridgeEnvelopeError) -> Void)?
+    var onHistoryStateChanged: ((EditorHistoryState) -> Void)?
 
     init(
         session: DocumentSession,
@@ -278,6 +279,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             } catch {
                 reportUncorrelatedError(.invalidDocument)
             }
+        case .historyStateChanged:
+            installHistoryState(message)
         case .editorPreferencesChanged:
             installPreferences(message)
         case .annotationSnapshot:
@@ -301,6 +304,23 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         case .compositeCompleted:
             finishComposite(message)
         }
+    }
+
+    private func installHistoryState(_ message: EditorToNativeEnvelope) {
+        guard
+            case let .object(payload) = message.payload,
+            case let .bool(canUndo)? = payload["canUndo"],
+            case let .bool(canRedo)? = payload["canRedo"]
+        else {
+            reportUncorrelatedError(.invalidMessage)
+            return
+        }
+        onHistoryStateChanged?(
+            EditorHistoryState(
+                canUndo: canUndo,
+                canRedo: canRedo
+            )
+        )
     }
 
     private func installPreferences(_ message: EditorToNativeEnvelope) {
@@ -695,7 +715,11 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         switch type {
         case .annotationSnapshot, .compositeChunk, .compositeCompleted, .bridgeError:
             true
-        case .editorReady, .documentChanged, .editorPreferencesChanged:
+        case
+            .editorReady,
+            .documentChanged,
+            .editorPreferencesChanged,
+            .historyStateChanged:
             false
         }
     }

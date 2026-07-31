@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
+// @ts-expect-error Vite resolves production source as text for this source-level contract test.
+import appSource from "../App.tsx?raw";
 import { fixtureDocument } from "../test/fixtures";
 import { createNativeBridge } from "./nativeBridge";
 import { EditorToNativeEnvelopeSchema, NativeToEditorEnvelopeSchema } from "./protocol";
 
+const UUID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+
 const editorReadyFixture = {
   protocolVersion: 1,
-  requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+  requestId: UUID,
   type: "editorReady",
   payload: {},
 };
@@ -81,6 +85,32 @@ describe("EditorToNativeEnvelopeSchema", () => {
 
   it("accepts the v1 editorReady fixture", () => {
     expect(EditorToNativeEnvelopeSchema.parse(editorReadyFixture)).toEqual(editorReadyFixture);
+  });
+
+  it("accepts an exact history state change", () => {
+    const message = {
+      protocolVersion: 1,
+      requestId: UUID,
+      type: "historyStateChanged",
+      payload: { canUndo: true, canRedo: false },
+    };
+
+    expect(EditorToNativeEnvelopeSchema.parse(message)).toEqual(message);
+  });
+
+  it.each([
+    ["a missing canUndo", { canRedo: false }],
+    ["a missing canRedo", { canUndo: true }],
+    ["a non-boolean canUndo", { canUndo: "true", canRedo: false }],
+    ["a non-boolean canRedo", { canUndo: true, canRedo: 0 }],
+    ["an extra key", { canUndo: true, canRedo: false, operationId: UUID }],
+  ])("rejects a history state change with %s", (_description, payload) => {
+    expect(() => EditorToNativeEnvelopeSchema.parse({
+      protocolVersion: 1,
+      requestId: UUID,
+      type: "historyStateChanged",
+      payload,
+    })).toThrow();
   });
 
   it.each([
@@ -170,4 +200,82 @@ describe("NativeToEditorEnvelopeSchema", () => {
       payload: { ...loadDocumentFixture.payload, sourceImageURL },
     })).toThrow();
   });
+
+  it.each(["undo", "redo"] as const)("accepts the %s history action", (action) => {
+    const message = {
+      protocolVersion: 1,
+      requestId: UUID,
+      type: "performHistoryAction",
+      payload: { action },
+    };
+
+    expect(NativeToEditorEnvelopeSchema.parse(message)).toEqual(message);
+  });
+
+  it.each([
+    ["a missing action", {}],
+    ["an unknown action", { action: "revert" }],
+    ["an extra key", { action: "undo", operationId: UUID }],
+  ])("rejects a history action with %s", (_description, payload) => {
+    expect(() => NativeToEditorEnvelopeSchema.parse({
+      protocolVersion: 1,
+      requestId: UUID,
+      type: "performHistoryAction",
+      payload,
+    })).toThrow();
+  });
+
+  it.each([
+    ["save started", { operation: "save", phase: "started" }],
+    ["export started", { operation: "export", phase: "started" }],
+    ["save completed", { operation: "save", phase: "completed" }],
+    ["save superseded", { operation: "save", phase: "superseded" }],
+    ["export completed", { operation: "export", phase: "completed", displayName: "Capture.png" }],
+    ["save cancelled", { operation: "save", phase: "cancelled" }],
+    ["export cancelled", { operation: "export", phase: "cancelled" }],
+    ["save failed", { operation: "save", phase: "failed" }],
+    ["export failed", { operation: "export", phase: "failed" }],
+  ])("accepts operation status: %s", (_description, payload) => {
+    const message = {
+      protocolVersion: 1,
+      requestId: UUID,
+      type: "operationStatus",
+      payload,
+    };
+
+    expect(NativeToEditorEnvelopeSchema.parse(message)).toEqual(message);
+  });
+
+  it.each([
+    ["a missing operation", { phase: "started" }],
+    ["a missing phase", { operation: "save" }],
+    ["an unknown operation", { operation: "print", phase: "started" }],
+    ["an unknown phase", { operation: "save", phase: "queued" }],
+    ["export superseded", { operation: "export", phase: "superseded" }],
+    ["save completed with displayName", { operation: "save", phase: "completed", displayName: "Capture.myshottr" }],
+    ["export completed without displayName", { operation: "export", phase: "completed" }],
+    ["export completed with a non-string displayName", { operation: "export", phase: "completed", displayName: 7 }],
+    ["save started with displayName", { operation: "save", phase: "started", displayName: "Capture.myshottr" }],
+    ["export started with displayName", { operation: "export", phase: "started", displayName: "Capture.png" }],
+    ["save cancelled with displayName", { operation: "save", phase: "cancelled", displayName: "Capture.myshottr" }],
+    ["export cancelled with displayName", { operation: "export", phase: "cancelled", displayName: "Capture.png" }],
+    ["save failed with displayName", { operation: "save", phase: "failed", displayName: "Capture.myshottr" }],
+    ["export failed with displayName", { operation: "export", phase: "failed", displayName: "Capture.png" }],
+    ["a payload operation ID", { operation: "save", phase: "started", operationId: UUID }],
+    ["an arbitrary extra key", { operation: "export", phase: "completed", displayName: "Capture.png", extra: true }],
+  ])("rejects operation status with %s", (_description, payload) => {
+    expect(() => NativeToEditorEnvelopeSchema.parse({
+      protocolVersion: 1,
+      requestId: UUID,
+      type: "operationStatus",
+      payload,
+    })).toThrow();
+  });
+
+  it.each(["saveCompleted", "saveFailed"])(
+    "keeps legacy %s declarations out of production App behavior",
+    (legacyType) => {
+      expect(appSource).not.toMatch(new RegExp(`\\b${legacyType}\\b`));
+    },
+  );
 });

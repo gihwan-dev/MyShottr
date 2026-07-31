@@ -126,6 +126,221 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         XCTAssertEqual(envelope.payload, .object([:]))
     }
 
+    func testHistoryStateChangedAcceptsOnlyExactBooleanKeys() throws {
+        let valid = try bridgeEnvelopeData(
+            type: "historyStateChanged",
+            payload: ["canUndo": true, "canRedo": false]
+        )
+        let envelope = try EditorToNativeEnvelope.decode(from: valid)
+
+        XCTAssertEqual(envelope.protocolVersion, 1)
+        XCTAssertEqual(envelope.type, .historyStateChanged)
+        XCTAssertEqual(
+            envelope.payload,
+            .object(["canUndo": .bool(true), "canRedo": .bool(false)])
+        )
+
+        for payload: [String: Any] in [
+            ["canRedo": false],
+            ["canUndo": true],
+            ["canUndo": "true", "canRedo": false],
+            ["canUndo": true, "canRedo": 0],
+            ["canUndo": true, "canRedo": false, "operationId": UUID().uuidString],
+        ] {
+            XCTAssertThrowsError(
+                try EditorToNativeEnvelope.decode(
+                    from: bridgeEnvelopeData(
+                        type: "historyStateChanged",
+                        payload: payload
+                    )
+                )
+            )
+        }
+    }
+
+    func testPerformHistoryActionAcceptsOnlyUndoRedoWithExactKeys()
+        throws
+    {
+        for action in ["undo", "redo"] {
+            let envelope = try NativeToEditorEnvelope.decode(
+                from: bridgeEnvelopeData(
+                    type: "performHistoryAction",
+                    payload: ["action": action]
+                )
+            )
+            XCTAssertEqual(envelope.type, .performHistoryAction)
+        }
+
+        for payload: [String: Any] in [
+            [:],
+            ["action": "revert"],
+            ["action": "undo", "operationId": UUID().uuidString],
+        ] {
+            XCTAssertThrowsError(
+                try NativeToEditorEnvelope.decode(
+                    from: bridgeEnvelopeData(
+                        type: "performHistoryAction",
+                        payload: payload
+                    )
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try NativeToEditorEnvelope.decode(
+                from: bridgeEnvelopeData(
+                    type: "performHistoryAction",
+                    payload: ["action": "undo"],
+                    extraEnvelopeFields: ["extra": true]
+                )
+            )
+        )
+    }
+
+    func testOperationStatusAcceptsOnlyTheExactOperationPhaseMatrix()
+        throws
+    {
+        let requestID = UUID()
+        let validPayloads: [[String: Any]] = [
+            ["operation": "save", "phase": "started"],
+            ["operation": "export", "phase": "started"],
+            ["operation": "save", "phase": "completed"],
+            ["operation": "save", "phase": "superseded"],
+            [
+                "operation": "export",
+                "phase": "completed",
+                "displayName": "Capture.png",
+            ],
+            ["operation": "save", "phase": "cancelled"],
+            ["operation": "export", "phase": "cancelled"],
+            ["operation": "save", "phase": "failed"],
+            ["operation": "export", "phase": "failed"],
+        ]
+
+        for payload in validPayloads {
+            let envelope = try NativeToEditorEnvelope.decode(
+                from: bridgeEnvelopeData(
+                    requestID: requestID,
+                    type: "operationStatus",
+                    payload: payload
+                )
+            )
+            XCTAssertEqual(envelope.requestId, requestID)
+            XCTAssertEqual(envelope.type, .operationStatus)
+            guard case let .object(decodedPayload) = envelope.payload else {
+                return XCTFail("Expected an operation status object")
+            }
+            XCTAssertNil(decodedPayload["requestId"])
+            XCTAssertNil(decodedPayload["operationId"])
+        }
+
+        let invalidPayloads: [[String: Any]] = [
+            ["phase": "started"],
+            ["operation": "save"],
+            ["operation": "print", "phase": "started"],
+            ["operation": "save", "phase": "queued"],
+            ["operation": "export", "phase": "superseded"],
+            [
+                "operation": "save",
+                "phase": "completed",
+                "displayName": "Capture.myshottr",
+            ],
+            ["operation": "export", "phase": "completed"],
+            [
+                "operation": "export",
+                "phase": "completed",
+                "displayName": 7,
+            ],
+            [
+                "operation": "save",
+                "phase": "started",
+                "displayName": "Capture.myshottr",
+            ],
+            [
+                "operation": "export",
+                "phase": "started",
+                "displayName": "Capture.png",
+            ],
+            [
+                "operation": "save",
+                "phase": "cancelled",
+                "displayName": "Capture.myshottr",
+            ],
+            [
+                "operation": "export",
+                "phase": "cancelled",
+                "displayName": "Capture.png",
+            ],
+            [
+                "operation": "save",
+                "phase": "failed",
+                "displayName": "Capture.myshottr",
+            ],
+            [
+                "operation": "export",
+                "phase": "failed",
+                "displayName": "Capture.png",
+            ],
+            [
+                "operation": "save",
+                "phase": "started",
+                "operationId": requestID.uuidString,
+            ],
+            [
+                "operation": "export",
+                "phase": "completed",
+                "displayName": "Capture.png",
+                "extra": true,
+            ],
+        ]
+
+        for payload in invalidPayloads {
+            XCTAssertThrowsError(
+                try NativeToEditorEnvelope.decode(
+                    from: bridgeEnvelopeData(
+                        requestID: requestID,
+                        type: "operationStatus",
+                        payload: payload
+                    )
+                )
+            )
+        }
+    }
+
+    func testBridgeDomainTypesExposeOnlyApprovedHistoryAndOutputStates() {
+        XCTAssertEqual(
+            EditorHistoryState(canUndo: true, canRedo: false),
+            EditorHistoryState(canUndo: true, canRedo: false)
+        )
+        XCTAssertEqual(EditorHistoryAction(rawValue: "undo"), .undo)
+        XCTAssertEqual(EditorHistoryAction(rawValue: "redo"), .redo)
+        XCTAssertEqual(EditorOutputOperation(rawValue: "save"), .save)
+        XCTAssertEqual(EditorOutputOperation(rawValue: "export"), .export)
+        XCTAssertEqual(
+            [
+                EditorOperationStatus.started(.save),
+                .started(.export),
+                .saveCompleted,
+                .saveSuperseded,
+                .exportCompleted(displayName: "Capture.png"),
+                .cancelled(.save),
+                .cancelled(.export),
+                .failed(.save),
+                .failed(.export),
+            ],
+            [
+                .started(.save),
+                .started(.export),
+                .saveCompleted,
+                .saveSuperseded,
+                .exportCompleted(displayName: "Capture.png"),
+                .cancelled(.save),
+                .cancelled(.export),
+                .failed(.save),
+                .failed(.export),
+            ]
+        )
+    }
+
     func testRejectsUnsupportedVersionUnknownTypeMissingRequestIDAndOversizedPayload() {
         let invalidMessages = [
             "{\"protocolVersion\":2,\"requestId\":\"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\",\"type\":\"editorReady\",\"payload\":{}}",
@@ -427,6 +642,24 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
 
     private func annotationValue(_ document: [String: Any]) throws -> BridgeJSONValue {
         try JSONDecoder().decode(BridgeJSONValue.self, from: JSONSerialization.data(withJSONObject: document))
+    }
+
+    private func bridgeEnvelopeData(
+        requestID: UUID = UUID(
+            uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        )!,
+        type: String,
+        payload: [String: Any],
+        extraEnvelopeFields: [String: Any] = [:]
+    ) throws -> Data {
+        var envelope: [String: Any] = [
+            "protocolVersion": 1,
+            "requestId": requestID.uuidString,
+            "type": type,
+            "payload": payload,
+        ]
+        envelope.merge(extraEnvelopeFields) { _, replacement in replacement }
+        return try JSONSerialization.data(withJSONObject: envelope)
     }
 
     private func loadDocumentID(from envelope: NativeToEditorEnvelope) -> UUID {
