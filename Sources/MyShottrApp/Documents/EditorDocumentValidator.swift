@@ -62,16 +62,20 @@ enum EditorDocumentValidator {
             let document = object as? [String: Any],
             Set(document.keys) == topLevelKeys,
             integer(document["schemaVersion"]) == 3,
-            let sourcePixelWidth = integer(
+            let sourcePixelWidth = number(
                 document["sourcePixelWidth"]
             ),
             sourcePixelWidth > 0,
-            let sourcePixelHeight = integer(
+            let sourcePixelHeight = number(
                 document["sourcePixelHeight"]
             ),
             sourcePixelHeight > 0,
-            expectedPixelWidth.map({ $0 == sourcePixelWidth }) ?? true,
-            expectedPixelHeight.map({ $0 == sourcePixelHeight })
+            expectedPixelWidth.map({
+                Double($0) == sourcePixelWidth
+            }) ?? true,
+            expectedPixelHeight.map({
+                Double($0) == sourcePixelHeight
+            })
                 ?? true,
             let elements = document["elements"] as? [[String: Any]],
             let presentation = document["presentation"]

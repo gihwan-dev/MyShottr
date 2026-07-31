@@ -3,18 +3,37 @@ import XCTest
 @testable import MyShottr
 
 final class EditorDocumentValidatorTests: XCTestCase {
-    func testAcceptsExactCurrentDocumentAndMatchingDimensions() throws {
+    func testAcceptsExactCurrentDocument() throws {
         let current = try ProjectFixtures.currentAnnotationJSON()
 
         XCTAssertNoThrow(
             try EditorDocumentValidator.validate(current)
         )
+    }
+
+    func testAcceptsIntegerDimensionsMatchingManifestExpectations()
+        throws
+    {
+        let current = try ProjectFixtures.currentAnnotationJSON()
+
         XCTAssertNoThrow(
             try EditorDocumentValidator.validate(
                 current,
                 expectedPixelWidth: 2,
                 expectedPixelHeight: 2
             )
+        )
+    }
+
+    func testAcceptsPositiveFractionalDimensionsWithoutManifestExpectations()
+        throws
+    {
+        var document = try currentDocument()
+        document["sourcePixelWidth"] = 2.5
+        document["sourcePixelHeight"] = 1.25
+
+        XCTAssertNoThrow(
+            try EditorDocumentValidator.validate(data(document))
         )
     }
 
@@ -117,11 +136,10 @@ final class EditorDocumentValidatorTests: XCTestCase {
         }
     }
 
-    func testRejectsNonPositiveFractionalAndMismatchedDimensions() throws {
+    func testRejectsNonPositiveDimensions() throws {
         for (key, value): (String, Any) in [
             ("sourcePixelWidth", 0),
             ("sourcePixelHeight", -1),
-            ("sourcePixelWidth", 2.5),
         ] {
             var document = try currentDocument()
             document[key] = value
@@ -130,7 +148,11 @@ final class EditorDocumentValidatorTests: XCTestCase {
                 try EditorDocumentValidator.validate(data(document))
             )
         }
+    }
 
+    func testRejectsDimensionsThatDoNotMatchManifestExpectations()
+        throws
+    {
         let current = try ProjectFixtures.currentAnnotationJSON()
         XCTAssertThrowsError(
             try EditorDocumentValidator.validate(
@@ -144,6 +166,16 @@ final class EditorDocumentValidatorTests: XCTestCase {
                 current,
                 expectedPixelWidth: 2,
                 expectedPixelHeight: 3
+            )
+        )
+
+        var fractional = try currentDocument()
+        fractional["sourcePixelWidth"] = 2.5
+        XCTAssertThrowsError(
+            try EditorDocumentValidator.validate(
+                data(fractional),
+                expectedPixelWidth: 2,
+                expectedPixelHeight: 2
             )
         )
     }
