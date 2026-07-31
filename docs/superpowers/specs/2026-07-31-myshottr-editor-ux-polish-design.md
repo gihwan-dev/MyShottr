@@ -1,7 +1,7 @@
 # MyShottr Editor UX Polish Design
 
 - Date: 2026-07-31
-- Status: Interaction direction approved; pending written-spec review
+- Status: Approved for implementation
 - Target: MyShottr `v0.1.0` editor polish
 - Visual direction: Canvas First + Context Rail
 - Product references:

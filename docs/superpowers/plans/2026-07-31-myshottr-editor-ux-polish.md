@@ -18,6 +18,7 @@
 - Full-page/scrolling capture, element capture, mockup presentation, OCR, custom colors, and a layers panel remain out of scope.
 - The Chrome path continues to capture only the visible browser viewport. Keep capture-source and `presentation` boundaries open for later full-page capture and desktop mockups without implementing either feature.
 - Do not add fallback document formats, permissive bridge decoders, silent protocol degradation, or a second source of truth.
+- Because the approved protocol-v1 change is additive, the already-declared `saveCompleted`/`saveFailed` variants may remain in the strict union, but they have no production consumer and must never route into the new feedback state machine.
 - The editor bundle remains local-only under `myshottr-editor://editor`; do not add network-loaded assets, analytics, remote fonts, or a CDN.
 - Bridge protocol version remains `1`; the new messages are additive and both bundled sides ship together.
 - `EditorDocument` schema version becomes exactly `3`. Versions `1` and `2` migrate deterministically; version `4` and later fail explicitly.
@@ -350,6 +351,8 @@ xcodebuild test \
 
 Expected: the focused XCTest set passes. This step must not call `kill`, `pkill`, or `killall`.
 
+`MyShottr.xcodeproj/` is intentionally ignored and regenerated from tracked `project.yml`; `xcodegen generate` must not add a tracked diff to either baseline commit.
+
 - [ ] **Step 6: Commit only the recovery-removal stream**
 
 Stage the exact stream-B path list above, including deletions and the two untracked test/support files. Then run:
@@ -574,7 +577,14 @@ pnpm --filter @myshottr/editor exec vitest run \
   src/canvas/SelectionController.test.ts
 pnpm --filter @myshottr/editor typecheck
 git diff --check
-git add Packages/editor/src/model Packages/editor/src/test/fixtures.ts Packages/editor/src/bridge/protocol.test.ts Packages/editor/src/canvas/SelectionController.test.ts
+git add \
+  Packages/editor/src/model/elements.ts \
+  Packages/editor/src/model/schema.ts \
+  Packages/editor/src/model/defaults.ts \
+  Packages/editor/src/model/schema.test.ts \
+  Packages/editor/src/test/fixtures.ts \
+  Packages/editor/src/bridge/protocol.test.ts \
+  Packages/editor/src/canvas/SelectionController.test.ts
 git commit -m "feat(editor): 문서 스키마 3 추가"
 ```
 
@@ -643,6 +653,8 @@ export type HistoryStore = {
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   readonly isTransactionActive: boolean;
+  getSnapshot(): EditorDocument;
+  subscribe(listener: () => void): () => void;
   setDefaults(defaults: EditorDefaults): void;
   beginTransaction(label: string): void;
   dispatch(command: EditorCommand): void;
@@ -659,7 +671,7 @@ Use:
 type SceneSnapshot = EditorDocument["elements"];
 
 const snapshotScene = (document: EditorDocument): SceneSnapshot =>
-  structuredClone(document.elements);
+  document.elements;
 
 const installScene = (
   document: EditorDocument,
@@ -669,6 +681,23 @@ const installScene = (
 ```
 
 `past`, `future`, and `transaction.startingScene` store only scenes. `setDefaults` parses `{ ...document, defaults }` without touching either history stack.
+
+The store is also the React external-store owner:
+
+```ts
+const listeners = new Set<() => void>();
+const emit = () => listeners.forEach((listener) => listener());
+
+getSnapshot() {
+  return document;
+},
+subscribe(listener) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+},
+```
+
+`getSnapshot()` returns the stable internal immutable object until a validated mutation replaces it. Do not reparse/clone on every snapshot read. Every document/defaults mutation emits after installing its validated next object.
 
 `canUndo` and `canRedo` return `false` while a transaction is active:
 
@@ -765,7 +794,7 @@ it("returns the latest defaults in a later annotation snapshot", async () => {
 });
 ```
 
-- [ ] **Step 7: Remove duplicated defaults and selection stores from `EditorApp`**
+- [ ] **Step 7: Remove duplicated document, defaults, and selection stores from `EditorApp`**
 
 Remove:
 
@@ -773,24 +802,31 @@ Remove:
 const defaults = useRef(...);
 const selection = useRef(createSelectionController());
 const [rectangleFillColor, setRectangleFillColor] = useState(...);
+const [document, setDocument] = useState(...);
 ```
 
-Keep one React `document` initialized from `history.current.document` and one `selectedIds` state. `SelectionController` becomes pure functions in Task 7.
+`HistoryStore` remains the only mutable/current document owner. React subscribes to that owner:
+
+```ts
+const document = useSyncExternalStore(
+  history.current.subscribe,
+  history.current.getSnapshot,
+  history.current.getSnapshot,
+);
+```
+
+Keep only ephemeral `selectedIds` as React state. `SelectionController` becomes pure functions in Task 10.
 
 Use:
 
 ```ts
 const publishSceneChange = () => {
-  const nextDocument = history.current.document;
-  setDocument(nextDocument);
-  onChange(nextDocument);
+  onChange(history.current.getSnapshot());
 };
 
 const updateDefaults = (nextDefaults: EditorDefaults) => {
   history.current.setDefaults(nextDefaults);
-  const nextDocument = history.current.document;
-  setDocument(nextDocument);
-  onPreferencesChange(tool, nextDocument.defaults);
+  onPreferencesChange(tool, history.current.getSnapshot().defaults);
 };
 ```
 
@@ -826,7 +862,15 @@ pnpm --filter @myshottr/editor exec vitest run \
 pnpm --filter @myshottr/editor test
 pnpm --filter @myshottr/editor typecheck
 git diff --check
-git add Packages/editor/src
+git add \
+  Packages/editor/src/model/history.ts \
+  Packages/editor/src/model/history.test.ts \
+  Packages/editor/src/App.tsx \
+  Packages/editor/src/App.test.tsx \
+  Packages/editor/src/canvas/tools/createElement.ts \
+  Packages/editor/src/canvas/tools/createElement.test.ts \
+  Packages/editor/src/canvas/EditorCanvas.tsx \
+  Packages/editor/src/canvas/EditorCanvas.test.tsx
 git commit -m "refactor(editor): 문서 상태와 기본값 경로 통합"
 ```
 
@@ -840,7 +884,7 @@ git commit -m "refactor(editor): 문서 상태와 기본값 경로 통합"
 - Modify: `Tests/MyShottrTests/Preferences/EditorPreferencesStoreTests.swift`
 - Modify: `Tests/MyShottrTests/EditorBridgePreferencesTests.swift`
 - Modify: `Tests/MyShottrTests/EditorBridgeEnvelopeTests.swift`
-- Modify: native fixtures that construct `EditorPreferences`
+- Modify: `Tests/MyShottrTests/Documents/NewProjectFactoryTests.swift`
 
 **Outcome:** Valid v1 preferences migrate once to strict v2 preferences; all seven default fields cross the Swift/WebKit bridge exactly.
 
@@ -1030,7 +1074,14 @@ Run:
 
 ```bash
 git diff --check
-git add Sources/MyShottrApp/Preferences/EditorPreferencesStore.swift Sources/MyShottrApp/Editor/EditorBridgeEnvelope.swift Sources/MyShottrApp/Editor/EditorBridge.swift Tests/MyShottrTests
+git add \
+  Sources/MyShottrApp/Preferences/EditorPreferencesStore.swift \
+  Sources/MyShottrApp/Editor/EditorBridgeEnvelope.swift \
+  Sources/MyShottrApp/Editor/EditorBridge.swift \
+  Tests/MyShottrTests/Preferences/EditorPreferencesStoreTests.swift \
+  Tests/MyShottrTests/EditorBridgePreferencesTests.swift \
+  Tests/MyShottrTests/EditorBridgeEnvelopeTests.swift \
+  Tests/MyShottrTests/Documents/NewProjectFactoryTests.swift
 git commit -m "feat(preferences): 편집 기본값 v2 마이그레이션 추가"
 ```
 
@@ -1218,7 +1269,23 @@ Run:
 
 ```bash
 git diff --check
-git add Sources/MyShottrApp/Documents Sources/MyShottrApp/Editor/EditorBridgeEnvelope.swift Tests/MyShottrTests
+git add \
+  Sources/MyShottrApp/Documents/EditorDocumentValidator.swift \
+  Sources/MyShottrApp/Documents/EditorDocumentMigrator.swift \
+  Sources/MyShottrApp/Documents/DocumentSession.swift \
+  Sources/MyShottrApp/Documents/ProjectPackageStore.swift \
+  Sources/MyShottrApp/Documents/NewProjectFactory.swift \
+  Sources/MyShottrApp/Editor/EditorBridgeEnvelope.swift \
+  Tests/MyShottrTests/Documents/EditorDocumentValidatorTests.swift \
+  Tests/MyShottrTests/Documents/EditorDocumentMigratorTests.swift \
+  Tests/MyShottrTests/Documents/DocumentSessionTests.swift \
+  Tests/MyShottrTests/Documents/NewProjectFactoryTests.swift \
+  Tests/MyShottrTests/ProjectPackageStoreTests.swift \
+  Tests/MyShottrTests/EditorBridgeEnvelopeTests.swift \
+  Tests/MyShottrTests/EditorBridgeCompositeTransferTests.swift \
+  Tests/MyShottrTests/EditorWebViewRuntimeTests.swift \
+  Tests/MyShottrTests/Chrome/CaptureInboxCoordinatorTests.swift \
+  Tests/MyShottrTests/Support/ProjectFixtures.swift
 git commit -m "feat(documents): 스키마 3 검증과 마이그레이션 통합"
 ```
 
@@ -1313,7 +1380,7 @@ const OperationStatusPayloadSchema = z.discriminatedUnion("phase", [
 ]);
 ```
 
-Add `historyStateChanged` to editor→native and `performHistoryAction` plus `operationStatus` to native→editor. Keep existing `saveCompleted`/`saveFailed` decode compatibility, but do not use them in the new state machine.
+Add `historyStateChanged` to editor→native and `performHistoryAction` plus `operationStatus` to native→editor. Keep the already-declared strict `saveCompleted`/`saveFailed` variants only to preserve the approved additive protocol-v1 surface. Add a source-level assertion that production `App` has no handler/call site for either legacy type; they provide no compatibility behavior or fallback state.
 
 - [ ] **Step 4: Add failing Swift exact-key tests**
 
@@ -1512,11 +1579,13 @@ Assert:
 
 ```ts
 expect(
-  screen.getByRole("button", { name: "Rectangle, shortcut R" }),
-).toHaveAttribute("aria-pressed", "true");
+  screen
+    .getByRole("button", { name: "Rectangle, shortcut R" })
+    .getAttribute("aria-pressed"),
+).toBe("true");
 
 expect(screen.getByText("R").tagName).toBe("KBD");
-expect(screen.getByText("R")).toHaveAttribute("aria-hidden", "true");
+expect(screen.getByText("R").getAttribute("aria-hidden")).toBe("true");
 ```
 
 For the dialog, test role/modal state, close-button initial focus, Tab/Shift-Tab trapping, Escape close, and restoration to the element focused before opening.
@@ -1571,7 +1640,18 @@ pnpm --filter @myshottr/editor exec vitest run \
 pnpm --filter @myshottr/editor test
 pnpm --filter @myshottr/editor typecheck
 git diff --check
-git add Packages/editor/src
+git add \
+  Packages/editor/src/input/shortcutRegistry.ts \
+  Packages/editor/src/input/ShortcutRouter.ts \
+  Packages/editor/src/input/ShortcutRouter.test.ts \
+  Packages/editor/src/canvas/tools/ToolController.ts \
+  Packages/editor/src/components/ShortcutHelpDialog.tsx \
+  Packages/editor/src/components/ShortcutHelpDialog.test.tsx \
+  Packages/editor/src/components/FloatingToolPalette.tsx \
+  Packages/editor/src/App.tsx \
+  Packages/editor/src/App.test.tsx \
+  Packages/editor/src/canvas/tools/createElement.test.ts \
+  Packages/editor/src/styles.css
 git commit -m "feat(editor): 단축키 레지스트리와 도움말 추가"
 ```
 
@@ -1742,7 +1822,7 @@ For a selected-element opacity slider:
 
 - [ ] **Step 7: Add Duplicate/Delete/Forward/Backward actions**
 
-Use existing reducer commands for delete and reorder. Duplicate delegates to the shared primitive introduced in Task 10; until Task 10 lands, expose the semantic callback without adding a second duplication algorithm.
+Use existing reducer commands for delete and reorder. Duplicate calls the existing `EditorApp.duplicateSelection` path, updates that path to select the returned copy IDs, and dispatches exactly one `createMany`. Task 10 moves this same primitive into `interaction/duplication.ts` for Option-drag reuse; do not add a second algorithm.
 
 - [ ] **Step 8: Make canvas and export use the same global z-order**
 
@@ -1775,7 +1855,21 @@ pnpm --filter @myshottr/editor exec vitest run \
   src/App.test.tsx
 pnpm --filter @myshottr/editor typecheck
 git diff --check
-git add Packages/editor/src
+git add \
+  Packages/editor/src/components/contextRailModel.ts \
+  Packages/editor/src/components/contextRailModel.test.ts \
+  Packages/editor/src/components/ContextRail.tsx \
+  Packages/editor/src/components/ContextRail.test.tsx \
+  Packages/editor/src/components/ContextStylePalette.tsx \
+  Packages/editor/src/components/ContextStylePalette.test.tsx \
+  Packages/editor/src/App.tsx \
+  Packages/editor/src/App.test.tsx \
+  Packages/editor/src/model/reducer.ts \
+  Packages/editor/src/model/history.test.ts \
+  Packages/editor/src/canvas/EditorCanvas.tsx \
+  Packages/editor/src/export/renderDocumentToBlob.ts \
+  Packages/editor/src/export/renderDocumentToBlob.test.ts \
+  Packages/editor/src/styles.css
 git commit -m "feat(editor): Context Rail과 전역 레이어 순서 추가"
 ```
 
@@ -1811,7 +1905,9 @@ it("keeps the source point under the pointer while zooming", () => {
 
   controller.zoomAt(pointer, 2.4);
 
-  expect(controller.toSourcePoint(pointer)).toEqualPoint(sourceBefore);
+  const sourceAfter = controller.toSourcePoint(pointer);
+  expect(sourceAfter.x).toBeCloseTo(sourceBefore.x);
+  expect(sourceAfter.y).toBeCloseTo(sourceBefore.y);
 });
 
 it("keeps zoom and centers the previous source point after rail reflow", () => {
@@ -1824,9 +1920,11 @@ it("keeps zoom and centers the previous source point after rail reflow", () => {
   });
 
   expect(controller.snapshot.zoom).toBe(before.zoom);
-  expect(
-    controller.toSourcePoint(center(controller.snapshot.availableRect)),
-  ).toEqualPoint(centeredSource);
+  const sourceAfter = controller.toSourcePoint(
+    center(controller.snapshot.availableRect),
+  );
+  expect(sourceAfter.x).toBeCloseTo(centeredSource.x);
+  expect(sourceAfter.y).toBeCloseTo(centeredSource.y);
 });
 ```
 
@@ -1959,7 +2057,20 @@ pnpm --filter @myshottr/editor exec vitest run \
 pnpm --filter @myshottr/editor test
 pnpm --filter @myshottr/editor typecheck
 git diff --check
-git add Packages/editor/src
+git add \
+  Packages/editor/src/viewport/ViewportController.ts \
+  Packages/editor/src/viewport/ViewportController.test.ts \
+  Packages/editor/src/canvas/CanvasViewport.ts \
+  Packages/editor/src/canvas/CanvasViewport.test.ts \
+  Packages/editor/src/components/EditorWorkspace.tsx \
+  Packages/editor/src/components/EditorWorkspace.test.tsx \
+  Packages/editor/src/canvas/EditorCanvas.tsx \
+  Packages/editor/src/canvas/EditorCanvas.test.tsx \
+  Packages/editor/src/components/ZoomControls.tsx \
+  Packages/editor/src/components/ZoomControls.test.tsx \
+  Packages/editor/src/App.tsx \
+  Packages/editor/src/App.test.tsx \
+  Packages/editor/src/styles.css
 git commit -m "feat(editor): 측정형 viewport와 pan zoom 추가"
 ```
 
@@ -1980,7 +2091,7 @@ git commit -m "feat(editor): 측정형 viewport와 pan zoom 추가"
 - Modify: `Packages/editor/src/App.tsx`
 - Modify: `Packages/editor/src/App.test.tsx`
 
-**Outcome:** Pointer-down snapshots all gesture inputs, pointer-move updates only an animation-frame-bounded preview, pointer-up emits at most one semantic command, and cancel emits none.
+**Outcome:** Pointer-down snapshots all gesture inputs, pointer-move updates only an animation-frame-bounded preview, pointer-up emits at most one semantic command, cancel emits none, and a successful creation keeps the active drawing tool selected for the next mark.
 
 - [ ] **Step 1: Convert the existing live-preview assertion into a tool matrix**
 
@@ -2015,6 +2126,17 @@ it.each([
 ```
 
 Add Number Marker live-preview/click commit and new Text draft-without-element cases.
+
+In `App.test.tsx`, add one integration test that selects Rectangle, performs a
+pointer-down/move/up creation, and asserts:
+
+- the Rectangle palette button is still `aria-pressed="true"` after commit;
+- Selection did not become active implicitly;
+- a second pointer-down/move/up creates a second rectangle without pressing
+  `R` again.
+
+Repeat the active-tool assertion as a table for every drawing tool. Only `V`
+or `Escape` when no gesture is active may return to Selection.
 
 - [ ] **Step 2: Add failing controller terminal and snapshot tests**
 
@@ -2062,6 +2184,10 @@ it("commits with the tool and defaults captured at pointer-down", () => {
 Mutate the current app tool/defaults between update and commit in the integration test and prove the result is still from pointer-down.
 
 Assert `cancel()` and pointer cancellation return the document/history to the exact starting state.
+
+The creation commit path must never call `setTool("selection")`. Tool state is
+orthogonal to the semantic document command; after commit it remains the
+current drawing tool captured by `EditorApp`.
 
 - [ ] **Step 3: Implement shared constraint geometry**
 
@@ -2175,7 +2301,7 @@ Cancellation cancels the pending frame and clears its latest point.
 
 - [ ] **Step 7: Integrate creation results without pointer-move publication**
 
-`pointermove` may update only `creationPreview`; it must not call `history.dispatch`, `setDocument` with a committed document, `onChange`, or the native bridge.
+`pointermove` may update only `creationPreview`; it must not call `history.dispatch`, mutate the history-store snapshot, call `onChange`, or use the native bridge.
 
 `pointerup` routes one returned command through `history.dispatch` and `publishSceneChange`.
 
@@ -2202,7 +2328,19 @@ Run:
 
 ```bash
 git diff --check
-git add Packages/editor/src
+git add \
+  Packages/editor/src/interaction/InteractionController.ts \
+  Packages/editor/src/interaction/InteractionController.test.ts \
+  Packages/editor/src/interaction/geometry.ts \
+  Packages/editor/src/interaction/geometry.test.ts \
+  Packages/editor/src/canvas/EditorCanvas.tsx \
+  Packages/editor/src/canvas/EditorCanvas.test.tsx \
+  Packages/editor/src/canvas/tools/createElement.ts \
+  Packages/editor/src/canvas/tools/createElement.test.ts \
+  Packages/editor/src/canvas/renderElement.tsx \
+  Packages/editor/src/canvas/renderElement.test.tsx \
+  Packages/editor/src/App.tsx \
+  Packages/editor/src/App.test.tsx
 git commit -m "feat(editor): pointer 제스처와 생성 미리보기 통합"
 ```
 
@@ -2429,7 +2567,22 @@ pnpm --filter @myshottr/editor exec vitest run \
 pnpm --filter @myshottr/editor test
 pnpm --filter @myshottr/editor typecheck
 git diff --check
-git add Packages/editor/src
+git add \
+  Packages/editor/src/interaction/selectionGeometry.ts \
+  Packages/editor/src/interaction/selectionGeometry.test.ts \
+  Packages/editor/src/interaction/duplication.ts \
+  Packages/editor/src/interaction/duplication.test.ts \
+  Packages/editor/src/canvas/SelectionController.ts \
+  Packages/editor/src/canvas/SelectionController.test.ts \
+  Packages/editor/src/interaction/InteractionController.ts \
+  Packages/editor/src/interaction/InteractionController.test.ts \
+  Packages/editor/src/canvas/EditorCanvas.tsx \
+  Packages/editor/src/canvas/EditorCanvas.test.tsx \
+  Packages/editor/src/canvas/renderElement.tsx \
+  Packages/editor/src/App.tsx \
+  Packages/editor/src/App.test.tsx \
+  Packages/editor/src/components/ContextRail.tsx \
+  Packages/editor/src/components/ContextRail.test.tsx
 git commit -m "feat(editor): 선택과 직접 조작 상호작용 추가"
 ```
 
@@ -2473,7 +2626,7 @@ export type TextEditResult =
 
 Test new non-empty create, new blank no-op, existing non-empty update, existing blank delete, and cancel preserving the original.
 
-- [ ] **Step 2: Run the session/overlay tests and observe current placeholder behavior**
+- [ ] **Step 2: Run the session/overlay tests and observe the current pre-created-element behavior**
 
 Run:
 
@@ -2549,7 +2702,15 @@ pnpm --filter @myshottr/editor exec vitest run \
 pnpm --filter @myshottr/editor test
 pnpm --filter @myshottr/editor typecheck
 git diff --check
-git add Packages/editor/src
+git add \
+  Packages/editor/src/components/textEditSession.ts \
+  Packages/editor/src/components/textEditSession.test.ts \
+  Packages/editor/src/components/TextEditorOverlay.tsx \
+  Packages/editor/src/components/TextEditorOverlay.test.tsx \
+  Packages/editor/src/interaction/InteractionController.ts \
+  Packages/editor/src/canvas/EditorCanvas.tsx \
+  Packages/editor/src/App.tsx \
+  Packages/editor/src/App.test.tsx
 git commit -m "feat(editor): 텍스트 편집 세션 통합"
 ```
 
@@ -2580,7 +2741,7 @@ Assert the full table:
 | changed transaction commit | true | false |
 | transaction cancel | restored pre-transaction values |
 
-Use getters already introduced in Task 2; add any missing transition assertion before integration.
+Use the getters introduced in Task 2 and implement every row in this table before integration.
 
 - [ ] **Step 2: Add failing App integration tests**
 
@@ -2705,7 +2866,12 @@ pnpm --filter @myshottr/editor exec vitest run \
 pnpm --filter @myshottr/editor test
 pnpm --filter @myshottr/editor typecheck
 git diff --check
-git add Packages/editor/src
+git add \
+  Packages/editor/src/model/history.ts \
+  Packages/editor/src/model/history.test.ts \
+  Packages/editor/src/App.tsx \
+  Packages/editor/src/App.test.tsx \
+  Packages/editor/src/bridge/nativeBridge.ts
 git commit -m "feat(editor): 네이티브 히스토리 상태 동기화 추가"
 ```
 
@@ -2713,15 +2879,17 @@ git commit -m "feat(editor): 네이티브 히스토리 상태 동기화 추가"
 
 **Files:**
 
+- Create: `Sources/MyShottrApp/App/DocumentCommandDefinition.swift`
+- Modify: `Sources/MyShottrApp/App/MyShottrApp.swift`
 - Modify: `Sources/MyShottrApp/Editor/EditorBridge.swift`
 - Modify: `Sources/MyShottrApp/Editor/EditorWebView.swift`
+- Create: `Tests/MyShottrTests/App/DocumentCommandDefinitionTests.swift`
 - Create: `Tests/MyShottrTests/Editor/EditorBridgeStateCommandTests.swift`
 - Modify: `Tests/MyShottrTests/EditorBridgeCompositeTransferTests.swift`
 - Modify: `Sources/MyShottrApp/Documents/DocumentWindowController.swift`
 - Modify: `Tests/MyShottrTests/Documents/DocumentWindowControllerCommandTests.swift`
-- Verify unchanged: `Sources/MyShottrApp/App/MyShottrApp.swift`
 
-**Outcome:** AppKit toolbar state mirrors web history exactly, toolbar clicks send one action, output items respect editor readiness, and uncorrelated JavaScript failures reach the existing bridge-error UI path.
+**Outcome:** AppKit toolbar state mirrors web history exactly, toolbar clicks send one action, native output key equivalents have one reusable definition, output items respect editor readiness, and uncorrelated JavaScript failures reach the existing bridge-error UI path.
 
 - [ ] **Step 1: Add failing bridge-routing tests**
 
@@ -2791,7 +2959,7 @@ Rules:
 - any encode/readiness/evaluate-JavaScript failure in fire-and-forget calls `reportUncorrelatedError(.invalidMessage)`;
 - do not retry or create a web fallback event.
 
-- [ ] **Step 5: Add failing native toolbar tests**
+- [ ] **Step 5: Add failing native toolbar and command-definition tests**
 
 Assert default order:
 
@@ -2813,7 +2981,36 @@ Assert:
 - Undo/Redo follow the last history state;
 - one click sends exactly one action;
 - output in flight disables only Copy/Save/Export, not Undo/Redo;
-- labels, tooltips, and SF Symbols match the design.
+- labels, tooltips, and SF Symbols match the design;
+- `toolbar.displayMode == .iconAndLabel`.
+
+Define one native command registry used by both the SwiftUI menu declarations
+and AppKit runtime tests:
+
+```swift
+struct DocumentCommandDefinition {
+    let title: String
+    let action: Selector
+    let key: KeyEquivalent
+    let swiftUIModifiers: EventModifiers
+    let appKitKeyEquivalent: String
+    let appKitModifiers: NSEvent.ModifierFlags
+}
+```
+
+The registry contains exactly:
+
+```text
+Copy Image   copyComposite:     c   Command-Shift
+Save Project saveProjectAction: s   Command
+Export PNG   exportComposite:   e   Command
+```
+
+`MyShottrApp` builds its three output commands from these definitions.
+`DocumentCommandDefinitionTests` creates `NSMenuItem`s from the same values
+and asserts the titles, selectors, key equivalents, and modifier masks.
+Do not duplicate key literals between production commands and the runtime
+test.
 
 - [ ] **Step 6: Store readiness, history, and output state in the window controller**
 
@@ -2826,6 +3023,12 @@ private var historyState = EditorHistoryState(
     canRedo: false
 )
 private var outputOperation: OutputOperation?
+```
+
+`makeToolbar()` explicitly keeps:
+
+```swift
+toolbar.displayMode = .iconAndLabel
 ```
 
 After:
@@ -2891,11 +3094,21 @@ xcodebuild test \
   -scheme MyShottr \
   -destination "platform=macOS" \
   CODE_SIGNING_ALLOWED=NO \
+  -only-testing:MyShottrTests/DocumentCommandDefinitionTests \
   -only-testing:MyShottrTests/EditorBridgeStateCommandTests \
   -only-testing:MyShottrTests/EditorBridgeCompositeTransferTests \
   -only-testing:MyShottrTests/DocumentWindowControllerCommandTests
 git diff --check
-git add Sources/MyShottrApp/Editor Sources/MyShottrApp/Documents/DocumentWindowController.swift Tests/MyShottrTests
+git add \
+  Sources/MyShottrApp/App/DocumentCommandDefinition.swift \
+  Sources/MyShottrApp/App/MyShottrApp.swift \
+  Sources/MyShottrApp/Editor/EditorBridge.swift \
+  Sources/MyShottrApp/Editor/EditorWebView.swift \
+  Sources/MyShottrApp/Documents/DocumentWindowController.swift \
+  Tests/MyShottrTests/App/DocumentCommandDefinitionTests.swift \
+  Tests/MyShottrTests/Editor/EditorBridgeStateCommandTests.swift \
+  Tests/MyShottrTests/EditorBridgeCompositeTransferTests.swift \
+  Tests/MyShottrTests/Documents/DocumentWindowControllerCommandTests.swift
 git commit -m "feat(app): 네이티브 Undo Redo 툴바 추가"
 ```
 
@@ -3052,11 +3265,12 @@ func displaySafeBasename(for url: URL) -> String {
     let filtered = url.lastPathComponent.unicodeScalars.filter {
         !CharacterSet.controlCharacters.contains($0)
     }
-    return String(String.UnicodeScalarView(filtered).prefix(120))
+    let filteredString = String(String.UnicodeScalarView(filtered))
+    return String(filteredString.prefix(120))
 }
 ```
 
-If this scalar-based expression does not preserve user-perceived `Character` limits in the failing emoji/combining test, construct the filtered string first and apply `String(filteredString.prefix(120))`. The test's contract is 120 `Character`s, not 120 bytes or scalars.
+The final `prefix(120)` operates on Swift `Character`s, so the limit is 120 user-perceived characters rather than bytes or Unicode scalars.
 
 - [ ] **Step 9: Send exactly one terminal state per started operation**
 
@@ -3076,7 +3290,13 @@ xcodebuild test \
   -only-testing:MyShottrTests/DocumentWindowControllerOutputTests \
   -only-testing:MyShottrTests/DocumentSessionTests
 git diff --check
-git add Sources/MyShottrApp/Documents Sources/MyShottrApp/App/MyShottrUserFacingError.swift Tests/MyShottrTests/Documents
+git add \
+  Sources/MyShottrApp/Documents/DocumentWindowController.swift \
+  Sources/MyShottrApp/Documents/DocumentSession.swift \
+  Sources/MyShottrApp/App/MyShottrUserFacingError.swift \
+  Tests/MyShottrTests/Documents/DocumentWindowControllerCommandTests.swift \
+  Tests/MyShottrTests/Documents/DocumentWindowControllerOutputTests.swift \
+  Tests/MyShottrTests/Documents/DocumentSessionTests.swift
 git commit -m "feat(app): 출력 작업 상태와 창 동작 정교화"
 ```
 
@@ -3103,8 +3323,8 @@ it("does not flash progress for a fast completion", () => {
   vi.advanceTimersByTime(149);
   view.receive(status("request-a", "save", "completed"));
 
-  expect(screen.queryByText("Saving…")).not.toBeInTheDocument();
-  expect(screen.getByText("Saved")).toBeInTheDocument();
+  expect(screen.queryByText("Saving…")).toBeNull();
+  expect(screen.getByText("Saved")).toBeTruthy();
 });
 
 it("shows progress at 150ms", () => {
@@ -3112,7 +3332,7 @@ it("shows progress at 150ms", () => {
   view.receive(status("request-a", "export", "started"));
   vi.advanceTimersByTime(150);
 
-  expect(screen.getByText("Exporting…")).toBeInTheDocument();
+  expect(screen.getByText("Exporting…")).toBeTruthy();
 });
 ```
 
@@ -3189,7 +3409,12 @@ pnpm --filter @myshottr/editor exec vitest run \
 pnpm --filter @myshottr/editor test
 pnpm --filter @myshottr/editor typecheck
 git diff --check
-git add Packages/editor/src
+git add \
+  Packages/editor/src/components/EditorFeedback.tsx \
+  Packages/editor/src/components/EditorFeedback.test.tsx \
+  Packages/editor/src/App.tsx \
+  Packages/editor/src/App.test.tsx \
+  Packages/editor/src/styles.css
 git commit -m "feat(editor): 저장과 내보내기 피드백 추가"
 ```
 
@@ -3205,11 +3430,17 @@ git commit -m "feat(editor): 저장과 내보내기 피드백 추가"
 - Create: `Packages/editor/tests/visual/editor.visual.spec.ts`
 - Create: `Packages/editor/tests/visual/editor.accessibility.spec.ts`
 - Create: generated Darwin screenshot baselines under `Packages/editor/tests/visual/*-snapshots/`
+- Create: `Packages/editor/src/appearance/useNativeAppearance.ts`
+- Create: `Packages/editor/src/appearance/useNativeAppearance.test.ts`
 - Modify: `Packages/editor/src/App.tsx`
 - Modify: `Packages/editor/src/styles.css`
+- Modify: `Tests/MyShottrTests/EditorWebViewRuntimeTests.swift`
+- Create: `docs/images/editor-context-rail-approved-reference.png`
+- Create: `docs/images/editor-context-rail-implementation-comparison.png`
+- Create: `docs/testing/editor-visual-reference.md`
 - Modify: `Scripts/verify-v1.sh`
 
-**Outcome:** Seven deterministic editor states are compared in light and dark appearance, while actual browser focus, semantics, contrast, and reduced motion are regression-tested without adding a production bridge fallback.
+**Outcome:** Seven deterministic editor states are compared in light and dark appearance, while actual browser focus, semantics, contrast, reduced motion, and native output key-equivalent routing are regression-tested without adding a production bridge fallback.
 
 - [ ] **Step 1: Add the editor-local Playwright dependency and script**
 
@@ -3236,7 +3467,18 @@ Keep the version range aligned with the Chrome-extension package.
 
 - [ ] **Step 2: Create a deterministic, test-only browser entry**
 
-`tests/visual/visual.html` loads `entry.tsx`. `entry.tsx` imports exported production `EditorApp` and supplies a fixed local data-URL source image, schema-3 fixture document, fixed tool/selection/status state, and no-op callbacks.
+Before implementing the harness, promote the approved local reference:
+
+```text
+source: .superpowers/brainstorm/87931-1785458907/content/option-2-context-rail.png
+tracked target: docs/images/editor-context-rail-approved-reference.png
+size: 1487 × 1058
+SHA-256: cd7ae5d3c6d46fa88ec4100654f51fb44bff595ff5a26516bba7c7c3b38958f8
+```
+
+Fail the step if the source checksum differs. `docs/testing/editor-visual-reference.md` records the checksum plus the approved rail position, width, active coral state, direct controls, mixed state, and canvas-first hierarchy. This immutable artifact is the visual authority; generated Playwright output is not its own authority.
+
+`tests/visual/visual.html` loads `entry.tsx`. The test-only entry composes the production `EditorWorkspace`, `EditorCanvas`, `FloatingToolPalette`, `ContextRail`, `ShortcutHelpDialog`, `EditorFeedback`, the real strict native bridge, and the native-appearance hook. It does not mount `EditorApp`, because `EditorApp` intentionally has no public API for forcing selection, dialog, or output feedback.
 
 Use this complete state union:
 
@@ -3251,9 +3493,81 @@ export type VisualFixtureState =
   | "rail-reduced-motion";
 ```
 
-The entry reads only those enumerated query parameters and throws for any other value. It must not modify production `App` to work when the native bridge is missing.
+The entry maps the enumerated fixture state to controlled props on those existing presentation components. This control exists only in `tests/visual/entry.tsx`; it adds no prop, setter, fallback, or branch to production `EditorApp`. Interaction correctness remains covered by the focused controller/React tests, while this harness makes the exact visual states deterministic.
 
-- [ ] **Step 3: Configure a fixed local Playwright server**
+`save-success` still feeds `EditorFeedback` a strict Save-completed envelope shape, and appearance still arrives through the real bridge subscription described in Step 3.
+
+- [ ] **Step 3: Route appearance through the strict native message**
+
+Extract:
+
+```ts
+export function useNativeAppearance(): void {
+  const bridge = useNativeBridge();
+
+  useEffect(
+    () =>
+      bridge.subscribe((message) => {
+        if (message.type !== "setAppearance") return;
+        document.documentElement.dataset.colorScheme =
+          message.payload.colorScheme;
+        document.documentElement.style.colorScheme =
+          message.payload.colorScheme;
+      }),
+    [bridge],
+  );
+}
+```
+
+Call this hook from the production `App` and the visual fixture surface. Unit-test that only strict `setAppearance` envelopes change the root state.
+
+In `EditorWebViewRuntimeTests.swift`, add one bundled-runtime smoke test with this exact sequence:
+
+1. load a valid schema-3 document and await `editorReady`;
+2. send Dark `setAppearance` through `EditorBridge` and assert the root dataset plus a representative computed token;
+3. use the existing `evaluateJavaScript` test seam to activate Rectangle and dispatch pointer-down/move/up on the real Stage container;
+4. await Editor→Native `historyStateChanged(canUndo: true, canRedo: false)`;
+5. call native `performHistoryAction(.undo)` and await one `documentChanged` plus the next false/false history state;
+6. send Save `started` and `completed` with one request ID and assert the real DOM `role="status"` shows `Saved`;
+7. send Light `setAppearance` and assert the root/computed token returns to Light.
+
+This protects history, appearance, operation feedback, strict bridge routing, and the shipped local editor bundle in one real `WKWebView`, rather than only CSS media emulation.
+
+Add a second bundled-runtime test for AppKit-owned output shortcuts. It uses a
+real `DocumentWindowController`, the immediate deterministic output seams from
+Task 14, and a temporary `NSMenu` whose items are built from
+`DocumentCommandDefinition`. Restore the previous `NSApp.mainMenu` in
+`defer`.
+
+Run this exact matrix:
+
+```text
+focused owner          Command-Shift-C   Command-S   Command-E
+inline text textarea   handled once      handled once handled once
+shortcut-help button   handled once      handled once handled once
+```
+
+For each cell, create a fresh controller/window with immediate successful
+providers for only that command and make that window key. This prevents Copy's
+required hide-on-success behavior or an earlier output guard from influencing
+the next matrix cell. Then:
+
+1. use the real bundled editor DOM to enter the named focus state and assert
+   `document.activeElement` is the textarea or a control inside the modal;
+2. synthesize the matching key-down `NSEvent` and call
+   `NSApp.mainMenu?.performKeyEquivalent(with:)`;
+3. assert AppKit returns `true`, the corresponding controller selector reaches
+   its injected native seam exactly once, and no other output seam runs;
+4. await the immediate operation terminal before the next cell so the shared
+   output guard does not mask routing;
+5. assert the web document and active focus owner are unchanged by the key
+   equivalent.
+
+This is a responder-chain test, not a direct selector call. It proves the
+native-owned shortcuts remain available while WebKit owns first responder,
+including both inline text editing and the modal help surface.
+
+- [ ] **Step 4: Configure a fixed local Playwright server**
 
 Create:
 
@@ -3279,7 +3593,7 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 4: Write the 14-state visual test before baselines exist**
+- [ ] **Step 5: Write the 14-state visual test before baselines exist**
 
 Use:
 
@@ -3294,17 +3608,33 @@ const states = [
   "rail-reduced-motion",
 ] as const;
 
+async function sendNativeMessage(
+  page: Page,
+  message: NativeToEditorEnvelope,
+): Promise<void> {
+  await page.evaluate((detail) => {
+    window.dispatchEvent(
+      new CustomEvent("myshottr:native-message", { detail }),
+    );
+  }, message);
+}
+
 for (const appearance of ["light", "dark"] as const) {
   for (const state of states) {
     test(`${state} in ${appearance}`, async ({ page }) => {
       await page.emulateMedia({
-        colorScheme: appearance,
         reducedMotion:
           state === "rail-reduced-motion" ? "reduce" : "no-preference",
       });
       await page.goto(
-        `/tests/visual/visual.html?state=${state}&appearance=${appearance}`,
+        `/tests/visual/visual.html?state=${state}`,
       );
+      await sendNativeMessage(page, {
+        protocolVersion: 1,
+        requestId: appearanceRequestId,
+        type: "setAppearance",
+        payload: { colorScheme: appearance },
+      });
       await expect(page.getByRole("main", {
         name: "MyShottr editor",
       })).toBeVisible();
@@ -3321,9 +3651,9 @@ for (const appearance of ["light", "dark"] as const) {
 }
 ```
 
-Run once and observe missing-snapshot failures.
+Run once and observe missing-snapshot failures. This is only the red test; do not run `--update-snapshots` yet.
 
-- [ ] **Step 5: Add real-browser accessibility assertions**
+- [ ] **Step 6: Add real-browser accessibility and reduced-motion assertions**
 
 Test both light and dark:
 
@@ -3335,7 +3665,8 @@ Test both light and dark:
 - mixed value has visible `Mixed` text;
 - help dialog traps focus and restores the prior control;
 - feedback is `role="status"` with `aria-live="polite"`;
-- reduced motion removes the 160 ms reflow transition.
+- ordinary motion reports the 160 ms reflow transition;
+- reduced motion reports a zero-duration transition and preserves zoom/source center after rail open.
 
 Calculate computed-color contrast in the test:
 
@@ -3347,7 +3678,9 @@ expect(activeStateContrastRatio).toBeGreaterThanOrEqual(3);
 
 Sample every core token pairing in both appearances rather than one arbitrary button.
 
-- [ ] **Step 6: Fix visual/accessibility failures in production CSS and semantics**
+The reduced-motion assertion runs before screenshot normalization and does not set `animations: "disabled"`. Screenshot animation suppression validates only the final pixels; it is not accepted as evidence that reduced-motion behavior works.
+
+- [ ] **Step 7: Fix visual/accessibility failures in production CSS and semantics**
 
 Keep:
 
@@ -3361,7 +3694,23 @@ Keep:
 
 Do not add a DOM annotation tree for Konva elements; that remains out of scope.
 
-- [ ] **Step 7: Review and commit the baseline screenshots**
+- [ ] **Step 8: Compare against the approved reference before creating baselines**
+
+Generate `docs/images/editor-context-rail-implementation-comparison.png` with the immutable approved reference on the left and the fixed-size `selected-rectangle` implementation screenshot on the right. Record in `docs/testing/editor-visual-reference.md`:
+
+- reference SHA;
+- implementation commit SHA;
+- reference and implementation dimensions;
+- rail coordinates/width;
+- palette alignment;
+- active/hover/focus states;
+- swatches/segments/slider;
+- actions and mixed-state differences;
+- reviewer conclusion.
+
+Any material mismatch is fixed in product code first. The comparison artifact and checklist must be reviewed before baseline generation.
+
+- [ ] **Step 9: Create and re-run the inspected baseline screenshots**
 
 Run:
 
@@ -3373,7 +3722,7 @@ pnpm --filter @myshottr/editor test:visual
 
 Open every generated image and compare it against the approved Context Rail reference at the same size/state. Baselines are accepted only after manual inspection; never approve a failing layout by blindly updating screenshots.
 
-- [ ] **Step 8: Add the visual gate to repository verification**
+- [ ] **Step 10: Add the visual gate to repository verification**
 
 After the existing Chromium install step in `Scripts/verify-v1.sh`, add:
 
@@ -3384,7 +3733,7 @@ run_step "Run editor visual and accessibility tests" \
 
 The existing pinned Chromium installation is shared; do not add another CI job or browser download.
 
-- [ ] **Step 9: Run editor and visual gates, then commit**
+- [ ] **Step 11: Run editor, runtime, and visual gates, then commit**
 
 Run:
 
@@ -3393,8 +3742,27 @@ pnpm --filter @myshottr/editor test
 pnpm --filter @myshottr/editor typecheck
 pnpm --filter @myshottr/editor build
 pnpm --filter @myshottr/editor test:visual
+xcodebuild test \
+  -project MyShottr.xcodeproj \
+  -scheme MyShottr \
+  -destination "platform=macOS" \
+  CODE_SIGNING_ALLOWED=NO \
+  -only-testing:MyShottrTests/EditorWebViewRuntimeTests
 git diff --check
-git add Packages/editor/package.json Packages/editor/playwright.config.ts Packages/editor/tests Packages/editor/src/App.tsx Packages/editor/src/styles.css pnpm-lock.yaml Scripts/verify-v1.sh
+git add \
+  Packages/editor/package.json \
+  Packages/editor/playwright.config.ts \
+  Packages/editor/tests \
+  Packages/editor/src/appearance/useNativeAppearance.ts \
+  Packages/editor/src/appearance/useNativeAppearance.test.ts \
+  Packages/editor/src/App.tsx \
+  Packages/editor/src/styles.css \
+  Tests/MyShottrTests/EditorWebViewRuntimeTests.swift \
+  docs/images/editor-context-rail-approved-reference.png \
+  docs/images/editor-context-rail-implementation-comparison.png \
+  docs/testing/editor-visual-reference.md \
+  pnpm-lock.yaml \
+  Scripts/verify-v1.sh
 git commit -m "test(editor): 시각 회귀와 접근성 검증 추가"
 ```
 
@@ -3406,7 +3774,6 @@ git commit -m "test(editor): 시각 회귀와 접근성 검증 추가"
 - Modify: `docs/testing/v1-acceptance.md`
 - Modify: `docs/releases/v0.1.0.md`
 - Modify: `docs/superpowers/specs/2026-07-31-myshottr-editor-ux-polish-design.md`
-- Modify: release workflow/tests only if the existing release contract fails after the editor visual gate is added
 
 **Outcome:** Documentation matches shipped behavior, automated and manual acceptance are recorded, no placeholder/contract drift remains, and the existing v0.1.0 release path receives a verified build.
 
@@ -3456,16 +3823,21 @@ Record the tested app build SHA and macOS version beside the completed checklist
 Run:
 
 ```bash
-rg -n "TODO|TBD|FIXME|HACK|placeholder|fallback" Packages/editor Sources/MyShottrApp Tests/MyShottrTests README.md docs
-rg -n "schemaVersion.?2|editorPreferences\\.v1|saveCompleted|saveFailed|Command-Y|Shift-pan|ContextStylePalette" Packages/editor Sources/MyShottrApp Tests/MyShottrTests README.md docs
-rg -n "RecoveryCoordinator|RecoveryStore|SessionTerminationState|Recover unsaved" Sources Tests README.md docs || true
+rg -n "TODO|TBD|FIXME|HACK|placeholder|fallback" \
+  Packages/editor Sources/MyShottrApp Tests/MyShottrTests \
+  README.md docs/testing docs/releases
+rg -n "schemaVersion.?2|editorPreferences\\.v1|saveCompleted|saveFailed|Command-Y|Shift-pan|ContextStylePalette" \
+  Packages/editor Sources/MyShottrApp Tests/MyShottrTests \
+  README.md docs/testing docs/releases
+rg -n "RecoveryCoordinator|RecoveryStore|SessionTerminationState|Recover unsaved" \
+  Sources Tests README.md docs/testing docs/releases || true
 ```
 
 Review every match:
 
 - schema 1/2 references are valid only in migration tests/docs;
 - `editorPreferences.v1` is valid only as the migration input key;
-- `saveCompleted`/`saveFailed` may remain only as unused v1 decoder compatibility;
+- `saveCompleted`/`saveFailed` may remain only as unconsumed declarations in the additive v1 union; source scans must show no production handler or sender;
 - no executable Command-Y, Shift-pan, old palette, or recovery path remains;
 - no implementation placeholder or fallback is permitted.
 
@@ -3550,29 +3922,201 @@ Run:
 ```bash
 git diff --check
 git status --short
-git add README.md docs Packages/editor Sources/MyShottrApp Tests/MyShottrTests Scripts/verify-v1.sh pnpm-lock.yaml project.yml
+git add README.md docs/testing/v1-acceptance.md docs/releases/v0.1.0.md docs/superpowers/specs/2026-07-31-myshottr-editor-ux-polish-design.md
 git diff --cached --name-only
 git commit -m "docs(release): v0.1.0 편집기 동작과 검증 갱신"
 ```
 
 Before committing, confirm the staged set contains only reviewed final-integration/documentation changes and no generated local build products.
 
-- [ ] **Step 11: Re-run the exact release handoff from the existing public-release plan**
+- [ ] **Step 11: Lock the new v0.1.0 package checksums**
 
-Use the tag/package/GitHub Release workflow already approved for v0.1.0. The release handoff must consume the exact commit that passed the full gate; do not rebuild from an uncommitted or different tree.
+From the clean, fully verified documentation commit:
 
-Record:
-
-```text
-release commit SHA
-tag
-CI run URL and conclusion
-GitHub Release URL
-DMG/ZIP checksum
-downloaded artifact launch result
+```bash
+test -z "$(git status --short)"
+PRODUCT_SHA="$(git rev-parse HEAD)"
+Scripts/package-release.sh 0.1.0
+Scripts/verify-release-artifacts.sh \
+  0.1.0 \
+  dist/release/0.1.0
+cat dist/release/0.1.0/SHA256SUMS.txt
 ```
 
-Do not declare release complete until the public artifact is downloadable and launches on a clean verification path.
+Update `docs/releases/v0.1.0.md` with:
+
+- `PRODUCT_SHA` as the tested product-source SHA;
+- the exact two lines from the generated `SHA256SUMS.txt`;
+- the final shipped UX, recovery-removed behavior, and known limitations.
+
+Then run:
+
+```bash
+git add docs/releases/v0.1.0.md
+git diff --cached --check
+git commit -m "docs(release): v0.1.0 체크섬 갱신"
+test -z "$(git status --short)"
+Scripts/verify-v1.sh
+Scripts/package-release.sh 0.1.0
+Scripts/verify-release-artifacts.sh \
+  0.1.0 \
+  dist/release/0.1.0
+pnpm test:release
+```
+
+The second package's checksums must match the committed release-note checksum section exactly. If they differ, stop and diagnose nondeterminism; do not update notes repeatedly to bless unstable output.
+
+- [ ] **Step 12: Attach exact-SHA acceptance evidence**
+
+Use the completed acceptance document as the note body:
+
+```bash
+RELEASE_SHA="$(git rev-parse HEAD)"
+if git notes --ref=myshottr-acceptance show "${RELEASE_SHA}" \
+  >/dev/null 2>&1; then
+  echo "Acceptance note already exists; inspect it before proceeding." >&2
+  exit 1
+fi
+git notes --ref=myshottr-acceptance add \
+  -F docs/testing/v1-acceptance.md \
+  "${RELEASE_SHA}"
+git notes --ref=myshottr-acceptance show "${RELEASE_SHA}"
+```
+
+The note must identify the same SHA, full-gate result, manual acceptance result, visual-reference comparison, macOS version, and downloaded-artifact checks that remain pending until publication.
+
+- [ ] **Step 13: Create the public repository and verify main CI**
+
+Run:
+
+```bash
+test -z "$(git status --short)"
+gh auth status
+test -z "$(git remote)"
+if gh repo view gihwan-dev/MyShottr >/dev/null 2>&1; then
+  echo "gihwan-dev/MyShottr already exists; stop before changing it." >&2
+  exit 1
+fi
+gh repo create gihwan-dev/MyShottr \
+  --public \
+  --description \
+  "Local-first macOS screenshot capture and Excalidraw-style annotation" \
+  --source=. \
+  --remote=origin
+git push -u origin HEAD:main
+gh repo edit gihwan-dev/MyShottr --default-branch main
+git push origin refs/notes/myshottr-acceptance
+```
+
+Then prove remote SHA and CI:
+
+```bash
+LOCAL_SHA="$(git rev-parse HEAD)"
+REMOTE_SHA="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+test "${LOCAL_SHA}" = "${REMOTE_SHA}"
+RUN_ID="$(
+  gh run list \
+    --repo gihwan-dev/MyShottr \
+    --branch main \
+    --workflow CI \
+    --limit 1 \
+    --json databaseId \
+    --jq '.[0].databaseId'
+)"
+gh run watch "${RUN_ID}" \
+  --repo gihwan-dev/MyShottr \
+  --exit-status
+gh run view "${RUN_ID}" \
+  --repo gihwan-dev/MyShottr \
+  --json headSha,conclusion,url
+```
+
+Require `headSha == LOCAL_SHA` and `conclusion == success`.
+
+- [ ] **Step 14: Tag the accepted main SHA and wait for the Release workflow**
+
+Run:
+
+```bash
+test -z "$(git status --short)"
+test "$(git rev-parse HEAD)" = \
+  "$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+git notes --ref=myshottr-acceptance show HEAD
+git tag -a v0.1.0 -m "MyShottr v0.1.0"
+git push origin v0.1.0
+
+RUN_ID="$(
+  gh run list \
+    --repo gihwan-dev/MyShottr \
+    --workflow Release \
+    --limit 10 \
+    --json databaseId,headBranch \
+    --jq \
+    'map(select(.headBranch == "v0.1.0"))[0].databaseId'
+)"
+gh run watch "${RUN_ID}" \
+  --repo gihwan-dev/MyShottr \
+  --exit-status
+gh run view "${RUN_ID}" \
+  --repo gihwan-dev/MyShottr \
+  --json headSha,conclusion,url
+```
+
+Require the workflow head SHA to equal `git rev-list -n 1 v0.1.0` and the conclusion to be `success`. The workflow publishes exactly:
+
+```text
+MyShottr-0.1.0-macos.zip
+MyShottr-Chrome-0.1.0.zip
+SHA256SUMS.txt
+```
+
+- [ ] **Step 15: Download, verify, install, and record the public release**
+
+Run:
+
+```bash
+DOWNLOAD_ROOT="$(mktemp -d)"
+gh release download v0.1.0 \
+  --repo gihwan-dev/MyShottr \
+  --dir "${DOWNLOAD_ROOT}"
+Scripts/verify-release-artifacts.sh \
+  0.1.0 \
+  "${DOWNLOAD_ROOT}"
+gh release view v0.1.0 \
+  --repo gihwan-dev/MyShottr \
+  --json \
+  url,isDraft,isPrerelease,tagName,targetCommitish,assets
+```
+
+Extract both downloaded ZIPs into a new temporary directory and verify:
+
+1. app version `0.1.0`;
+2. app launch through the documented unsigned-app flow;
+3. region capture, edit, Copy, Save, Export, and reopen;
+4. Chrome extension Developer-mode load;
+5. visible-viewport browser capture without browser/extension toolbar;
+6. downloaded checksums and exact three-asset set.
+
+Copy the committed `docs/testing/release-installation.md` template to a temporary report, fill every PASS/FAIL and evidence field, and attach that completed report without changing the tagged tree:
+
+```bash
+INSTALL_REPORT_PATH="${TMPDIR:-/tmp}/myshottr-release-install-v0.1.0.md"
+test ! -e "${INSTALL_REPORT_PATH}"
+cp docs/testing/release-installation.md "${INSTALL_REPORT_PATH}"
+```
+
+Edit `INSTALL_REPORT_PATH` so every field contains the observed release evidence, then run:
+
+```bash
+INSTALL_REPORT_PATH="${TMPDIR:-/tmp}/myshottr-release-install-v0.1.0.md"
+git notes --ref=myshottr-release-install add \
+  -F "${INSTALL_REPORT_PATH}" \
+  v0.1.0^{}
+git push origin refs/notes/myshottr-release-install
+test -z "$(git status --short)"
+```
+
+Do not declare release complete until the public artifact is downloadable, verified, and launches through this clean path.
 
 ## Final Acceptance Matrix
 
@@ -3580,8 +4124,8 @@ Do not declare release complete until the public artifact is downloadable and la
 | --- | --- |
 | Schema | TS and Swift v1/v2→v3 tests; exact-key rejection; schema-4 rejection |
 | Defaults | v1 preferences→v2; defaults survive scene Undo; defaults-only change sends no `documentChanged` |
-| Shortcuts | `KeyboardEvent.code`, IME suppression, no Command-Y, native output ownership |
-| Creation | all tool previews, rAF bound, pointer snapshot, one release command |
+| Shortcuts | `KeyboardEvent.code`, IME suppression, no Command-Y, native output ownership under inline-text and help-dialog focus |
+| Creation | all tool previews, rAF bound, pointer snapshot, one release command, drawing tool remains active |
 | Selection | rotated-AABB marquee intersection, Shift-click, one canonical `selectedIds` |
 | Manipulation | ephemeral move/transform, Option-drag/Cmd-D shared primitive, held nudge one Undo |
 | Viewport | full measured Stage, 10–800%, pointer anchor, clamps, fit, rail reflow |
