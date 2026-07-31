@@ -181,7 +181,6 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         onBeginTransaction={(label) => history.beginTransaction(label)}
         onCommitTransaction={() => {
           history.commitTransaction();
-          publishSceneChange();
         }}
         onCancelTransaction={() => {
           if (history.cancelTransaction()) {

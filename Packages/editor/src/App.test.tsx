@@ -9,11 +9,12 @@ import type { EditorCommand, EditorDocument } from "./model/elements";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "./test/fixtures";
 
 vi.mock("./canvas/EditorCanvas", () => ({
-  EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCancelTransaction, onEditText, textEditorOverlay }: {
+  EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, textEditorOverlay }: {
     document: EditorDocument;
     onCommand: (command: EditorCommand) => void;
     onSelect: (id: string | undefined, toggle?: boolean) => void;
     onBeginTransaction: (label: string) => void;
+    onCommitTransaction: () => void;
     onCancelTransaction: () => void;
     onEditText: (id: string) => void;
     textEditorOverlay: ReactNode;
@@ -58,6 +59,25 @@ vi.mock("./canvas/EditorCanvas", () => ({
         }}
       >
         Move then cancel
+      </button>
+      <button type="button" onClick={() => onBeginTransaction("defaults")}>
+        Begin defaults transaction
+      </button>
+      <button type="button" onClick={onCommitTransaction}>
+        Commit transaction
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          onBeginTransaction("move");
+          onCommand({
+            type: "update",
+            element: { ...document.elements[0], x: 40, y: 50 },
+          });
+          onCommitTransaction();
+        }}
+      >
+        Move then commit
       </button>
       {textEditorOverlay}
     </>
@@ -403,6 +423,52 @@ describe("EditorApp", () => {
     expect(changes).toHaveLength(2);
     expect(changes[0].elements[0]).toMatchObject({ x: 40, y: 50 });
     expect(changes[1].elements).toEqual(initial.elements);
+  });
+
+  it("does not publish a scene change when a defaults-only transaction commits", () => {
+    const onChange = vi.fn();
+    const onPreferencesChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="rectangle"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={onPreferencesChange}
+    />);
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Begin defaults transaction",
+    }));
+    fireEvent.change(screen.getByLabelText("Fill"), {
+      target: { value: "#FADB14" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Commit transaction" }));
+
+    expect(onPreferencesChange).toHaveBeenLastCalledWith(
+      "rectangle",
+      expect.objectContaining({ rectangleFillColor: "#FADB14" }),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("publishes a real scene transaction once through its scene command", () => {
+    const onChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Move then commit" }));
+
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        elements: [expect.objectContaining({ id: "rect-1", x: 40, y: 50 })],
+      }),
+    );
   });
 
   it("duplicates with an id that cannot collide with arbitrary loaded ids", () => {
