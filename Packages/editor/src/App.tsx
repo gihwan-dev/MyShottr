@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { EditorCanvas } from "./canvas/EditorCanvas";
-import { SelectionController } from "./canvas/SelectionController";
 import { createDuplicateElements } from "./canvas/tools/createElement";
 import { keyboardCommandFor, isTextEntryTarget } from "./canvas/tools/ToolController";
 import { ContextStylePalette } from "./components/ContextStylePalette";
@@ -12,7 +17,7 @@ import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
 import { sendComposite } from "./export/sendComposite";
 import { createHistoryStore, type HistoryStore } from "./model/history";
 import { findElement } from "./model/reducer";
-import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, PaletteColor, Point, TextElement } from "./model/elements";
+import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, Point, TextElement } from "./model/elements";
 import { KONVA_DEFAULT_FONT_FAMILY, TEXT_LINE_HEIGHT } from "./canvas/renderingConstants";
 import "./styles.css";
 
@@ -25,80 +30,79 @@ export type EditorAppProps = {
 };
 
 export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChange, onPreferencesChange }: EditorAppProps) {
-  const history = useRef<HistoryStore | undefined>(undefined);
-  if (!history.current) history.current = createHistoryStore(initialDocument);
-  const defaults = useRef(initialDocument.defaults);
-  const selection = useRef(new SelectionController());
+  const historyRef = useRef<HistoryStore | undefined>(undefined);
+  if (!historyRef.current) historyRef.current = createHistoryStore(initialDocument);
+  const history = historyRef.current;
   const copiedElements = useRef<EditorElement[]>([]);
-  const [document, setDocument] = useState(() => ({ ...history.current!.document, defaults: defaults.current }));
+  const document = useSyncExternalStore(
+    history.subscribe,
+    history.getSnapshot,
+    history.getSnapshot,
+  );
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<EditorTool>(initialTool);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
-  const [rectangleFillColor, setRectangleFillColor] = useState<PaletteColor | null>(null);
   const [editingTextId, setEditingTextId] = useState<string>();
 
-  const publishDocument = useCallback(() => {
-    const next = { ...history.current!.document, defaults: defaults.current };
-    setDocument(next);
-    onChange(next);
-    return next;
-  }, [onChange]);
+  const publishSceneChange = useCallback(() => {
+    onChange(history.getSnapshot());
+  }, [history, onChange]);
 
   const dispatch = useCallback((command: EditorCommand) => {
-    history.current!.dispatch(command);
-    publishDocument();
-  }, [publishDocument]);
-  const setDefaults = useCallback((nextDefaults: EditorDocument["defaults"]) => {
-    defaults.current = nextDefaults;
-    setDocument((current) => ({ ...current, defaults: nextDefaults }));
-    onPreferencesChange(tool, nextDefaults);
-  }, [onPreferencesChange, tool]);
+    history.dispatch(command);
+    publishSceneChange();
+  }, [history, publishSceneChange]);
+  const updateDefaults = useCallback((nextDefaults: EditorDefaults) => {
+    history.setDefaults(nextDefaults);
+    onPreferencesChange(tool, history.getSnapshot().defaults);
+  }, [history, onPreferencesChange, tool]);
   const select = useCallback((id: string | undefined, toggle = false) => {
-    if (!id) selection.current.clear();
-    else if (toggle) selection.current.toggle(id);
-    else selection.current.replace(id);
-    setSelectedIds([...selection.current.selectedIds]);
+    setSelectedIds((current) => {
+      if (!id) return [];
+      if (!toggle) return [id];
+      return current.includes(id)
+        ? current.filter((candidate) => candidate !== id)
+        : [...current, id];
+    });
   }, []);
   const selectTool = useCallback((nextTool: EditorTool) => {
     setTool(nextTool);
     if (nextTool !== "selection") select(undefined);
-    onPreferencesChange(nextTool, defaults.current);
-  }, [onPreferencesChange, select]);
+    onPreferencesChange(nextTool, history.getSnapshot().defaults);
+  }, [history, onPreferencesChange, select]);
   const duplicateSelection = useCallback(() => {
     if (selectedIds.length === 0) return;
-    const current = history.current!.document;
+    const current = history.document;
     const sources = selectedIds.map((id) => findElement(current, id));
     dispatch({ type: "createMany", elements: createDuplicateElements(current, sources) });
-  }, [dispatch, selectedIds]);
+  }, [dispatch, history, selectedIds]);
   const copySelection = useCallback(() => {
     if (selectedIds.length === 0) return;
-    const current = history.current!.document;
+    const current = history.document;
     copiedElements.current = selectedIds.map((id) => structuredClone(findElement(current, id)));
-  }, [selectedIds]);
+  }, [history, selectedIds]);
   const pasteSelection = useCallback(() => {
     if (copiedElements.current.length === 0) return;
-    const elements = createDuplicateElements(history.current!.document, copiedElements.current);
+    const elements = createDuplicateElements(history.document, copiedElements.current);
     dispatch({ type: "createMany", elements });
-    selection.current.clear();
-    elements.forEach((element) => selection.current.toggle(element.id));
-    setSelectedIds([...selection.current.selectedIds]);
-  }, [dispatch]);
+    setSelectedIds(elements.map((element) => element.id));
+  }, [dispatch, history]);
   const reorderSelection = useCallback((direction: "forward" | "backward") => {
     if (selectedIds.length === 0) return;
     dispatch({ type: "reorder", ids: selectedIds, direction });
   }, [dispatch, selectedIds]);
   const beginTextEdit = useCallback((id: string) => {
-    const element = findElement(history.current!.document, id);
+    const element = findElement(history.document, id);
     if (element.type !== "text") {
       throw new Error(`Cannot edit non-text element: ${id}`);
     }
     setEditingTextId(id);
-  }, []);
+  }, [history]);
   const commitTextEdit = useCallback((text: string) => {
     const id = editingTextId;
     if (!id) return;
-    const element = findElement(history.current!.document, id);
+    const element = findElement(history.document, id);
     if (element.type !== "text") {
       throw new Error(`Cannot edit non-text element: ${id}`);
     }
@@ -110,7 +114,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       dispatch({ type: "update", element: { ...element, text: nextText, ...measureTextBounds(nextText, element.fontSize) } });
     }
     setEditingTextId(undefined);
-  }, [dispatch, editingTextId, select]);
+  }, [dispatch, editingTextId, history, select]);
   const selectedElements = selectedIds.map((id) => findElement(document, id));
   const editingText = editingTextId
     ? document.elements.find((element): element is TextElement => element.id === editingTextId && element.type === "text")
@@ -146,8 +150,8 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         return;
       }
       if (command === "undo" || command === "redo") {
-        if (history.current![command]()) {
-          publishDocument();
+        if (history[command]()) {
+          publishSceneChange();
           select(undefined);
         }
         return;
@@ -156,7 +160,11 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [copySelection, dispatch, duplicateSelection, pasteSelection, publishDocument, reorderSelection, select, selectTool, selectedIds]);
+  }, [copySelection, dispatch, duplicateSelection, history, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds]);
+
+  const contextualDefaults = tool === "highlighter"
+    ? { ...document.defaults, opacity: document.defaults.highlighterOpacity }
+    : document.defaults;
 
   return (
     <main className="editor-app" aria-label="MyShottr editor">
@@ -166,19 +174,18 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         tool={tool}
         zoom={zoom}
         pan={pan}
-        rectangleFillColor={rectangleFillColor}
         selectedIds={selectedIds}
         onSelect={select}
         onEditText={beginTextEdit}
         onCommand={dispatch}
-        onBeginTransaction={(label) => history.current!.beginTransaction(label)}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
         onCommitTransaction={() => {
-          history.current!.commitTransaction();
-          publishDocument();
+          history.commitTransaction();
+          publishSceneChange();
         }}
         onCancelTransaction={() => {
-          if (history.current!.cancelTransaction()) {
-            publishDocument();
+          if (history.cancelTransaction()) {
+            publishSceneChange();
           }
         }}
         onPanChange={setPan}
@@ -193,13 +200,24 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       <FloatingToolPalette tool={tool} onSelect={selectTool} />
       <ContextStylePalette
         tool={tool}
-        defaults={document.defaults}
+        defaults={contextualDefaults}
         selectedElements={selectedElements}
-        onDefaultsChange={setDefaults}
+        onDefaultsChange={(nextDefaults) => {
+          updateDefaults(tool === "highlighter"
+            ? {
+                ...nextDefaults,
+                opacity: document.defaults.opacity,
+                highlighterOpacity: nextDefaults.opacity as EditorDefaults["highlighterOpacity"],
+              }
+            : nextDefaults);
+        }}
         onElementsChange={(elements) => dispatch({ type: "updateMany", elements })}
         onReorder={reorderSelection}
-        fillColor={rectangleFillColor}
-        onFillChange={setRectangleFillColor}
+        fillColor={document.defaults.rectangleFillColor}
+        onFillChange={(rectangleFillColor) => updateDefaults({
+          ...document.defaults,
+          rectangleFillColor,
+        })}
       />
       <ZoomControls zoom={zoom} onChange={setZoom} />
     </main>
@@ -293,6 +311,13 @@ export function App() {
       void bridge.send("documentChanged", {});
     }}
     onPreferencesChange={(tool, defaults) => {
+      const loaded = loadedDocumentRef.current;
+      if (loaded) {
+        loadedDocumentRef.current = {
+          ...loaded,
+          document: { ...loaded.document, defaults },
+        };
+      }
       void bridge.send("editorPreferencesChanged", { tool, defaults });
     }}
   />;

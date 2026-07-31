@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "../test/fixtures";
 import type { EditorElement } from "./elements";
 import { findElement, applyCommand } from "./reducer";
@@ -162,18 +162,38 @@ describe("createHistoryStore", () => {
     expect(findElement(history.document, "rect-1").x).toBe(30);
   });
 
-  it("isolates external document mutations from current and transaction history", () => {
+  it("keeps one stable snapshot until a validated document mutation", () => {
     const history = createHistoryStore(fixtureDocument());
-    history.beginTransaction("transform");
-    findElement(history.document, "rect-1").x = 99;
+    const initialSnapshot = history.getSnapshot();
 
-    expect(findElement(history.document, "rect-1").x).toBe(0);
+    expect(history.getSnapshot()).toBe(initialSnapshot);
+
+    history.beginTransaction("transform");
+    expect(history.isTransactionActive).toBe(true);
+    expect(history.canUndo).toBe(false);
+    expect(history.canRedo).toBe(false);
 
     history.dispatch({ type: "update", element: { ...fixtureRect(), x: 20 } });
+
+    expect(history.getSnapshot()).not.toBe(initialSnapshot);
+    expect(history.getSnapshot()).toBe(history.document);
     history.commitTransaction();
     history.undo();
 
     expect(findElement(history.document, "rect-1").x).toBe(0);
+  });
+
+  it("notifies subscribers after document and defaults mutations", () => {
+    const history = createHistoryStore(fixtureDocument());
+    const listener = vi.fn();
+    const unsubscribe = history.subscribe(listener);
+
+    history.dispatch({ type: "update", element: { ...fixtureRect(), x: 20 } });
+    history.setDefaults({ ...history.document.defaults, strokeWidth: 8 });
+    unsubscribe();
+    history.undo();
+
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it("preserves redo and undo depth after a boundary reorder no-op", () => {
@@ -222,5 +242,32 @@ describe("createHistoryStore", () => {
     expect(history.undo()).toBe(true);
     expect(history.document.elements.map((element) => element.id)).toEqual(["rect-1"]);
     expect(history.undo()).toBe(false);
+  });
+
+  it("keeps the latest defaults when undoing a scene command", () => {
+    const history = createHistoryStore(fixtureDocument({ elements: [] }));
+    history.dispatch({
+      type: "create",
+      element: { ...fixtureRect(), id: "new" },
+    });
+    history.setDefaults({
+      ...history.document.defaults,
+      rectangleFillColor: "#FADB14",
+      highlighterOpacity: 0.25,
+    });
+
+    expect(history.undo()).toBe(true);
+    expect(history.document.elements).toEqual([]);
+    expect(history.document.defaults.rectangleFillColor).toBe("#FADB14");
+    expect(history.document.defaults.highlighterOpacity).toBe(0.25);
+  });
+
+  it("does not add a history entry when defaults change", () => {
+    const history = createHistoryStore(fixtureDocument());
+
+    history.setDefaults({ ...history.document.defaults, strokeWidth: 8 });
+
+    expect(history.canUndo).toBe(false);
+    expect(history.canRedo).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type Konva from "konva";
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Transformer } from "react-konva";
-import type { CreationGesture, EditorCommand, EditorDocument, EditorElement, EditorTool, PaletteColor, Point } from "../model/elements";
+import type { CreationGesture, EditorCommand, EditorDocument, EditorElement, EditorTool, Point } from "../model/elements";
 import { CanvasViewport } from "./CanvasViewport";
 import {
   CanvasPointerController,
@@ -15,13 +15,12 @@ import {
 } from "./renderElement";
 import { BLUR_RADIUS_PX, createBlurredSourceCanvas } from "./blurSource";
 
-export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectangleFillColor, selectedIds, onSelect, onEditText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onPanChange, textEditorOverlay }: {
+export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, selectedIds, onSelect, onEditText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onPanChange, textEditorOverlay }: {
   document: EditorDocument;
   sourceImageURL: string;
   tool: EditorTool;
   zoom: number;
   pan: Point;
-  rectangleFillColor: PaletteColor | null;
   selectedIds: readonly string[];
   onSelect: (id: string | undefined, toggle?: boolean) => void;
   onEditText: (id: string) => void;
@@ -85,7 +84,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
       activeGesture,
       end,
     );
-    onCommand({ type: "create", element: createCanvasElement(document, tool as Exclude<EditorTool, "selection">, creationGesture, rectangleFillColor) });
+    onCommand({ type: "create", element: createCanvasElement(document, tool as Exclude<EditorTool, "selection">, creationGesture) });
   };
   const cancelAnnotationTransaction = () => {
     const activeInteraction = activeAnnotationInteraction.current;
@@ -162,7 +161,6 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
               { start, points: [start] },
               start,
             ),
-            rectangleFillColor,
           );
           gesture.current = {
             start,
@@ -197,7 +195,6 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, rectan
                 activeGesture,
                 end,
               ),
-              rectangleFillColor,
             ),
             id: activeGesture.previewId,
           });
@@ -521,15 +518,13 @@ export function createCanvasElement(
   document: EditorDocument,
   tool: Exclude<EditorTool, "selection">,
   gesture: CreationGesture,
-  rectangleFillColor: PaletteColor | null,
 ): EditorElement {
-  const element = createElement(tool, gesture, {
+  return createElement(tool, gesture, {
     defaults: document.defaults,
     nextNumberMarker: Math.max(0, ...document.elements.filter((candidate) => candidate.type === "numberMarker").map((candidate) => candidate.number)) + 1,
     nextZIndex: Math.max(-1, ...document.elements.map((candidate) => candidate.zIndex)) + 1,
     seed: Math.max(0, ...document.elements.map((candidate) => candidate.seed)) + 1,
   });
-  return element.type === "rectangle" ? { ...element, fillColor: rectangleFillColor } : element;
 }
 
 function useSourceImage(sourceImageURL: string): HTMLImageElement | undefined {

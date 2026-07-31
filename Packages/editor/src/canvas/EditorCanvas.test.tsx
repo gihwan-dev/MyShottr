@@ -214,7 +214,6 @@ describe("EditorCanvas gesture terminals", () => {
         tool="rectangle"
         zoom={1}
         pan={{ x: 0, y: 0 }}
-        rectangleFillColor={null}
         selectedIds={[]}
         onSelect={() => {}}
         onEditText={() => {}}
@@ -258,7 +257,6 @@ describe("EditorCanvas gesture terminals", () => {
         tool="rectangle"
         zoom={1}
         pan={{ x: 0, y: 0 }}
-        rectangleFillColor={null}
         selectedIds={[]}
         onSelect={() => {}}
         onEditText={onEditText}
@@ -290,7 +288,6 @@ describe("EditorCanvas gesture terminals", () => {
           tool="rectangle"
           zoom={1}
           pan={{ x: 0, y: 0 }}
-          rectangleFillColor={null}
           selectedIds={[]}
           onSelect={() => {}}
           onEditText={() => {}}
@@ -369,7 +366,6 @@ describe("EditorCanvas gesture terminals", () => {
         tool="selection"
         zoom={1}
         pan={{ x: 0, y: 0 }}
-        rectangleFillColor={null}
         selectedIds={["rect-1"]}
         onSelect={onSelect}
         onEditText={() => {}}
@@ -434,7 +430,6 @@ describe("EditorCanvas gesture terminals", () => {
         tool="selection"
         zoom={1}
         pan={{ x: 0, y: 0 }}
-        rectangleFillColor={null}
         selectedIds={["rect-1", "text-1"]}
         onSelect={() => {}}
         onEditText={() => {}}
@@ -475,7 +470,6 @@ describe("EditorCanvas gesture terminals", () => {
         tool="selection"
         zoom={1}
         pan={{ x: 0, y: 0 }}
-        rectangleFillColor={null}
         selectedIds={["rect-1", "text-1"]}
         onSelect={() => {}}
         onEditText={() => {}}
@@ -547,7 +541,6 @@ function renderSelectionCanvas(
       tool="selection"
       zoom={1}
       pan={{ x: 0, y: 0 }}
-      rectangleFillColor={null}
     selectedIds={selectedIds}
     onSelect={() => {}}
     onEditText={() => {}}

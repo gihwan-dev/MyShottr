@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_EDITOR_DEFAULTS } from "../../model/defaults";
 import { EditorElementSchema } from "../../model/schema";
 import { creationGesture, fixtureDocument } from "../../test/fixtures";
 import { createElement } from "./createElement";
@@ -62,6 +63,33 @@ describe("createElement", () => {
     });
   });
 
+  it("uses the rectangle fill color default for new rectangles", () => {
+    expect(createElement("rectangle", creationGesture("rectangle"), {
+      ...context,
+      defaults: {
+        ...DEFAULT_EDITOR_DEFAULTS,
+        rectangleFillColor: "#FADB14",
+      },
+    })).toMatchObject({
+      type: "rectangle",
+      fillColor: "#FADB14",
+    });
+  });
+
+  it("uses the highlighter opacity default instead of shared opacity", () => {
+    expect(createElement("highlighter", creationGesture("highlighter"), {
+      ...context,
+      defaults: {
+        ...DEFAULT_EDITOR_DEFAULTS,
+        opacity: 1,
+        highlighterOpacity: 0.25,
+      },
+    })).toMatchObject({
+      type: "highlighter",
+      opacity: 0.25,
+    });
+  });
+
   it("maps L to line without modifiers", () => {
     expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "l" })))
       .toBe("line");
@@ -98,16 +126,22 @@ describe("createElement", () => {
     expect(element).toMatchObject({ type: "numberMarker", number: 7, zIndex: 12, seed: 99 });
   });
 
-  it("applies the active rectangle fill while preserving marker and z-index derivation", () => {
+  it("applies document rectangle fill while preserving marker and z-index derivation", () => {
     const existingMarker = createElement("numberMarker", creationGesture("numberMarker"), context);
     if (existingMarker.type !== "numberMarker") throw new Error("Expected a number marker");
-    const document = fixtureDocument({ elements: [
-      ...fixtureDocument().elements,
-      { ...existingMarker, id: "marker-9", zIndex: 9, number: 9 },
-    ] });
+    const document = fixtureDocument({
+      defaults: {
+        ...fixtureDocument().defaults,
+        rectangleFillColor: "#FADB14",
+      },
+      elements: [
+        ...fixtureDocument().elements,
+        { ...existingMarker, id: "marker-9", zIndex: 9, number: 9 },
+      ],
+    });
 
-    const rectangle = createCanvasElement(document, "rectangle", creationGesture("rectangle"), "#FADB14");
-    const marker = createCanvasElement(document, "numberMarker", creationGesture("numberMarker"), null);
+    const rectangle = createCanvasElement(document, "rectangle", creationGesture("rectangle"));
+    const marker = createCanvasElement(document, "numberMarker", creationGesture("numberMarker"));
 
     expect(rectangle).toMatchObject({ type: "rectangle", fillColor: "#FADB14", zIndex: 10 });
     expect(marker).toMatchObject({ type: "numberMarker", number: 10, zIndex: 10 });
@@ -120,7 +154,7 @@ describe("createElement", () => {
       ],
     });
 
-    const rectangle = createCanvasElement(document, "rectangle", creationGesture("rectangle"), null);
+    const rectangle = createCanvasElement(document, "rectangle", creationGesture("rectangle"));
 
     expect(rectangle.id).not.toBe("rectangle-2");
     expect(rectangle.seed).toBe(2);

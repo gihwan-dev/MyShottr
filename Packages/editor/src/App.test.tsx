@@ -5,18 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, EditorApp } from "./App";
 import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
 import { keyboardCommandFor } from "./canvas/tools/ToolController";
-import type { EditorCommand, EditorDocument, PaletteColor } from "./model/elements";
+import type { EditorCommand, EditorDocument } from "./model/elements";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "./test/fixtures";
 
 vi.mock("./canvas/EditorCanvas", () => ({
-  EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCancelTransaction, onEditText, rectangleFillColor, textEditorOverlay }: {
+  EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCancelTransaction, onEditText, textEditorOverlay }: {
     document: EditorDocument;
     onCommand: (command: EditorCommand) => void;
     onSelect: (id: string | undefined, toggle?: boolean) => void;
     onBeginTransaction: (label: string) => void;
     onCancelTransaction: () => void;
     onEditText: (id: string) => void;
-    rectangleFillColor: PaletteColor | null;
     textEditorOverlay: ReactNode;
   }) => (
     <>
@@ -40,7 +39,7 @@ vi.mock("./canvas/EditorCanvas", () => ({
             seed: 2,
             strokeColor: document.defaults.color,
             strokeWidth: document.defaults.strokeWidth,
-            fillColor: rectangleFillColor,
+            fillColor: document.defaults.rectangleFillColor,
             roughness: document.defaults.roughness,
           },
         })}
@@ -292,6 +291,48 @@ describe("EditorApp", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it("publishes rectangle fill defaults to preferences without marking the document modified", () => {
+    const onChange = vi.fn();
+    const onPreferencesChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="rectangle"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={onPreferencesChange}
+    />);
+
+    fireEvent.change(screen.getByLabelText("Fill"), {
+      target: { value: "#FADB14" },
+    });
+
+    expect(onPreferencesChange).toHaveBeenLastCalledWith(
+      "rectangle",
+      expect.objectContaining({ rectangleFillColor: "#FADB14" }),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("updates highlighter color without replacing the shared opacity default", () => {
+    const onPreferencesChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="highlighter"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={onPreferencesChange}
+    />);
+
+    fireEvent.change(screen.getByLabelText("Color"), {
+      target: { value: "#FF4D4F" },
+    });
+
+    expect(onPreferencesChange).toHaveBeenLastCalledWith("highlighter", {
+      ...fixtureDocument().defaults,
+      color: "#FF4D4F",
+    });
+  });
+
   it("shows the ten canvas tools including blur and line", () => {
     render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
 
@@ -462,6 +503,64 @@ describe("EditorApp", () => {
       type: "annotationSnapshot",
       payload: { document: fixtureDocument() },
     }));
+  });
+
+  it("returns the latest highlighter defaults in a later annotation snapshot", async () => {
+    vi.stubGlobal("Image", class {
+      naturalWidth = 1440;
+      naturalHeight = 900;
+      onload: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    });
+    let receiveNative: ((message: Parameters<NativeBridge["subscribe"]>[0] extends (message: infer Message) => void ? Message : never) => void) | undefined;
+    const sent: Array<{ requestId?: string; type: string; payload: unknown }> = [];
+    const bridge: NativeBridge = {
+      send: async (type, payload) => { sent.push({ type, payload }); },
+      sendCorrelated: async (requestId, type, payload) => {
+        sent.push({ requestId, type, payload });
+      },
+      subscribe: (handler) => {
+        receiveNative = handler;
+        return () => { receiveNative = undefined; };
+      },
+    };
+
+    render(<NativeBridgeProvider bridge={bridge}><App /></NativeBridgeProvider>);
+    receiveNative!({
+      protocolVersion: 1,
+      requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      type: "loadDocument",
+      payload: {
+        documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        annotationDocument: fixtureDocument(),
+        initialTool: "selection",
+      },
+    });
+    await screen.findByRole("main", { name: "MyShottr editor" });
+    fireEvent.click(screen.getByRole("button", { name: "Highlighter (H)" }));
+    fireEvent.change(screen.getByLabelText("Opacity"), {
+      target: { value: "0.25" },
+    });
+
+    window.dispatchEvent(new CustomEvent("myshottr:request-annotation-snapshot", {
+      detail: { requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB" },
+    }));
+
+    await vi.waitFor(() => expect(sent).toContainEqual({
+      requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB",
+      type: "annotationSnapshot",
+      payload: {
+        document: {
+          ...fixtureDocument(),
+          defaults: {
+            ...fixtureDocument().defaults,
+            highlighterOpacity: 0.25,
+          },
+        },
+      },
+    }));
+    expect(sent.some(({ type }) => type === "documentChanged")).toBe(false);
   });
 
   it("reports INVALID_DOCUMENT when the source image dimensions differ", async () => {

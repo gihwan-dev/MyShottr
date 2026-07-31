@@ -63,7 +63,7 @@ export function createElement(
         type: "rectangle",
         strokeColor: context.defaults.color,
         strokeWidth: context.defaults.strokeWidth,
-        fillColor: null,
+        fillColor: context.defaults.rectangleFillColor,
         roughness: context.defaults.roughness,
       };
     case "arrow":
@@ -112,7 +112,7 @@ export function createElement(
         points: gesture.points,
         color: context.defaults.color,
         strokeWidth: 8,
-        opacity: highlighterOpacity(context.defaults.opacity),
+        opacity: context.defaults.highlighterOpacity,
       };
     case "blur":
       assertBoxGesture(gesture, tool);
@@ -180,10 +180,6 @@ function pointsBounds(points: Point[]) {
   const x = Math.min(...xValues);
   const y = Math.min(...yValues);
   return { x, y, width: Math.max(...xValues) - x, height: Math.max(...yValues) - y };
-}
-
-function highlighterOpacity(opacity: EditorDefaults["opacity"]): 0.25 | 0.5 {
-  return opacity === 0.25 || opacity === 0.5 ? opacity : 0.5;
 }
 
 function assertCreationContext(context: CreationContext): void {
