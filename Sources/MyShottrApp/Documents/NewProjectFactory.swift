@@ -14,7 +14,7 @@ struct NewProjectFactory: NewProjectCreating {
     func make(artifact: CaptureArtifact, now: Date = .now) throws -> MyShottrProject {
         let preferences = preferences.load()
         let annotationJSON = try JSONSerialization.data(withJSONObject: [
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "sourcePixelWidth": artifact.pixelWidth,
             "sourcePixelHeight": artifact.pixelHeight,
             "elements": [],
@@ -25,8 +25,17 @@ struct NewProjectFactory: NewProjectCreating {
                 "textSize": preferences.textSize,
                 "roughness": preferences.roughness,
                 "opacity": preferences.opacity,
+                "rectangleFillColor": preferences
+                    .rectangleFillColor ?? NSNull(),
+                "highlighterOpacity": preferences
+                    .highlighterOpacity,
             ],
         ], options: [.sortedKeys])
+        try EditorDocumentValidator.validate(
+            annotationJSON,
+            expectedPixelWidth: artifact.pixelWidth,
+            expectedPixelHeight: artifact.pixelHeight
+        )
         return MyShottrProject(
             manifest: ProjectManifest(
                 formatVersion: ProjectManifest.currentFormatVersion,

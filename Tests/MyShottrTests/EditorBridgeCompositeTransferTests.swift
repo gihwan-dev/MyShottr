@@ -889,12 +889,20 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
             sourceKind: .screenRegion
         )
         let annotationJSON = try! JSONSerialization.data(withJSONObject: [
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "sourcePixelWidth": 2,
             "sourcePixelHeight": 2,
             "elements": [],
             "presentation": ["type": "none"],
-            "defaults": ["color": "#1677FF", "strokeWidth": 4, "textSize": 24, "roughness": 1, "opacity": 1],
+            "defaults": [
+                "color": "#1677FF",
+                "strokeWidth": 4,
+                "textSize": 24,
+                "roughness": 1,
+                "opacity": 1,
+                "rectangleFillColor": NSNull(),
+                "highlighterOpacity": 0.5,
+            ],
         ])
         return MyShottrProject(manifest: manifest, originalPNG: ProjectFixtures.pngData, annotationJSON: annotationJSON)
     }

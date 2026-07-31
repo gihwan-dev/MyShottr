@@ -5,7 +5,7 @@ import XCTest
 enum ProjectFixtures {
     static let documentID = UUID(uuidString: "B0B7A25D-D451-43C6-8D6C-2E27D47C89CB")!
     static let pngData = try! Data(contentsOf: fixtureURL())
-    static var editorDefaults: [String: Any] {
+    private static var legacyEditorDefaults: [String: Any] {
         [
             "color": "#1677FF",
             "strokeWidth": 4,
@@ -13,6 +13,12 @@ enum ProjectFixtures {
             "roughness": 1,
             "opacity": 1,
         ]
+    }
+    private static var currentEditorDefaults: [String: Any] {
+        var defaults = legacyEditorDefaults
+        defaults["rectangleFillColor"] = NSNull()
+        defaults["highlighterOpacity"] = 0.5
+        return defaults
     }
 
     static func sampleProject() throws -> MyShottrProject {
@@ -63,24 +69,62 @@ enum ProjectFixtures {
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(manifest).write(to: packageURL.appendingPathComponent("manifest.json"))
         try project.originalPNG.write(to: packageURL.appendingPathComponent("original.png"))
-        try project.annotationJSON.write(to: packageURL.appendingPathComponent("document.json"))
+        var annotation = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: project.annotationJSON
+            ) as? [String: Any]
+        )
+        annotation["sourcePixelWidth"] = sourcePixelWidth
+        try JSONSerialization.data(
+            withJSONObject: annotation,
+            options: [.sortedKeys]
+        ).write(
+            to: packageURL.appendingPathComponent("document.json")
+        )
 
         return packageURL
     }
 
-    static func annotationJSON(schemaVersion: Int) throws -> Data {
-        try JSONSerialization.data(withJSONObject: [
-            "schemaVersion": schemaVersion,
-            "sourcePixelWidth": 2,
-            "sourcePixelHeight": 2,
-            "elements": [],
-            "defaults": editorDefaults,
-        ])
+    static func schemaOneAnnotationJSON() throws -> Data {
+        var document = editorDocument(text: "Fixture annotation")
+        document["schemaVersion"] = 1
+        document.removeValue(forKey: "presentation")
+        document["defaults"] = legacyEditorDefaults
+        return try JSONSerialization.data(
+            withJSONObject: document,
+            options: [.sortedKeys]
+        )
+    }
+
+    static func schemaTwoAnnotationJSON() throws -> Data {
+        var document = editorDocument(text: "Fixture annotation")
+        document["schemaVersion"] = 2
+        document["defaults"] = legacyEditorDefaults
+        return try JSONSerialization.data(
+            withJSONObject: document,
+            options: [.sortedKeys]
+        )
+    }
+
+    static func currentAnnotationJSON() throws -> Data {
+        try JSONSerialization.data(
+            withJSONObject: editorDocument(text: "Fixture annotation"),
+            options: [.sortedKeys]
+        )
+    }
+
+    static func futureAnnotationJSON(version: Int = 4) throws -> Data {
+        var document = editorDocument(text: "Fixture annotation")
+        document["schemaVersion"] = version
+        return try JSONSerialization.data(
+            withJSONObject: document,
+            options: [.sortedKeys]
+        )
     }
 
     private static func editorDocument(text: String) -> [String: Any] {
         [
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "sourcePixelWidth": 2,
             "sourcePixelHeight": 2,
             "elements": [[
@@ -99,7 +143,7 @@ enum ProjectFixtures {
                 "fontSize": 24,
             ]],
             "presentation": ["type": "none"],
-            "defaults": editorDefaults,
+            "defaults": currentEditorDefaults,
         ]
     }
 

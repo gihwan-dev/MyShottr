@@ -50,4 +50,19 @@ final class DocumentSessionTests: XCTestCase {
         }
         XCTAssertTrue(session.isModified)
     }
+
+    func testOpenRejectsLegacySchemaAsInvalidDocument() throws {
+        var project = ProjectFixtures.project(text: "legacy")
+        project.annotationJSON = try ProjectFixtures
+            .schemaTwoAnnotationJSON()
+        let session = DocumentSession()
+
+        XCTAssertThrowsError(try session.open(project: project)) {
+            XCTAssertEqual(
+                $0 as? DocumentSessionError,
+                .invalidDocument
+            )
+        }
+        XCTAssertFalse(session.isOpen)
+    }
 }

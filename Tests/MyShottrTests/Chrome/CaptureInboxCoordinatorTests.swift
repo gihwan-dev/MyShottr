@@ -339,7 +339,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
                 with: project.annotationJSON
             ) as? [String: Any]
         )
-        XCTAssertEqual(document["schemaVersion"] as? Int, 2)
+        XCTAssertEqual(document["schemaVersion"] as? Int, 3)
         XCTAssertEqual(
             document["presentation"] as? [String: String],
             ["type": "none"]

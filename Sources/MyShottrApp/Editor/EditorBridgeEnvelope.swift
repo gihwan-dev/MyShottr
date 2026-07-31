@@ -121,13 +121,18 @@ extension EditorBridgeEnvelope where MessageType == EditorToNativeMessageType, P
                   [0.25, 0.5].contains(highlighterOpacity)
             else { throw EditorBridgeEnvelopeError.malformedMessage }
         case .annotationSnapshot:
-            guard exact(["document"]), case let .object(document)? = payload["document"],
-                  Set(document.keys) == ["schemaVersion", "sourcePixelWidth", "sourcePixelHeight", "elements", "presentation", "defaults"],
-                  integer(document["schemaVersion"]) == 2,
-                  case let .object(presentation)? = document["presentation"],
-                  Set(presentation.keys) == ["type"],
-                  case let .string(presentationType)? = presentation["type"], presentationType == "none"
+            guard
+                exact(["document"]),
+                case let .object(document)? = payload["document"]
             else { throw EditorBridgeEnvelopeError.malformedMessage }
+            do {
+                let data = try JSONEncoder().encode(
+                    BridgeJSONValue.object(document)
+                )
+                try EditorDocumentValidator.validate(data)
+            } catch {
+                throw EditorBridgeEnvelopeError.malformedMessage
+            }
         case .compositeChunk:
             guard exact(["requestId", "index", "total", "dataBase64"]),
                   uuid(payload["requestId"]), let index = integer(payload["index"]), index >= 0,

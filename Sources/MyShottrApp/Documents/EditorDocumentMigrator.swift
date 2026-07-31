@@ -15,10 +15,18 @@ enum EditorDocumentMigrator {
 
         switch version {
         case 1:
-            object["schemaVersion"] = 2
             object["presentation"] = ["type": "none"]
+            fallthrough
         case 2:
-            break
+            guard var defaults = object["defaults"] as? [String: Any] else {
+                throw EditorDocumentMigrationError.malformedDocument
+            }
+            defaults["rectangleFillColor"] = NSNull()
+            defaults["highlighterOpacity"] = 0.5
+            object["defaults"] = defaults
+            object["schemaVersion"] = 3
+        case 3:
+            return data
         default:
             throw EditorDocumentMigrationError.unsupportedVersion(version)
         }

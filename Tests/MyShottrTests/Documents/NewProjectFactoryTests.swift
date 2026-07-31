@@ -30,15 +30,43 @@ final class NewProjectFactoryTests: XCTestCase {
                 as? [String: Any]
         )
 
-        XCTAssertEqual(document["schemaVersion"] as? Int, 2)
+        XCTAssertEqual(document["schemaVersion"] as? Int, 3)
         XCTAssertEqual((document["elements"] as? [Any])?.count, 0)
         XCTAssertEqual(
             (document["presentation"] as? [String: Any])?["type"] as? String,
             "none"
         )
+        let defaults = try XCTUnwrap(
+            document["defaults"] as? [String: Any]
+        )
         XCTAssertEqual(
-            (document["defaults"] as? [String: Any])?["color"] as? String,
-            "#FF4D4F"
+            Set(defaults.keys),
+            [
+                "color",
+                "strokeWidth",
+                "textSize",
+                "roughness",
+                "opacity",
+                "rectangleFillColor",
+                "highlighterOpacity",
+            ]
+        )
+        XCTAssertEqual(defaults["color"] as? String, "#FF4D4F")
+        XCTAssertEqual(defaults["strokeWidth"] as? Int, 8)
+        XCTAssertEqual(defaults["textSize"] as? Int, 36)
+        XCTAssertEqual(defaults["roughness"] as? Int, 2)
+        XCTAssertEqual(defaults["opacity"] as? Double, 0.75)
+        XCTAssertTrue(defaults["rectangleFillColor"] is NSNull)
+        XCTAssertEqual(
+            defaults["highlighterOpacity"] as? Double,
+            0.5
+        )
+        XCTAssertNoThrow(
+            try EditorDocumentValidator.validate(
+                project.annotationJSON,
+                expectedPixelWidth: artifact.pixelWidth,
+                expectedPixelHeight: artifact.pixelHeight
+            )
         )
         XCTAssertEqual(project.manifest.sourceScale, 2)
     }

@@ -58,7 +58,11 @@ struct ProjectPackageStore: ProjectPackageStoring {
         } catch {
             throw ProjectPackageError.invalidAnnotationJSON
         }
-        try validateAnnotationJSON(annotationJSON)
+        try validateAnnotationJSON(
+            annotationJSON,
+            expectedPixelWidth: manifest.sourcePixelWidth,
+            expectedPixelHeight: manifest.sourcePixelHeight
+        )
 
         let png = try PNGMetadata.read(from: url.appendingPathComponent("original.png"))
         guard png.pixelWidth == manifest.sourcePixelWidth,
@@ -116,20 +120,18 @@ struct ProjectPackageStore: ProjectPackageStoring {
         }
     }
 
-    private func validateAnnotationJSON(_ data: Data) throws {
-        let object: Any
+    private func validateAnnotationJSON(
+        _ data: Data,
+        expectedPixelWidth: Int? = nil,
+        expectedPixelHeight: Int? = nil
+    ) throws {
         do {
-            object = try JSONSerialization.jsonObject(with: data)
+            try EditorDocumentValidator.validate(
+                data,
+                expectedPixelWidth: expectedPixelWidth,
+                expectedPixelHeight: expectedPixelHeight
+            )
         } catch {
-            throw ProjectPackageError.invalidAnnotationJSON
-        }
-
-        guard let document = object as? [String: Any],
-              Set(document.keys) == ["schemaVersion", "sourcePixelWidth", "sourcePixelHeight", "elements", "presentation", "defaults"],
-              let schemaVersion = document["schemaVersion"] as? Int, schemaVersion == 2,
-              let presentation = document["presentation"] as? [String: Any],
-              Set(presentation.keys) == ["type"], presentation["type"] as? String == "none"
-        else {
             throw ProjectPackageError.invalidAnnotationJSON
         }
     }

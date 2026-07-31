@@ -146,14 +146,13 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
     @MainActor
     func testRejectsUnknownElementsWithoutOpeningTheDocument() throws {
         let session = DocumentSession()
-        let project = try project(annotationDocument: [
-            "schemaVersion": 2,
-            "sourcePixelWidth": 2,
-            "sourcePixelHeight": 2,
-            "elements": [["type": "video"]],
-            "presentation": ["type": "none"],
-            "defaults": [:],
-        ])
+        var document = validDocument()
+        var element = try XCTUnwrap(
+            (document["elements"] as? [[String: Any]])?.first
+        )
+        element["type"] = "video"
+        document["elements"] = [element]
+        let project = try project(annotationDocument: document)
 
         XCTAssertThrowsError(try session.open(project: project)) {
             XCTAssertEqual($0 as? DocumentSessionError, .invalidDocument)
@@ -165,20 +164,47 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
     @MainActor
     func testRejectsDimensionMismatchWithoutInstallingAnyElements() throws {
         let session = DocumentSession()
-        let project = try project(annotationDocument: [
-            "schemaVersion": 2,
-            "sourcePixelWidth": 3,
-            "sourcePixelHeight": 2,
-            "elements": [],
-            "presentation": ["type": "none"],
-            "defaults": [:],
-        ])
+        var document = validDocument()
+        document["sourcePixelWidth"] = 3
+        let project = try project(annotationDocument: document)
 
         XCTAssertThrowsError(try session.open(project: project)) {
             XCTAssertEqual($0 as? DocumentSessionError, .invalidDocument)
         }
         XCTAssertFalse(session.isOpen)
         XCTAssertNil(session.project)
+    }
+
+    func testAnnotationSnapshotUsesCurrentDocumentValidator()
+        throws
+    {
+        let valid = validDocument()
+        let validEnvelope = try EditorToNativeEnvelope(
+            type: .annotationSnapshot,
+            payload: .object([
+                "document": try annotationValue(valid),
+            ])
+        ).encodedData()
+        XCTAssertNoThrow(
+            try EditorToNativeEnvelope.decode(from: validEnvelope)
+        )
+
+        var invalid = valid
+        var defaults = try XCTUnwrap(
+            invalid["defaults"] as? [String: Any]
+        )
+        defaults["rectangleFillColor"] = "#FFFFFF"
+        invalid["defaults"] = defaults
+        let invalidEnvelope = try EditorToNativeEnvelope(
+            type: .annotationSnapshot,
+            payload: .object([
+                "document": try annotationValue(invalid),
+            ])
+        ).encodedData()
+
+        XCTAssertThrowsError(
+            try EditorToNativeEnvelope.decode(from: invalidEnvelope)
+        )
     }
 
     @MainActor
@@ -430,7 +456,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
 
     private func validDocument() -> [String: Any] {
         [
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "sourcePixelWidth": 2,
             "sourcePixelHeight": 2,
             "elements": [[
@@ -440,7 +466,15 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
                 "fillColor": NSNull(), "roughness": 1,
             ]],
             "presentation": ["type": "none"],
-            "defaults": ["color": "#1677FF", "strokeWidth": 4, "textSize": 24, "roughness": 1, "opacity": 1],
+            "defaults": [
+                "color": "#1677FF",
+                "strokeWidth": 4,
+                "textSize": 24,
+                "roughness": 1,
+                "opacity": 1,
+                "rectangleFillColor": NSNull(),
+                "highlighterOpacity": 0.5,
+            ],
         ]
     }
 }
