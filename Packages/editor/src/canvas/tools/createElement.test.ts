@@ -12,6 +12,8 @@ const context = {
     textSize: 24,
     roughness: 1,
     opacity: 1,
+    rectangleFillColor: null,
+    highlighterOpacity: 0.5,
   } as const,
   nextNumberMarker: 7,
   nextZIndex: 12,

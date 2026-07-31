@@ -20,6 +20,8 @@ const defaults = {
   textSize: 24,
   roughness: 1,
   opacity: 1,
+  rectangleFillColor: null,
+  highlighterOpacity: 0.5,
 } as const;
 
 export function fixtureRect(): RectangleElement {
@@ -177,13 +179,35 @@ export function fixtureDocument(
   overrides: Partial<EditorDocument> = {},
 ): EditorDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     sourcePixelWidth: 1440,
     sourcePixelHeight: 900,
     elements: [fixtureRect()],
     presentation: { type: "none" },
     defaults,
     ...overrides,
+  };
+}
+
+export function schemaOneFixture() {
+  const { presentation: _presentation, defaults: currentDefaults, ...document } = fixtureDocument();
+  const { rectangleFillColor: _rectangleFillColor, highlighterOpacity: _highlighterOpacity, ...defaults } = currentDefaults;
+
+  return {
+    ...document,
+    schemaVersion: 1 as const,
+    defaults,
+  };
+}
+
+export function schemaTwoFixture() {
+  const { defaults: currentDefaults, ...document } = fixtureDocument();
+  const { rectangleFillColor: _rectangleFillColor, highlighterOpacity: _highlighterOpacity, ...defaults } = currentDefaults;
+
+  return {
+    ...document,
+    schemaVersion: 2 as const,
+    defaults,
   };
 }
 

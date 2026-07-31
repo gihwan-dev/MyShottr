@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { allElementFixtures, fixtureBlur, fixtureDocument, fixtureRect } from "../test/fixtures";
+import {
+  allElementFixtures,
+  fixtureBlur,
+  fixtureDocument,
+  fixtureRect,
+  schemaOneFixture,
+  schemaTwoFixture,
+} from "../test/fixtures";
 import { EditorDocumentSchema, EditorElementSchema, parseEditorDocument } from "./schema";
 
 describe("EditorDocumentSchema", () => {
@@ -44,27 +51,45 @@ describe("EditorDocumentSchema", () => {
     }))).toThrow();
   });
 
-  it("migrates a schema-1 document to presentation none", () => {
-    const legacy = {
-      ...fixtureDocument(),
-      schemaVersion: 1,
-    };
-    delete (legacy as Record<string, unknown>).presentation;
+  it("migrates schema 1 to schema 3 with approved new defaults", () => {
+    const legacy = schemaOneFixture();
 
     expect(parseEditorDocument(legacy)).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       presentation: { type: "none" },
+      defaults: {
+        rectangleFillColor: null,
+        highlighterOpacity: 0.5,
+      },
     });
   });
 
-  it("rejects an unsupported newer document", () => {
-    expect(() => parseEditorDocument({
-      ...fixtureDocument(),
+  it("migrates schema 2 to schema 3 without changing legacy defaults", () => {
+    const legacy = schemaTwoFixture();
+
+    expect(parseEditorDocument(legacy)).toEqual({
+      ...legacy,
       schemaVersion: 3,
-    })).toThrow();
+      defaults: {
+        ...legacy.defaults,
+        rectangleFillColor: null,
+        highlighterOpacity: 0.5,
+      },
+    });
   });
 
-  it("requires presentation none in schema 2", () => {
+  it("requires every schema 3 defaults key", () => {
+    const current = fixtureDocument();
+    const { highlighterOpacity: _removed, ...defaults } = current.defaults;
+
+    expect(() => parseEditorDocument({ ...current, defaults })).toThrow();
+  });
+
+  it("rejects schema 4", () => {
+    expect(() => parseEditorDocument({ ...fixtureDocument(), schemaVersion: 4 })).toThrow();
+  });
+
+  it("requires presentation none in schema 3", () => {
     expect(() => EditorDocumentSchema.parse({
       ...fixtureDocument(),
       presentation: { type: "desktopMockup" },

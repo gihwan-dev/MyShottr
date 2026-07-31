@@ -58,6 +58,17 @@ describe("EditorToNativeEnvelopeSchema", () => {
     ["unknown text sizes", { tool: "arrow", defaults: { ...fixtureDocument().defaults, textSize: 12 } }],
     ["unknown roughness", { tool: "arrow", defaults: { ...fixtureDocument().defaults, roughness: 3 } }],
     ["unknown opacity", { tool: "arrow", defaults: { ...fixtureDocument().defaults, opacity: 0.6 } }],
+    ["missing rectangle fill colors", (() => {
+      const { rectangleFillColor: _rectangleFillColor, ...defaults } = fixtureDocument().defaults;
+      return { tool: "arrow", defaults };
+    })()],
+    ["invalid rectangle fill colors", { tool: "arrow", defaults: { ...fixtureDocument().defaults, rectangleFillColor: "#FFFFFF" } }],
+    ["missing highlighter opacities", (() => {
+      const { highlighterOpacity: _highlighterOpacity, ...defaults } = fixtureDocument().defaults;
+      return { tool: "arrow", defaults };
+    })()],
+    ["invalid highlighter opacities", { tool: "arrow", defaults: { ...fixtureDocument().defaults, highlighterOpacity: 0.75 } }],
+    ["extra defaults keys", { tool: "arrow", defaults: { ...fixtureDocument().defaults, future: true } }],
     ["extra keys", { tool: "arrow", defaults: fixtureDocument().defaults, extra: true }],
   ])("rejects preference changes with %s", (_description, payload) => {
     expect(() => EditorToNativeEnvelopeSchema.parse({

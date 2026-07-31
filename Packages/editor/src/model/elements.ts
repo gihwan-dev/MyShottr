@@ -8,6 +8,8 @@ export type EditorDefaults = {
   textSize: 16 | 24 | 36;
   roughness: 0 | 1 | 2;
   opacity: 0.25 | 0.5 | 0.75 | 1;
+  rectangleFillColor: PaletteColor | null;
+  highlighterOpacity: 0.25 | 0.5;
 };
 
 export type ElementBase = {
@@ -116,7 +118,7 @@ export type CreationGesture =
   | { kind: "point"; point: Point };
 
 export type EditorDocument = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   sourcePixelWidth: number;
   sourcePixelHeight: number;
   elements: EditorElement[];

@@ -61,7 +61,7 @@ describe("canvas element bounds", () => {
 
   it("keeps history usable after an opposite-edge transformer attempt", () => {
     const history = createHistoryStore({
-      schemaVersion: 2,
+      schemaVersion: 3,
       sourcePixelWidth: 100,
       sourcePixelHeight: 100,
       elements: [{ ...fixtureRect(), width: 20, height: 20 }],
@@ -72,6 +72,8 @@ describe("canvas element bounds", () => {
         textSize: 24,
         roughness: 1,
         opacity: 1,
+        rectangleFillColor: null,
+        highlighterOpacity: 0.5,
       },
     });
 

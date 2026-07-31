@@ -7,11 +7,13 @@ export const DEFAULT_EDITOR_DEFAULTS: EditorDefaults = {
   textSize: 24,
   roughness: 1,
   opacity: 1,
+  rectangleFillColor: null,
+  highlighterOpacity: 0.5,
 };
 
 export function createEmptyDocument(): EditorDocument {
   return EditorDocumentSchema.parse({
-    schemaVersion: 2,
+    schemaVersion: 3,
     sourcePixelWidth: 1,
     sourcePixelHeight: 1,
     elements: [],
