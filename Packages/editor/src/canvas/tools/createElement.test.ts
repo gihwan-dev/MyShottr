@@ -4,7 +4,14 @@ import { EditorElementSchema } from "../../model/schema";
 import { creationGesture, fixtureDocument } from "../../test/fixtures";
 import { createElement } from "./createElement";
 import { createCanvasElement } from "../EditorCanvas";
-import { keyboardCommandFor } from "./ToolController";
+import { cursorForTool } from "./ToolController";
+import { keyboardCommandFor } from "../../input/ShortcutRouter";
+
+const idleShortcutContext = {
+  interactionActive: false,
+  shortcutHelpOpen: false,
+  textEditing: false,
+};
 
 const context = {
   defaults: {
@@ -91,33 +98,64 @@ describe("createElement", () => {
   });
 
   it("maps L to line without modifiers", () => {
-    expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "l" })))
-      .toBe("line");
+    expect(keyboardCommandFor(
+      new KeyboardEvent("keydown", { code: "KeyL", key: "l" }),
+      idleShortcutContext,
+    )).toEqual({ type: "selectTool", tool: "line" });
   });
 
   it("maps B to blur without modifiers", () => {
-    expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "b" })))
-      .toBe("blur");
+    expect(keyboardCommandFor(
+      new KeyboardEvent("keydown", { code: "KeyB", key: "b" }),
+      idleShortcutContext,
+    )).toEqual({ type: "selectTool", tool: "blur" });
   });
 
   it("maps Meta brackets to one-step ordering commands", () => {
-    expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "]", metaKey: true })))
-      .toBe("bringForward");
-    expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "[", metaKey: true })))
-      .toBe("sendBackward");
+    expect(keyboardCommandFor(
+      new KeyboardEvent("keydown", {
+        code: "BracketRight",
+        key: "]",
+        metaKey: true,
+      }),
+      idleShortcutContext,
+    )).toEqual({ type: "bringForward" });
+    expect(keyboardCommandFor(
+      new KeyboardEvent("keydown", {
+        code: "BracketLeft",
+        key: "[",
+        metaKey: true,
+      }),
+      idleShortcutContext,
+    )).toEqual({ type: "sendBackward" });
   });
 
   it("maps exact unshifted Command-C to annotation copy", () => {
-    expect(keyboardCommandFor(new KeyboardEvent("keydown", { key: "c", metaKey: true })))
-      .toBe("copy");
+    expect(keyboardCommandFor(
+      new KeyboardEvent("keydown", {
+        code: "KeyC",
+        key: "c",
+        metaKey: true,
+      }),
+      idleShortcutContext,
+    )).toEqual({ type: "copy" });
   });
 
   it("leaves Command-Shift-C unmapped for native Copy Image routing", () => {
     expect(keyboardCommandFor(new KeyboardEvent("keydown", {
+      code: "KeyC",
       key: "c",
       metaKey: true,
       shiftKey: true,
-    }))).toBeUndefined();
+    }), idleShortcutContext)).toBeUndefined();
+  });
+
+  it("maps tools and Space-pan states to their approved cursors", () => {
+    expect(cursorForTool("selection")).toBe("default");
+    expect(cursorForTool("text")).toBe("text");
+    expect(cursorForTool("rectangle")).toBe("crosshair");
+    expect(cursorForTool("selection", "ready")).toBe("grab");
+    expect(cursorForTool("rectangle", "active")).toBe("grabbing");
   });
 
   it("uses the caller-derived number and z-index for a number marker", () => {

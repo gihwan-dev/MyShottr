@@ -7,9 +7,10 @@ import {
 } from "react";
 import { EditorCanvas } from "./canvas/EditorCanvas";
 import { createDuplicateElements } from "./canvas/tools/createElement";
-import { keyboardCommandFor, isTextEntryTarget } from "./canvas/tools/ToolController";
+import { cursorForTool } from "./canvas/tools/ToolController";
 import { ContextStylePalette } from "./components/ContextStylePalette";
 import { FloatingToolPalette } from "./components/FloatingToolPalette";
+import { ShortcutHelpDialog } from "./components/ShortcutHelpDialog";
 import { TextEditorOverlay } from "./components/TextEditorOverlay";
 import { ZoomControls } from "./components/ZoomControls";
 import { useNativeBridge } from "./bridge/nativeBridge";
@@ -19,6 +20,7 @@ import { createHistoryStore, type HistoryStore } from "./model/history";
 import { findElement } from "./model/reducer";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, Point, TextElement } from "./model/elements";
 import { KONVA_DEFAULT_FONT_FAMILY, TEXT_LINE_HEIGHT } from "./canvas/renderingConstants";
+import { keyboardCommandFor } from "./input/ShortcutRouter";
 import "./styles.css";
 
 export type EditorAppProps = {
@@ -44,6 +46,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [editingTextId, setEditingTextId] = useState<string>();
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
 
   const publishSceneChange = useCallback(() => {
     onChange(history.getSnapshot());
@@ -122,52 +125,84 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isTextEntryTarget(event.target)) return;
-      const command = keyboardCommandFor(event);
+      const command = keyboardCommandFor(event, {
+        interactionActive: history.isTransactionActive,
+        shortcutHelpOpen,
+        textEditing: editingTextId !== undefined,
+      });
       if (!command) return;
       event.preventDefault();
-      if (command === "delete") {
+      if (command.type === "escape") {
+        if (shortcutHelpOpen) {
+          setShortcutHelpOpen(false);
+        } else if (editingTextId) {
+          setEditingTextId(undefined);
+        } else if (history.isTransactionActive) {
+          if (history.cancelTransaction()) publishSceneChange();
+        } else if (tool !== "selection") {
+          selectTool("selection");
+        } else {
+          select(undefined);
+        }
+        return;
+      }
+      if (command.type === "openShortcutHelp") {
+        setShortcutHelpOpen(true);
+        return;
+      }
+      if (command.type === "zoom100") {
+        setZoom(1);
+        return;
+      }
+      if (command.type === "fitImage" || command.type === "fitSelection") {
+        return;
+      }
+      if (command.type === "delete") {
         if (selectedIds.length > 0) {
           dispatch({ type: "delete", ids: selectedIds });
           select(undefined);
         }
         return;
       }
-      if (command === "duplicate") {
+      if (command.type === "duplicate") {
         duplicateSelection();
         return;
       }
-      if (command === "copy") {
+      if (command.type === "copy") {
         copySelection();
         return;
       }
-      if (command === "paste") {
+      if (command.type === "paste") {
         pasteSelection();
         return;
       }
-      if (command === "bringForward" || command === "sendBackward") {
-        reorderSelection(command === "bringForward" ? "forward" : "backward");
+      if (command.type === "bringForward" || command.type === "sendBackward") {
+        reorderSelection(command.type === "bringForward" ? "forward" : "backward");
         return;
       }
-      if (command === "undo" || command === "redo") {
-        if (history[command]()) {
+      if (command.type === "undo" || command.type === "redo") {
+        if (history[command.type]()) {
           publishSceneChange();
           select(undefined);
         }
         return;
       }
-      selectTool(command);
+      selectTool(command.tool);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [copySelection, dispatch, duplicateSelection, history, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds]);
+  }, [copySelection, dispatch, duplicateSelection, editingTextId, history, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, tool]);
 
   const contextualDefaults = tool === "highlighter"
     ? { ...document.defaults, opacity: document.defaults.highlighterOpacity }
     : document.defaults;
 
   return (
-    <main className="editor-app" aria-label="MyShottr editor">
+    <main
+      className="editor-app"
+      aria-label="MyShottr editor"
+      style={{ cursor: cursorForTool(tool) }}
+    >
       <EditorCanvas
         document={document}
         sourceImageURL={sourceImageURL}
@@ -219,6 +254,9 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         })}
       />
       <ZoomControls zoom={zoom} onChange={setZoom} />
+      {shortcutHelpOpen && (
+        <ShortcutHelpDialog onClose={() => setShortcutHelpOpen(false)} />
+      )}
     </main>
   );
 }

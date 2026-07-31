@@ -1,19 +1,6 @@
 import type { EditorTool } from "../model/elements";
+import { TOOL_SHORTCUTS } from "../input/shortcutRegistry";
 import { ToolIcon } from "./ToolIcon";
-import { VisuallyHidden } from "./VisuallyHidden";
-
-const tools: Array<{ tool: EditorTool; label: string; shortcut: string }> = [
-  { tool: "selection", label: "Select", shortcut: "v" },
-  { tool: "rectangle", label: "Rectangle", shortcut: "r" },
-  { tool: "arrow", label: "Arrow", shortcut: "a" },
-  { tool: "line", label: "Line", shortcut: "l" },
-  { tool: "text", label: "Text", shortcut: "t" },
-  { tool: "freehand", label: "Freehand", shortcut: "p" },
-  { tool: "highlighter", label: "Highlighter", shortcut: "h" },
-  { tool: "blur", label: "Blur", shortcut: "b" },
-  { tool: "redaction", label: "Redaction", shortcut: "x" },
-  { tool: "numberMarker", label: "Number marker", shortcut: "n" },
-];
 
 export function FloatingToolPalette({ tool, onSelect }: {
   tool: EditorTool;
@@ -21,17 +8,24 @@ export function FloatingToolPalette({ tool, onSelect }: {
 }) {
   return (
     <nav className="floating-tool-palette" aria-label="Annotation tools">
-      {tools.map((entry) => (
+      {TOOL_SHORTCUTS.map((entry) => (
         <button
           key={entry.tool}
           type="button"
-          aria-label={`${entry.label} (${entry.shortcut.toUpperCase()})`}
-          title={`${entry.label} (${entry.shortcut.toUpperCase()})`}
+          aria-label={`${entry.label}, shortcut ${entry.displayKeys[0]}`}
           aria-pressed={tool === entry.tool}
+          aria-describedby={`tool-tip-${entry.tool}`}
           onClick={() => onSelect(entry.tool)}
         >
           <ToolIcon tool={entry.tool} />
-          <VisuallyHidden>{entry.label}</VisuallyHidden>
+          <kbd aria-hidden="true">{entry.displayKeys[0]}</kbd>
+          <span
+            className="tool-palette-tooltip"
+            role="tooltip"
+            id={`tool-tip-${entry.tool}`}
+          >
+            {entry.label} · {entry.displayKeys[0]}
+          </span>
         </button>
       ))}
     </nav>

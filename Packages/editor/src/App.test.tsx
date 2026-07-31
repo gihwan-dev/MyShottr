@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App, EditorApp } from "./App";
 import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
-import { keyboardCommandFor } from "./canvas/tools/ToolController";
+import { keyboardCommandFor } from "./input/ShortcutRouter";
 import type { EditorCommand, EditorDocument } from "./model/elements";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "./test/fixtures";
 
@@ -113,7 +113,7 @@ describe("EditorApp", () => {
     fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
 
     expect(changes.at(-1)?.elements[0]).toMatchObject({ type: "text", text: "Ship this" });
-    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
     expect(changes.at(-1)?.elements[0]).toMatchObject({ type: "text", text: "Annotate this" });
   });
 
@@ -182,10 +182,10 @@ describe("EditorApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
     fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
-    fireEvent.keyDown(window, { key: "Delete" });
+    fireEvent.keyDown(window, { code: "Delete", key: "Delete" });
 
     expect(changes.at(-1)?.elements).toEqual([]);
-    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
     expect(changes.at(-1)?.elements.map((element) => element.id)).toEqual(["rect-1", "text-1"]);
   });
 
@@ -201,7 +201,7 @@ describe("EditorApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
     fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
-    fireEvent.keyDown(window, { key: "d", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyD", key: "d", metaKey: true });
 
     const duplicated = changes.at(-1)!;
     expect(duplicated.elements).toHaveLength(4);
@@ -212,7 +212,7 @@ describe("EditorApp", () => {
       { x: 12, y: 12 },
       { x: 52, y: 62 },
     ]);
-    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
     expect(changes.at(-1)?.elements).toHaveLength(2);
   });
 
@@ -227,8 +227,8 @@ describe("EditorApp", () => {
     />);
 
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
-    fireEvent.keyDown(window, { key: "c", metaKey: true });
-    fireEvent.keyDown(window, { key: "v", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyC", key: "c", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyV", key: "v", metaKey: true });
 
     const elements = changes.at(-1)?.elements ?? [];
     expect(elements).toHaveLength(2);
@@ -238,8 +238,13 @@ describe("EditorApp", () => {
 
   it("does not turn command-v into the selection tool", () => {
     expect(keyboardCommandFor(
-      new KeyboardEvent("keydown", { key: "v", metaKey: true }),
-    )).toBe("paste");
+      new KeyboardEvent("keydown", { code: "KeyV", key: "v", metaKey: true }),
+      {
+        interactionActive: false,
+        shortcutHelpOpen: false,
+        textEditing: false,
+      },
+    )).toEqual({ type: "paste" });
   });
 
   it("uses one bounded duplicate offset for the whole selection", () => {
@@ -261,7 +266,7 @@ describe("EditorApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
     fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
-    fireEvent.keyDown(window, { key: "d", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyD", key: "d", metaKey: true });
 
     expect(changes.at(-1)?.elements.slice(2).map(({ x, y }) => ({ x, y }))).toEqual([
       { x: 0, y: 0 },
@@ -283,7 +288,7 @@ describe("EditorApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
     fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
-    fireEvent.keyDown(window, { key: "]", metaKey: true });
+    fireEvent.keyDown(window, { code: "BracketRight", key: "]", metaKey: true });
 
     expect([...changes.at(-1)!.elements].sort((left, right) => left.zIndex - right.zIndex).map((element) => element.id))
       .toEqual(["line-1", "rect-1", "text-1"]);
@@ -304,7 +309,7 @@ describe("EditorApp", () => {
       onPreferencesChange={onPreferencesChange}
     />);
 
-    expect(screen.getByRole("button", { name: "Arrow (A)" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Arrow, shortcut A" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
 
     expect(onPreferencesChange).toHaveBeenLastCalledWith("arrow", expect.objectContaining({ color: "#FF4D4F" }));
@@ -358,30 +363,30 @@ describe("EditorApp", () => {
 
     const palette = within(screen.getByRole("navigation", { name: "Annotation tools" }));
     expect(palette.getAllByRole("button")).toHaveLength(10);
-    expect(palette.getByRole("button", { name: "Line (L)" })).toBeTruthy();
-    expect(palette.getByRole("button", { name: "Blur (B)" })).toBeTruthy();
+    expect(palette.getByRole("button", { name: "Line, shortcut L" })).toBeTruthy();
+    expect(palette.getByRole("button", { name: "Blur, shortcut B" })).toBeTruthy();
   });
 
   it("renders every tool as an icon button with label and shortcut", () => {
     render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
 
-    expect(screen.getByRole("button", { name: "Rectangle (R)" }).getAttribute("title"))
-      .toBe("Rectangle (R)");
-    expect(screen.getByRole("button", { name: "Blur (B)" }).getAttribute("title"))
-      .toBe("Blur (B)");
+    expect(screen.getByRole("button", { name: "Rectangle, shortcut R" }).getAttribute("aria-describedby"))
+      .toBe("tool-tip-rectangle");
+    expect(screen.getByRole("tooltip", { name: "Rectangle · R" })).toBeTruthy();
+    expect(screen.getByRole("tooltip", { name: "Blur · B" })).toBeTruthy();
   });
 
   it("shows rectangle style controls and omits opacity for redaction", () => {
     render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Rectangle (R)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
     expect(screen.getByLabelText("Color")).toBeTruthy();
     expect(screen.getByLabelText("Stroke width")).toBeTruthy();
     expect(screen.getByLabelText("Fill")).toBeTruthy();
     expect(screen.getByLabelText("Roughness")).toBeTruthy();
     expect(screen.getByLabelText("Opacity")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Redaction (X)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Redaction, shortcut X" }));
     expect(screen.queryByLabelText("Opacity")).toBeNull();
   });
 
@@ -389,7 +394,7 @@ describe("EditorApp", () => {
     const changes: EditorDocument[] = [];
     render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(document) => changes.push(document)} onPreferencesChange={() => {}} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Rectangle (R)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
     fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
     fireEvent.change(screen.getByLabelText("Fill"), { target: { value: "#FADB14" } });
     fireEvent.click(screen.getByRole("button", { name: "Create rectangle from canvas" }));
@@ -399,7 +404,7 @@ describe("EditorApp", () => {
       elements: [{ id: "rect-1" }, { strokeColor: "#FF4D4F", fillColor: "#FADB14" }],
     });
 
-    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
     expect(changes.at(-1)).toMatchObject({ defaults: { color: "#FF4D4F" }, elements: [{ id: "rect-1" }] });
   });
 
@@ -407,10 +412,75 @@ describe("EditorApp", () => {
     const onChange = vi.fn();
     render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={onChange} onPreferencesChange={() => {}} />);
 
-    fireEvent.keyDown(window, { key: "z", metaKey: true });
-    fireEvent.keyDown(window, { key: "y", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyY", key: "y", metaKey: true });
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("leaves native Copy, Save, and Export shortcuts unprevented", () => {
+    render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
+
+    [
+      { code: "KeyC", metaKey: true, shiftKey: true },
+      { code: "KeyS", metaKey: true },
+      { code: "KeyE", metaKey: true },
+    ].forEach((init) => {
+      const event = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    });
+  });
+
+  it("applies Escape priority one state at a time", () => {
+    render(<EditorApp initialDocument={fixtureDocument()} initialTool="rectangle" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
+
+    fireEvent.keyDown(window, {
+      code: "Slash",
+      key: "?",
+      shiftKey: true,
+    });
+    expect(screen.getByRole("dialog", { name: "Keyboard Shortcuts" }))
+      .toBeTruthy();
+
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Close keyboard shortcuts" }),
+      { code: "Escape", key: "Escape" },
+    );
+    expect(screen.queryByRole("dialog", { name: "Keyboard Shortcuts" }))
+      .toBeNull();
+    expect(screen.getByRole("button", {
+      name: "Rectangle, shortcut R",
+    }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Begin defaults transaction",
+    }));
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    expect(screen.getByRole("button", {
+      name: "Rectangle, shortcut R",
+    }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    expect(screen.getByRole("button", {
+      name: "Selection, shortcut V",
+    }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("clears selection only after Escape reaches the final priority", () => {
+    render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    expect(screen.getByRole("button", { name: "Send Backward" }))
+      .toBeTruthy();
+
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+
+    expect(screen.queryByRole("button", { name: "Send Backward" })).toBeNull();
   });
 
   it("publishes the restored document when an active annotation transaction is cancelled", () => {
@@ -482,7 +552,7 @@ describe("EditorApp", () => {
     render(<EditorApp initialDocument={document} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(next) => changes.push(next)} onPreferencesChange={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
-    fireEvent.keyDown(window, { key: "d", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyD", key: "d", metaKey: true });
 
     const duplicated = changes.at(-1)?.elements.at(-1);
     expect(duplicated?.id).not.toBe("rectangle-102");
@@ -604,7 +674,7 @@ describe("EditorApp", () => {
       },
     });
     await screen.findByRole("main", { name: "MyShottr editor" });
-    fireEvent.click(screen.getByRole("button", { name: "Highlighter (H)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Highlighter, shortcut H" }));
     fireEvent.change(screen.getByLabelText("Opacity"), {
       target: { value: "0.25" },
     });
