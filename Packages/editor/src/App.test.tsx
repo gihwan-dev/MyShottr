@@ -20,6 +20,9 @@ vi.mock("./canvas/EditorCanvas", () => ({
     textEditorOverlay: ReactNode;
   }) => (
     <>
+      <output data-testid="canvas-opacities">
+        {document.elements.map((element) => `${element.id}:${element.opacity}`).join(",")}
+      </output>
       <button type="button" onClick={() => onSelect("rect-1")}>Select rect-1</button>
       <button type="button" onClick={() => onSelect("text-1", true)}>Shift-select text-1</button>
       <button type="button" onClick={() => onEditText("text-1")}>Edit text-1</button>
@@ -165,7 +168,8 @@ describe("EditorApp", () => {
     />);
 
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
-    fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Color" }))
+      .getByRole("radio", { name: "Red" }));
 
     expect(changes.at(-1)?.elements[0]).toMatchObject({ strokeColor: "#FF4D4F" });
   });
@@ -214,6 +218,28 @@ describe("EditorApp", () => {
     ]);
     fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
     expect(changes.at(-1)?.elements).toHaveLength(2);
+  });
+
+  it("selects rail duplicates returned by the one createMany command", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureRect(), fixtureText()] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
+    expect(changes).toHaveLength(1);
+    expect(changes[0].elements).toHaveLength(4);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(changes).toHaveLength(2);
+    expect(changes[1].elements.map((element) => element.id)).toEqual(["rect-1", "text-1"]);
   });
 
   it("copies and pastes a selected annotation without replacing its identity", () => {
@@ -310,7 +336,8 @@ describe("EditorApp", () => {
     />);
 
     expect(screen.getByRole("button", { name: "Arrow, shortcut A" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Color" }))
+      .getByRole("radio", { name: "Red" }));
 
     expect(onPreferencesChange).toHaveBeenLastCalledWith("arrow", expect.objectContaining({ color: "#FF4D4F" }));
     expect(onChange).not.toHaveBeenCalled();
@@ -327,9 +354,8 @@ describe("EditorApp", () => {
       onPreferencesChange={onPreferencesChange}
     />);
 
-    fireEvent.change(screen.getByLabelText("Fill"), {
-      target: { value: "#FADB14" },
-    });
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fill" }))
+      .getByRole("radio", { name: "Yellow" }));
 
     expect(onPreferencesChange).toHaveBeenLastCalledWith(
       "rectangle",
@@ -348,14 +374,38 @@ describe("EditorApp", () => {
       onPreferencesChange={onPreferencesChange}
     />);
 
-    fireEvent.change(screen.getByLabelText("Color"), {
-      target: { value: "#FF4D4F" },
-    });
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Color" }))
+      .getByRole("radio", { name: "Red" }));
 
     expect(onPreferencesChange).toHaveBeenLastCalledWith("highlighter", {
       ...fixtureDocument().defaults,
       color: "#FF4D4F",
     });
+  });
+
+  it("publishes a creation opacity default only when the slider gesture ends", () => {
+    const onPreferencesChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="highlighter"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={onPreferencesChange}
+    />);
+    const slider = screen.getByRole("slider", { name: "Opacity" });
+
+    fireEvent.input(slider, { target: { value: "25" } });
+    expect(onPreferencesChange).not.toHaveBeenCalled();
+    fireEvent.pointerUp(slider);
+
+    expect(onPreferencesChange).toHaveBeenCalledOnce();
+    expect(onPreferencesChange).toHaveBeenCalledWith(
+      "highlighter",
+      expect.objectContaining({
+        opacity: 1,
+        highlighterOpacity: 0.25,
+      }),
+    );
   });
 
   it("shows the ten canvas tools including blur and line", () => {
@@ -380,14 +430,15 @@ describe("EditorApp", () => {
     render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
-    expect(screen.getByLabelText("Color")).toBeTruthy();
-    expect(screen.getByLabelText("Stroke width")).toBeTruthy();
-    expect(screen.getByLabelText("Fill")).toBeTruthy();
-    expect(screen.getByLabelText("Roughness")).toBeTruthy();
-    expect(screen.getByLabelText("Opacity")).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "Color" })).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "Stroke width" })).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "Fill" })).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "Roughness" })).toBeTruthy();
+    expect(screen.getByRole("slider", { name: "Opacity" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Redaction, shortcut X" }));
-    expect(screen.queryByLabelText("Opacity")).toBeNull();
+    expect(screen.queryByRole("slider", { name: "Opacity" })).toBeNull();
+    expect(screen.getByText("Opaque black · Fixed")).toBeTruthy();
   });
 
   it("keeps contextual defaults and rectangle fill through commands and undo", () => {
@@ -395,8 +446,10 @@ describe("EditorApp", () => {
     render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={(document) => changes.push(document)} onPreferencesChange={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
-    fireEvent.change(screen.getByLabelText("Color"), { target: { value: "#FF4D4F" } });
-    fireEvent.change(screen.getByLabelText("Fill"), { target: { value: "#FADB14" } });
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Color" }))
+      .getByRole("radio", { name: "Red" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fill" }))
+      .getByRole("radio", { name: "Yellow" }));
     fireEvent.click(screen.getByRole("button", { name: "Create rectangle from canvas" }));
 
     expect(changes.at(-1)).toMatchObject({
@@ -483,6 +536,50 @@ describe("EditorApp", () => {
     expect(screen.queryByRole("button", { name: "Send Backward" })).toBeNull();
   });
 
+  it("previews selected opacity ephemerally and commits exactly one updateMany on release", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    const slider = screen.getByRole("slider", { name: "Opacity" });
+
+    fireEvent.input(slider, { target: { value: "50" } });
+    expect(screen.getByTestId("canvas-opacities").textContent).toBe("rect-1:0.5");
+    expect(changes).toHaveLength(0);
+
+    fireEvent.pointerUp(screen.getByRole("slider", { name: "Opacity" }), {
+      target: { value: "50" },
+    });
+    expect(changes).toHaveLength(1);
+    expect(changes[0].elements[0]).toMatchObject({ id: "rect-1", opacity: 0.5 });
+  });
+
+  it("discards a selected opacity preview on Escape without changing history", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    const slider = screen.getByRole("slider", { name: "Opacity" });
+
+    fireEvent.input(slider, { target: { value: "50" } });
+    fireEvent.keyDown(slider, { code: "Escape", key: "Escape" });
+
+    expect(screen.getByTestId("canvas-opacities").textContent).toBe("rect-1:1");
+    expect(changes).toHaveLength(0);
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(0);
+  });
+
   it("publishes the restored document when an active annotation transaction is cancelled", () => {
     const changes: EditorDocument[] = [];
     const initial = fixtureDocument();
@@ -509,9 +606,8 @@ describe("EditorApp", () => {
     fireEvent.click(screen.getByRole("button", {
       name: "Begin defaults transaction",
     }));
-    fireEvent.change(screen.getByLabelText("Fill"), {
-      target: { value: "#FADB14" },
-    });
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Fill" }))
+      .getByRole("radio", { name: "Yellow" }));
     fireEvent.click(screen.getByRole("button", { name: "Commit transaction" }));
 
     expect(onPreferencesChange).toHaveBeenLastCalledWith(
@@ -675,8 +771,8 @@ describe("EditorApp", () => {
     });
     await screen.findByRole("main", { name: "MyShottr editor" });
     fireEvent.click(screen.getByRole("button", { name: "Highlighter, shortcut H" }));
-    fireEvent.change(screen.getByLabelText("Opacity"), {
-      target: { value: "0.25" },
+    fireEvent.change(screen.getByRole("slider", { name: "Opacity" }), {
+      target: { value: "25" },
     });
 
     window.dispatchEvent(new CustomEvent("myshottr:request-annotation-snapshot", {

@@ -16,19 +16,18 @@ export async function renderDocumentToBlob(document: EditorDocument, sourceImage
   if (!context) throw new Error("Unable to create PNG rendering context");
 
   context.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
-  const blurElements = document.elements.filter((element) => element.type === "blur").sort(byZIndex);
-  const blurredSource = blurElements.length > 0
+  const orderedElements = [...document.elements].sort(byZIndex);
+  const blurredSource = orderedElements.some((element) => element.type === "blur")
     ? createBlurredSourceCanvas(sourceImage, document.sourcePixelWidth, document.sourcePixelHeight, BLUR_RADIUS_PX)
     : undefined;
-  for (const element of blurElements) {
-    if (!blurredSource) throw new Error("Blur source is unavailable");
-    drawBlurElement(context, element, blurredSource, document);
+  for (const element of orderedElements) {
+    if (element.type === "blur") {
+      if (!blurredSource) throw new Error("Blur source is unavailable");
+      drawBlurElement(context, element, blurredSource, document);
+    } else {
+      drawElement(context, element);
+    }
   }
-  const elements = [
-    ...document.elements.filter((element) => element.type === "highlighter").sort(byZIndex),
-    ...document.elements.filter((element) => element.type !== "blur" && element.type !== "highlighter").sort(byZIndex),
-  ];
-  for (const element of elements) drawElement(context, element);
 
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
@@ -88,7 +87,7 @@ function drawElement(context: CanvasRenderingContext2D, element: EditorElement):
       drawPath(context, element.points, element.x, element.y, element.color, element.strokeWidth);
       break;
     case "blur":
-      throw new Error("Blur elements must render before vector annotations");
+      throw new Error("Blur elements must render in the ordered export loop");
     case "redaction":
       context.fillStyle = element.color;
       context.fillRect(0, 0, element.width, element.height);

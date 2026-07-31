@@ -194,12 +194,12 @@ describe("renderDocumentToBlob", () => {
     expect(context.fillText).toHaveBeenCalledTimes(2);
   });
 
-  it("draws blur before vector annotations during export", async () => {
+  it("draws interleaved Rectangle, Blur, and Highlighter in one global z-index order", async () => {
     const outputCanvas = document.createElement("canvas");
     const drawOperations: string[] = [];
     const outputContext = canvasContext();
     const drawImage = outputContext.drawImage as unknown as { mockImplementation: (implementation: (image: unknown) => void) => void };
-    const fillText = outputContext.fillText as unknown as { mockImplementation: (implementation: () => void) => void };
+    const stroke = outputContext.stroke as unknown as { mockImplementation: (implementation: () => void) => void };
     drawImage.mockImplementation((image: unknown) => {
       if (outputContext.filter === "blur(12px)") return;
       drawOperations.push(image === outputCanvas ? "blurred-source-crop" : "source");
@@ -208,13 +208,39 @@ describe("renderDocumentToBlob", () => {
     vi.spyOn(outputCanvas, "getContext").mockReturnValue(outputContext);
     vi.spyOn(outputCanvas, "toBlob").mockImplementation((callback) => callback(new Blob(["png"], { type: "image/png" })));
     vi.stubGlobal("Image", loadedImage(1440, 900));
-    const text = { ...fixtureDocument().elements[0], id: "text-1", type: "text" as const, x: 40, y: 50, width: 180, height: 36, zIndex: 1, text: "After blur", color: "#000000" as const, fontSize: 24 as const };
-    fillText.mockImplementation(() => drawOperations.push("text"));
+    vi.stubGlobal("Path2D", class { constructor(_path: string) {} });
+    const rectangle = { ...fixtureRect(), zIndex: 0 };
+    const blur = { ...fixtureBlur(), zIndex: 1 };
+    const highlighter = {
+      id: "highlighter-1",
+      type: "highlighter" as const,
+      x: 80,
+      y: 140,
+      width: 120,
+      height: 30,
+      rotation: 0,
+      opacity: 0.5 as const,
+      zIndex: 2,
+      seed: 105,
+      points: [{ x: 80, y: 140 }, { x: 200, y: 170 }],
+      color: "#FADB14" as const,
+      strokeWidth: 8 as const,
+    };
+    stroke.mockImplementation(() => {
+      drawOperations.push(outputContext.lineWidth === 8 ? "highlighter" : "rectangle");
+    });
 
-    await renderDocumentToBlob(fixtureDocument({ elements: [text, fixtureBlur()] }), "source.png");
+    await renderDocumentToBlob(fixtureDocument({
+      elements: [highlighter, blur, rectangle],
+    }), "source.png");
 
     expect(createElement).toHaveBeenCalledTimes(2);
-    expect(drawOperations).toEqual(["source", "blurred-source-crop", "text"]);
+    expect(drawOperations).toEqual([
+      "source",
+      "rectangle",
+      "blurred-source-crop",
+      "highlighter",
+    ]);
   });
 });
 

@@ -8,7 +8,13 @@ import {
 import { EditorCanvas } from "./canvas/EditorCanvas";
 import { createDuplicateElements } from "./canvas/tools/createElement";
 import { cursorForTool } from "./canvas/tools/ToolController";
-import { ContextStylePalette } from "./components/ContextStylePalette";
+import { ContextRail, type ContextRailIntent } from "./components/ContextRail";
+import {
+  allowedValues,
+  deriveContextRailModel,
+  type RailPropertyKey,
+  type RailPropertyValueByKey,
+} from "./components/contextRailModel";
 import { FloatingToolPalette } from "./components/FloatingToolPalette";
 import { ShortcutHelpDialog } from "./components/ShortcutHelpDialog";
 import { TextEditorOverlay } from "./components/TextEditorOverlay";
@@ -17,7 +23,7 @@ import { useNativeBridge } from "./bridge/nativeBridge";
 import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
 import { sendComposite } from "./export/sendComposite";
 import { createHistoryStore, type HistoryStore } from "./model/history";
-import { findElement } from "./model/reducer";
+import { applyRailProperty, findElement } from "./model/reducer";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, Point, TextElement } from "./model/elements";
 import { KONVA_DEFAULT_FONT_FAMILY, TEXT_LINE_HEIGHT } from "./canvas/renderingConstants";
 import { keyboardCommandFor } from "./input/ShortcutRouter";
@@ -47,6 +53,10 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [editingTextId, setEditingTextId] = useState<string>();
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [selectionOpacityPreview, setSelectionOpacityPreview] = useState<{
+    value: RailPropertyValueByKey["opacity"];
+  }>();
+  const [locks, setLocks] = useState({ slider: false });
 
   const publishSceneChange = useCallback(() => {
     onChange(history.getSnapshot());
@@ -61,6 +71,8 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     onPreferencesChange(tool, history.getSnapshot().defaults);
   }, [history, onPreferencesChange, tool]);
   const select = useCallback((id: string | undefined, toggle = false) => {
+    setSelectionOpacityPreview(undefined);
+    setLocks({ slider: false });
     setSelectedIds((current) => {
       if (!id) return [];
       if (!toggle) return [id];
@@ -78,7 +90,9 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     if (selectedIds.length === 0) return;
     const current = history.document;
     const sources = selectedIds.map((id) => findElement(current, id));
-    dispatch({ type: "createMany", elements: createDuplicateElements(current, sources) });
+    const elements = createDuplicateElements(current, sources);
+    dispatch({ type: "createMany", elements });
+    setSelectedIds(elements.map((element) => element.id));
   }, [dispatch, history, selectedIds]);
   const copySelection = useCallback(() => {
     if (selectedIds.length === 0) return;
@@ -89,6 +103,8 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     if (copiedElements.current.length === 0) return;
     const elements = createDuplicateElements(history.document, copiedElements.current);
     dispatch({ type: "createMany", elements });
+    setSelectionOpacityPreview(undefined);
+    setLocks({ slider: false });
     setSelectedIds(elements.map((element) => element.id));
   }, [dispatch, history]);
   const reorderSelection = useCallback((direction: "forward" | "backward") => {
@@ -119,6 +135,21 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     setEditingTextId(undefined);
   }, [dispatch, editingTextId, history, select]);
   const selectedElements = selectedIds.map((id) => findElement(document, id));
+  const previewElements = selectionOpacityPreview
+    ? applyRailProperty(selectedElements, "opacity", selectionOpacityPreview.value)
+    : selectedElements;
+  const previewById = new Map(previewElements.map((element) => [element.id, element]));
+  const renderedDocument = selectionOpacityPreview
+    ? {
+        ...document,
+        elements: document.elements.map((element) => previewById.get(element.id) ?? element),
+      }
+    : document;
+  const contextRailModel = deriveContextRailModel({
+    tool,
+    document: renderedDocument,
+    selectedIds,
+  });
   const editingText = editingTextId
     ? document.elements.find((element): element is TextElement => element.id === editingTextId && element.type === "text")
     : undefined;
@@ -126,7 +157,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const command = keyboardCommandFor(event, {
-        interactionActive: history.isTransactionActive,
+        interactionActive: history.isTransactionActive || locks.slider,
         shortcutHelpOpen,
         textEditing: editingTextId !== undefined,
       });
@@ -137,6 +168,9 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
           setShortcutHelpOpen(false);
         } else if (editingTextId) {
           setEditingTextId(undefined);
+        } else if (locks.slider) {
+          setSelectionOpacityPreview(undefined);
+          setLocks({ slider: false });
         } else if (history.isTransactionActive) {
           if (history.cancelTransaction()) publishSceneChange();
         } else if (tool !== "selection") {
@@ -191,11 +225,56 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [copySelection, dispatch, duplicateSelection, editingTextId, history, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, tool]);
+  }, [copySelection, dispatch, duplicateSelection, editingTextId, history, locks.slider, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, tool]);
 
-  const contextualDefaults = tool === "highlighter"
-    ? { ...document.defaults, opacity: document.defaults.highlighterOpacity }
-    : document.defaults;
+  const handleContextRailIntent = useCallback((intent: ContextRailIntent) => {
+    switch (intent.type) {
+      case "setDefaultProperty":
+        updateDefaults(applyRailDefault(document.defaults, tool, intent.property, intent.value));
+        return;
+      case "setSelectionProperty": {
+        const selected = selectedIds.map((id) => findElement(history.document, id));
+        dispatch({
+          type: "updateMany",
+          elements: applyRailProperty(selected, intent.property, intent.value),
+        });
+        return;
+      }
+      case "previewSelectionOpacity": {
+        const selected = selectedIds.map((id) => findElement(history.document, id));
+        applyRailProperty(selected, "opacity", intent.value);
+        setSelectionOpacityPreview({ value: intent.value });
+        setLocks({ slider: true });
+        return;
+      }
+      case "commitSelectionOpacity": {
+        const selected = selectedIds.map((id) => findElement(history.document, id));
+        const elements = applyRailProperty(selected, "opacity", intent.value);
+        setSelectionOpacityPreview(undefined);
+        setLocks({ slider: false });
+        dispatch({ type: "updateMany", elements });
+        return;
+      }
+      case "cancelSelectionOpacity":
+        setSelectionOpacityPreview(undefined);
+        setLocks({ slider: false });
+        return;
+      case "bringForward":
+        reorderSelection("forward");
+        return;
+      case "sendBackward":
+        reorderSelection("backward");
+        return;
+      case "duplicate":
+        duplicateSelection();
+        return;
+      case "delete":
+        if (selectedIds.length === 0) return;
+        dispatch({ type: "delete", ids: selectedIds });
+        select(undefined);
+        return;
+    }
+  }, [dispatch, document.defaults, duplicateSelection, history, reorderSelection, select, selectedIds, tool, updateDefaults]);
 
   return (
     <main
@@ -204,7 +283,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       style={{ cursor: cursorForTool(tool) }}
     >
       <EditorCanvas
-        document={document}
+        document={renderedDocument}
         sourceImageURL={sourceImageURL}
         tool={tool}
         zoom={zoom}
@@ -232,33 +311,41 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         />}
       />
       <FloatingToolPalette tool={tool} onSelect={selectTool} />
-      <ContextStylePalette
-        tool={tool}
-        defaults={contextualDefaults}
-        selectedElements={selectedElements}
-        onDefaultsChange={(nextDefaults) => {
-          updateDefaults(tool === "highlighter"
-            ? {
-                ...nextDefaults,
-                opacity: document.defaults.opacity,
-                highlighterOpacity: nextDefaults.opacity as EditorDefaults["highlighterOpacity"],
-              }
-            : nextDefaults);
-        }}
-        onElementsChange={(elements) => dispatch({ type: "updateMany", elements })}
-        onReorder={reorderSelection}
-        fillColor={document.defaults.rectangleFillColor}
-        onFillChange={(rectangleFillColor) => updateDefaults({
-          ...document.defaults,
-          rectangleFillColor,
-        })}
-      />
+      <ContextRail model={contextRailModel} onIntent={handleContextRailIntent} />
       <ZoomControls zoom={zoom} onChange={setZoom} />
       {shortcutHelpOpen && (
         <ShortcutHelpDialog onClose={() => setShortcutHelpOpen(false)} />
       )}
     </main>
   );
+}
+
+function applyRailDefault<K extends RailPropertyKey>(
+  defaults: EditorDefaults,
+  tool: Exclude<EditorTool, "selection"> | EditorTool,
+  property: K,
+  value: RailPropertyValueByKey[K],
+): EditorDefaults {
+  if (tool === "selection" || !allowedValues(tool, property).some((allowed) => Object.is(allowed, value))) {
+    throw new Error(`${tool} does not allow ${String(value)} for ${property}`);
+  }
+  switch (property) {
+    case "color":
+      return { ...defaults, color: value as RailPropertyValueByKey["color"] };
+    case "fillColor":
+      if (tool !== "rectangle") throw new Error(`${tool} does not support fillColor`);
+      return { ...defaults, rectangleFillColor: value as RailPropertyValueByKey["fillColor"] };
+    case "strokeWidth":
+      return { ...defaults, strokeWidth: value as RailPropertyValueByKey["strokeWidth"] };
+    case "roughness":
+      return { ...defaults, roughness: value as RailPropertyValueByKey["roughness"] };
+    case "textSize":
+      return { ...defaults, textSize: value as RailPropertyValueByKey["textSize"] };
+    case "opacity":
+      return tool === "highlighter"
+        ? { ...defaults, highlighterOpacity: value as EditorDefaults["highlighterOpacity"] }
+        : { ...defaults, opacity: value as EditorDefaults["opacity"] };
+  }
 }
 
 function measureTextBounds(text: string, fontSize: TextElement["fontSize"]): Pick<TextElement, "width" | "height"> {

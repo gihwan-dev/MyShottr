@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "../test/fixtures";
 import type { EditorElement } from "./elements";
-import { findElement, applyCommand } from "./reducer";
+import { applyRailProperty, findElement, applyCommand } from "./reducer";
 import { createHistoryStore } from "./history";
 
 describe("applyCommand", () => {
@@ -118,6 +118,25 @@ describe("applyCommand", () => {
     expect(new Set(next.elements.map((element) => element.zIndex)).size).toBe(next.elements.length);
     expect([...next.elements].sort((left, right) => left.zIndex - right.zIndex).map((element) => element.id))
       .toEqual(["line-1", "rect-1", "text-1"]);
+  });
+
+  it("applies one rail property to every compatible selected element", () => {
+    expect(applyRailProperty(
+      [fixtureRect(), fixtureText()],
+      "color",
+      "#FF4D4F",
+    )).toEqual([
+      expect.objectContaining({ id: "rect-1", strokeColor: "#FF4D4F" }),
+      expect.objectContaining({ id: "text-1", color: "#FF4D4F" }),
+    ]);
+  });
+
+  it("rejects rail properties unsupported by any selected element", () => {
+    expect(() => applyRailProperty(
+      [fixtureRect(), fixtureText()],
+      "strokeWidth",
+      8,
+    )).toThrow("Text does not support strokeWidth");
   });
 });
 

@@ -1,5 +1,11 @@
 import type { EditorCommand, EditorDocument, EditorElement } from "./elements";
 import { EditorDocumentSchema, EditorElementSchema } from "./schema";
+import {
+  allowedValues,
+  supportsProperty,
+  type RailPropertyKey,
+  type RailPropertyValueByKey,
+} from "../components/contextRailModel";
 
 export function findElement(document: EditorDocument, id: string): EditorElement {
   const element = document.elements.find((candidate) => candidate.id === id);
@@ -70,6 +76,63 @@ export function applyCommand(document: EditorDocument, command: EditorCommand): 
   }
 }
 
+export function applyRailProperty<K extends RailPropertyKey>(
+  elements: readonly EditorElement[],
+  property: K,
+  value: RailPropertyValueByKey[K],
+): EditorElement[] {
+  if (elements.length === 0) {
+    throw new Error("Cannot apply a Context Rail property without selected elements");
+  }
+  return elements.map((element) => {
+    if (!supportsProperty(element, property)) {
+      throw new Error(`${elementTypeLabel(element.type)} does not support ${property}`);
+    }
+    if (!allowedValues(element.type, property).some((allowed) => Object.is(allowed, value))) {
+      throw new Error(`${String(value)} is not allowed for ${elementTypeLabel(element.type)} ${property}`);
+    }
+
+    switch (property) {
+      case "color": {
+        const color = value as RailPropertyValueByKey["color"];
+        if (element.type === "rectangle" || element.type === "arrow" || element.type === "line") {
+          return { ...element, strokeColor: color };
+        }
+        if (element.type === "text" || element.type === "freehand" || element.type === "highlighter" || element.type === "numberMarker") {
+          return { ...element, color };
+        }
+        break;
+      }
+      case "fillColor":
+        if (element.type === "rectangle") {
+          return { ...element, fillColor: value as RailPropertyValueByKey["fillColor"] };
+        }
+        break;
+      case "strokeWidth":
+        if (element.type === "rectangle" || element.type === "arrow" || element.type === "line" || element.type === "freehand") {
+          return { ...element, strokeWidth: value as RailPropertyValueByKey["strokeWidth"] };
+        }
+        break;
+      case "roughness":
+        if (element.type === "rectangle" || element.type === "arrow" || element.type === "line") {
+          return { ...element, roughness: value as RailPropertyValueByKey["roughness"] };
+        }
+        break;
+      case "textSize":
+        if (element.type === "text") {
+          return { ...element, fontSize: value as RailPropertyValueByKey["textSize"] };
+        }
+        break;
+      case "opacity":
+        return {
+          ...element,
+          opacity: value as RailPropertyValueByKey["opacity"],
+        } as EditorElement;
+    }
+    throw new Error(`${elementTypeLabel(element.type)} does not expose ${property}`);
+  });
+}
+
 function assertCommandIds(document: EditorDocument, ids: string[], operation: string): void {
   if (ids.length === 0) {
     throw new Error(`Cannot ${operation} without element ids`);
@@ -127,4 +190,27 @@ function reorder(
   });
 
   return EditorDocumentSchema.parse({ ...document, elements }) as EditorDocument;
+}
+
+function elementTypeLabel(type: EditorElement["type"]): string {
+  switch (type) {
+    case "rectangle":
+      return "Rectangle";
+    case "arrow":
+      return "Arrow";
+    case "line":
+      return "Line";
+    case "text":
+      return "Text";
+    case "freehand":
+      return "Freehand";
+    case "highlighter":
+      return "Highlighter";
+    case "blur":
+      return "Blur";
+    case "redaction":
+      return "Redaction";
+    case "numberMarker":
+      return "Number Marker";
+  }
 }

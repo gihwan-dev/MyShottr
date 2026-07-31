@@ -121,11 +121,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
       window.removeEventListener("pointercancel", cancelPointerInteraction);
     };
   });
-  const orderedElements = [
-    ...document.elements.filter((element) => element.type === "blur").sort(byZIndex),
-    ...document.elements.filter((element) => element.type === "highlighter").sort(byZIndex),
-    ...document.elements.filter((element) => element.type !== "blur" && element.type !== "highlighter").sort(byZIndex),
-  ];
+  const orderedElements = [...document.elements].sort(byZIndex);
   const selectedElements = selectedIds.map((id) => {
     const element = document.elements.find((candidate) => candidate.id === id);
     if (!element) throw new Error(`Cannot select missing element: ${id}`);
