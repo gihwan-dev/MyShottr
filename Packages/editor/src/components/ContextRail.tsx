@@ -1,4 +1,4 @@
-import { useId, useRef, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, type CSSProperties, type KeyboardEvent } from "react";
 
 import type {
   ContextRailField,
@@ -87,6 +87,7 @@ export function ContextRail({
         {model.fields.opacity && (
           <OpacityField
             field={model.fields.opacity}
+            gestureIdentity={opacityGestureIdentity(model, model.fields.opacity)}
             isSelection={isSelection}
             onIntent={onIntent}
           />
@@ -186,16 +187,22 @@ function RadioField<K extends Exclude<RailPropertyKey, "opacity">>({
 
 function OpacityField({
   field,
+  gestureIdentity,
   isSelection,
   onIntent,
 }: {
   field: ContextRailField<"opacity">;
+  gestureIdentity: string;
   isSelection: boolean;
   onIntent: (intent: ContextRailIntent) => void;
 }) {
   const mixedId = useId();
+  const latestOnIntent = useRef(onIntent);
+  latestOnIntent.current = onIntent;
   const gesture = useRef<{
     active: boolean;
+    identity?: string;
+    isSelection?: boolean;
     suppressNextChange: boolean;
     value?: string;
   }>({ active: false, suppressNextChange: false });
@@ -212,12 +219,23 @@ function OpacityField({
     }
     return opacity;
   };
-  const cancel = () => {
-    if (!gesture.current.active) return;
+  const resetGesture = () => {
     gesture.current.active = false;
+    gesture.current.identity = undefined;
+    gesture.current.isSelection = undefined;
     gesture.current.suppressNextChange = false;
     gesture.current.value = undefined;
-    if (isSelection) onIntent({ type: "cancelSelectionOpacity" });
+  };
+  const cancel = () => {
+    if (!gesture.current.active) return;
+    const shouldNotify = gesture.current.isSelection === true;
+    resetGesture();
+    if (shouldNotify) latestOnIntent.current({ type: "cancelSelectionOpacity" });
+  };
+  const cancelIfStale = () => {
+    if (!gesture.current.active || gesture.current.identity === gestureIdentity) return false;
+    cancel();
+    return true;
   };
   const commit = (value: string) => {
     const opacity = parseValue(value);
@@ -226,18 +244,27 @@ function OpacityField({
       : { type: "setDefaultProperty", property: "opacity", value: opacity });
   };
   const finishGesture = (value: string) => {
-    if (!gesture.current.active) return;
+    if (cancelIfStale() || !gesture.current.active) return;
     commit(gesture.current.value ?? value);
     gesture.current.active = false;
+    gesture.current.identity = undefined;
+    gesture.current.isSelection = undefined;
     gesture.current.suppressNextChange = true;
     gesture.current.value = undefined;
   };
   const handleEscape = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Escape" || !isSelection || !gesture.current.active) return;
+    if (event.key !== "Escape" || !isSelection || cancelIfStale() || !gesture.current.active) return;
     event.preventDefault();
     event.stopPropagation();
     cancel();
   };
+
+  useEffect(() => {
+    cancelIfStale();
+  }, [gestureIdentity]);
+  useEffect(() => () => {
+    cancel();
+  }, []);
 
   return (
     <fieldset className="context-rail-field context-rail-opacity">
@@ -257,7 +284,10 @@ function OpacityField({
         step={percentages.length > 1 ? percentages[1] - percentages[0] : 1}
         value={current}
         onInput={(event) => {
+          cancelIfStale();
           gesture.current.active = true;
+          gesture.current.identity = gestureIdentity;
+          gesture.current.isSelection = isSelection;
           gesture.current.suppressNextChange = false;
           gesture.current.value = event.currentTarget.value;
           if (isSelection) {
@@ -272,6 +302,7 @@ function OpacityField({
         }}
         onChange={(event) => {
           if (event.nativeEvent.type !== "change") return;
+          if (cancelIfStale()) return;
           if (gesture.current.suppressNextChange) {
             gesture.current.suppressNextChange = false;
             return;
@@ -280,7 +311,9 @@ function OpacityField({
           commit(gesture.current.value ?? event.currentTarget.value);
           gesture.current.value = undefined;
         }}
-        onPointerCancel={cancel}
+        onPointerCancel={() => {
+          if (!cancelIfStale()) cancel();
+        }}
         onKeyDown={handleEscape}
         onKeyUp={(event) => {
           if (event.key === "Escape") return;
@@ -292,6 +325,15 @@ function OpacityField({
       </div>
     </fieldset>
   );
+}
+
+function opacityGestureIdentity(
+  model: Exclude<ContextRailModel, { kind: "hidden" }>,
+  field: ContextRailField<"opacity">,
+): string {
+  return JSON.stringify(model.kind === "defaults"
+    ? [model.kind, model.title, field.allowedValues]
+    : [model.kind, model.selectedIds, field.allowedValues]);
 }
 
 function ActionButton({

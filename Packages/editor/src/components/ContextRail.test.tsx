@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { fixtureDocument, fixtureRect, fixtureText } from "../test/fixtures";
 import { ContextRail, type ContextRailIntent } from "./ContextRail";
-import { deriveContextRailModel } from "./contextRailModel";
+import { deriveContextRailModel, type ContextRailModel } from "./contextRailModel";
 
 describe("ContextRail", () => {
   afterEach(cleanup);
@@ -143,6 +143,82 @@ describe("ContextRail", () => {
     expect(intents).toEqual([
       { type: "previewSelectionOpacity", value: 0.75 },
       { type: "commitSelectionOpacity", value: 0.75 },
+    ]);
+  });
+
+  it("cancels instead of committing when selection identity changes mid-gesture", () => {
+    const intents: ContextRailIntent[] = [];
+    const onIntent = (intent: ContextRailIntent) => intents.push(intent);
+    const { rerender } = render(<ContextRail
+      model={deriveContextRailModel({
+        tool: "selection",
+        document: fixtureDocument({
+          elements: [fixtureRect(), fixtureText()],
+        }),
+        selectedIds: ["rect-1"],
+      })}
+      onIntent={onIntent}
+    />);
+
+    fireEvent.input(screen.getByRole("slider", { name: "Opacity" }), {
+      target: { value: "75" },
+    });
+    rerender(<ContextRail
+      model={deriveContextRailModel({
+        tool: "selection",
+        document: fixtureDocument({
+          elements: [fixtureRect(), fixtureText()],
+        }),
+        selectedIds: ["text-1"],
+      })}
+      onIntent={onIntent}
+    />);
+    fireEvent.pointerUp(screen.getByRole("slider", { name: "Opacity" }));
+
+    expect(intents).toEqual([
+      { type: "previewSelectionOpacity", value: 0.75 },
+      { type: "cancelSelectionOpacity" },
+    ]);
+  });
+
+  it("cancels a stale gesture before a narrowed domain can parse its old value", () => {
+    const intents: ContextRailIntent[] = [];
+    const onIntent = (intent: ContextRailIntent) => intents.push(intent);
+    const initialModel = deriveContextRailModel({
+      tool: "selection",
+      document: fixtureDocument(),
+      selectedIds: ["rect-1"],
+    });
+    if (initialModel.kind !== "single" || !initialModel.fields.opacity) {
+      throw new Error("Expected a selected Rectangle opacity field");
+    }
+    const narrowedModel = {
+      ...initialModel,
+      fields: {
+        ...initialModel.fields,
+        opacity: {
+          ...initialModel.fields.opacity,
+          value: { kind: "single", value: 0.5 },
+          allowedValues: [0.25, 0.5],
+        },
+      },
+    } satisfies ContextRailModel;
+    const { rerender } = render(<ContextRail
+      model={initialModel}
+      onIntent={onIntent}
+    />);
+
+    fireEvent.input(screen.getByRole("slider", { name: "Opacity" }), {
+      target: { value: "75" },
+    });
+    rerender(<ContextRail model={narrowedModel} onIntent={onIntent} />);
+
+    expect(() => {
+      fireEvent.pointerUp(screen.getByRole("slider", { name: "Opacity" }));
+    }).not.toThrow();
+    expect(intents).toEqual([
+      { type: "previewSelectionOpacity", value: 0.75 },
+      { type: "cancelSelectionOpacity" },
     ]);
   });
 

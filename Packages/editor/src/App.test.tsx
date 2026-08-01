@@ -25,6 +25,7 @@ vi.mock("./canvas/EditorCanvas", () => ({
       </output>
       <button type="button" onClick={() => onSelect("rect-1")}>Select rect-1</button>
       <button type="button" onClick={() => onSelect("text-1", true)}>Shift-select text-1</button>
+      <button type="button" onClick={() => onSelect("highlighter-1", true)}>Shift-select highlighter-1</button>
       <button type="button" onClick={() => onEditText("text-1")}>Edit text-1</button>
       <button
         type="button"
@@ -577,6 +578,50 @@ describe("EditorApp", () => {
     expect(screen.getByTestId("canvas-opacities").textContent).toBe("rect-1:1");
     expect(changes).toHaveLength(0);
     fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(0);
+  });
+
+  it("clears opacity preview and lock when selection and domain change mid-gesture", () => {
+    const changes: EditorDocument[] = [];
+    const highlighter = {
+      id: "highlighter-1",
+      type: "highlighter" as const,
+      x: 80,
+      y: 140,
+      width: 120,
+      height: 30,
+      rotation: 0,
+      opacity: 0.25 as const,
+      zIndex: 1,
+      seed: 105,
+      points: [{ x: 80, y: 140 }, { x: 200, y: 170 }],
+      color: "#FADB14" as const,
+      strokeWidth: 8 as const,
+    };
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureRect(), highlighter] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.input(screen.getByRole("slider", { name: "Opacity" }), {
+      target: { value: "75" },
+    });
+    expect(screen.getByTestId("canvas-opacities").textContent)
+      .toBe("rect-1:0.75,highlighter-1:0.25");
+
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select highlighter-1" }));
+    expect(screen.getByTestId("canvas-opacities").textContent)
+      .toBe("rect-1:1,highlighter-1:0.25");
+    expect(() => {
+      fireEvent.pointerUp(screen.getByRole("slider", { name: "Opacity" }));
+    }).not.toThrow();
+    expect(changes).toHaveLength(0);
+
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    expect(screen.queryByLabelText("Context Rail")).toBeNull();
     expect(changes).toHaveLength(0);
   });
 
