@@ -211,6 +211,36 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         }
     }
 
+    func testTypedHistoryActionFactoryBuildsExactValidatedEnvelopes()
+        throws
+    {
+        let requestIDs = [UUID(), UUID()]
+        let cases: [(EditorHistoryAction, BridgeJSONValue)] = [
+            (.undo, .object(["action": .string("undo")])),
+            (.redo, .object(["action": .string("redo")])),
+        ]
+
+        for ((action, expectedPayload), requestID) in zip(
+            cases,
+            requestIDs
+        ) {
+            let envelope = try NativeToEditorEnvelope.historyAction(
+                action,
+                requestId: requestID
+            )
+
+            XCTAssertEqual(envelope.requestId, requestID)
+            XCTAssertEqual(envelope.type, .performHistoryAction)
+            XCTAssertEqual(envelope.payload, expectedPayload)
+            let decoded = try NativeToEditorEnvelope.decode(
+                from: envelope.encodedData()
+            )
+            XCTAssertEqual(decoded.requestId, requestID)
+            XCTAssertEqual(decoded.type, .performHistoryAction)
+            XCTAssertEqual(decoded.payload, expectedPayload)
+        }
+    }
+
     func testOperationStatusAcceptsOnlyTheExactOperationPhaseMatrix()
         throws
     {
@@ -390,6 +420,95 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
                 type: .operationStatus,
                 payload: payload
             )
+        }
+    }
+
+    func testTypedOperationStatusFactoryRetainsCallerIDAndExactPayloads()
+        throws
+    {
+        let requestID = UUID()
+        let cases: [(EditorOperationStatus, BridgeJSONValue)] = [
+            (
+                .started(.save),
+                .object([
+                    "operation": .string("save"),
+                    "phase": .string("started"),
+                ])
+            ),
+            (
+                .started(.export),
+                .object([
+                    "operation": .string("export"),
+                    "phase": .string("started"),
+                ])
+            ),
+            (
+                .saveCompleted,
+                .object([
+                    "operation": .string("save"),
+                    "phase": .string("completed"),
+                ])
+            ),
+            (
+                .saveSuperseded,
+                .object([
+                    "operation": .string("save"),
+                    "phase": .string("superseded"),
+                ])
+            ),
+            (
+                .exportCompleted(displayName: "Capture.png"),
+                .object([
+                    "operation": .string("export"),
+                    "phase": .string("completed"),
+                    "displayName": .string("Capture.png"),
+                ])
+            ),
+            (
+                .cancelled(.save),
+                .object([
+                    "operation": .string("save"),
+                    "phase": .string("cancelled"),
+                ])
+            ),
+            (
+                .cancelled(.export),
+                .object([
+                    "operation": .string("export"),
+                    "phase": .string("cancelled"),
+                ])
+            ),
+            (
+                .failed(.save),
+                .object([
+                    "operation": .string("save"),
+                    "phase": .string("failed"),
+                ])
+            ),
+            (
+                .failed(.export),
+                .object([
+                    "operation": .string("export"),
+                    "phase": .string("failed"),
+                ])
+            ),
+        ]
+
+        for (status, expectedPayload) in cases {
+            let envelope = try NativeToEditorEnvelope.operationStatus(
+                requestId: requestID,
+                status: status
+            )
+
+            XCTAssertEqual(envelope.requestId, requestID)
+            XCTAssertEqual(envelope.type, .operationStatus)
+            XCTAssertEqual(envelope.payload, expectedPayload)
+            let decoded = try NativeToEditorEnvelope.decode(
+                from: envelope.encodedData()
+            )
+            XCTAssertEqual(decoded.requestId, requestID)
+            XCTAssertEqual(decoded.type, .operationStatus)
+            XCTAssertEqual(decoded.payload, expectedPayload)
         }
     }
 

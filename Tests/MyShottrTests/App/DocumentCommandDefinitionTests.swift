@@ -5,6 +5,26 @@ import XCTest
 
 @MainActor
 final class DocumentCommandDefinitionTests: XCTestCase {
+    func testOutputRegistryExposesOneCanonicalShortcutPerCommand() {
+        XCTAssertEqual(
+            DocumentCommandDefinition.outputCommands.map(\.shortcut),
+            [
+                DocumentCommandDefinition.Shortcut(
+                    key: "c",
+                    modifiers: [.command, .shift]
+                ),
+                DocumentCommandDefinition.Shortcut(
+                    key: "s",
+                    modifiers: [.command]
+                ),
+                DocumentCommandDefinition.Shortcut(
+                    key: "e",
+                    modifiers: [.command]
+                ),
+            ]
+        )
+    }
+
     func testOutputRegistryBuildsExactAppKitCommandsFromSharedDefinitions() {
         let definitions = DocumentCommandDefinition.outputCommands
         let menuItems = definitions.map { definition in

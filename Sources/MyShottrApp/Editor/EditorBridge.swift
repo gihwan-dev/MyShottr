@@ -202,58 +202,21 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     }
 
     func performHistoryAction(_ action: EditorHistoryAction) {
-        sendFireAndForget(
-            requestID: UUID(),
-            type: .performHistoryAction,
-            payload: .object([
-                "action": .string(action.rawValue),
-            ])
-        )
+        sendFireAndForget {
+            try NativeToEditorEnvelope.historyAction(action)
+        }
     }
 
     func sendOperationStatus(
         requestID: UUID,
         status: EditorOperationStatus
     ) {
-        let payload: BridgeJSONValue
-        switch status {
-        case let .started(operation):
-            payload = .object([
-                "operation": .string(operation.rawValue),
-                "phase": .string("started"),
-            ])
-        case .saveCompleted:
-            payload = .object([
-                "operation": .string(EditorOutputOperation.save.rawValue),
-                "phase": .string("completed"),
-            ])
-        case .saveSuperseded:
-            payload = .object([
-                "operation": .string(EditorOutputOperation.save.rawValue),
-                "phase": .string("superseded"),
-            ])
-        case let .exportCompleted(displayName):
-            payload = .object([
-                "operation": .string(EditorOutputOperation.export.rawValue),
-                "phase": .string("completed"),
-                "displayName": .string(displayName),
-            ])
-        case let .cancelled(operation):
-            payload = .object([
-                "operation": .string(operation.rawValue),
-                "phase": .string("cancelled"),
-            ])
-        case let .failed(operation):
-            payload = .object([
-                "operation": .string(operation.rawValue),
-                "phase": .string("failed"),
-            ])
+        sendFireAndForget {
+            try NativeToEditorEnvelope.operationStatus(
+                requestId: requestID,
+                status: status
+            )
         }
-        sendFireAndForget(
-            requestID: requestID,
-            type: .operationStatus,
-            payload: payload
-        )
     }
 
     func tearDown() {
@@ -635,16 +598,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     }
 
     private func sendFireAndForget(
-        requestID: UUID,
-        type: NativeToEditorMessageType,
-        payload: BridgeJSONValue
+        _ envelopeFactory: () throws -> NativeToEditorEnvelope
     ) {
         do {
-            let envelope = try NativeToEditorEnvelope(
-                requestId: requestID,
-                type: type,
-                payload: payload
-            )
+            let envelope = try envelopeFactory()
             outgoingMessageObserver?(envelope)
             let data = try envelope.encodedData()
             guard let json = String(data: data, encoding: .utf8),
@@ -655,7 +612,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 throw EditorBridgeError.invalidMessage
             }
             if let javaScriptEvaluationObserver {
-                javaScriptEvaluationObserver(requestID) {
+                javaScriptEvaluationObserver(envelope.requestId) {
                     [weak self] error in
                     guard let self, error != nil else {
                         return

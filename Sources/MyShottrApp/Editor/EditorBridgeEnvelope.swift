@@ -34,6 +34,21 @@ enum EditorOperationStatus: Equatable, Sendable {
     case failed(EditorOutputOperation)
 }
 
+private enum NativePayloadKey {
+    static let action = "action"
+    static let operation = "operation"
+    static let phase = "phase"
+    static let displayName = "displayName"
+}
+
+private enum EditorOperationPhase: String {
+    case started
+    case completed
+    case superseded
+    case cancelled
+    case failed
+}
+
 enum EditorBridgeEnvelopeError: Error, Equatable {
     case unsupportedProtocolVersion(Int)
     case payloadTooLarge
@@ -119,6 +134,74 @@ extension EditorBridgeEnvelope where MessageType == NativeToEditorMessageType, P
         return try JSONEncoder().encode(self)
     }
 
+    static func historyAction(
+        _ action: EditorHistoryAction,
+        requestId: UUID = UUID()
+    ) throws -> Self {
+        try Self(
+            requestId: requestId,
+            type: .performHistoryAction,
+            payload: .object([
+                NativePayloadKey.action: .string(
+                    action.rawValue
+                ),
+            ])
+        )
+    }
+
+    static func operationStatus(
+        requestId: UUID,
+        status: EditorOperationStatus
+    ) throws -> Self {
+        let operation: EditorOutputOperation
+        let phase: EditorOperationPhase
+        let displayName: String?
+
+        switch status {
+        case let .started(value):
+            operation = value
+            phase = .started
+            displayName = nil
+        case .saveCompleted:
+            operation = .save
+            phase = .completed
+            displayName = nil
+        case .saveSuperseded:
+            operation = .save
+            phase = .superseded
+            displayName = nil
+        case let .exportCompleted(value):
+            operation = .export
+            phase = .completed
+            displayName = value
+        case let .cancelled(value):
+            operation = value
+            phase = .cancelled
+            displayName = nil
+        case let .failed(value):
+            operation = value
+            phase = .failed
+            displayName = nil
+        }
+
+        var payload: [String: BridgeJSONValue] = [
+            NativePayloadKey.operation: .string(
+                operation.rawValue
+            ),
+            NativePayloadKey.phase: .string(phase.rawValue),
+        ]
+        if let displayName {
+            payload[NativePayloadKey.displayName] = .string(
+                displayName
+            )
+        }
+        return try Self(
+            requestId: requestId,
+            type: .operationStatus,
+            payload: .object(payload)
+        )
+    }
+
     static func decode(from data: Data) throws -> Self {
         guard
             let object = try JSONSerialization.jsonObject(
@@ -155,36 +238,55 @@ extension EditorBridgeEnvelope where MessageType == NativeToEditorMessageType, P
             return
         case .performHistoryAction:
             guard
-                exact(["action"]),
-                case let .string(action)? = payload["action"],
-                ["undo", "redo"].contains(action)
+                exact([NativePayloadKey.action]),
+                case let .string(action)? = payload[
+                    NativePayloadKey.action
+                ],
+                EditorHistoryAction(rawValue: action) != nil
             else {
                 throw EditorBridgeEnvelopeError.malformedMessage
             }
         case .operationStatus:
             guard
-                case let .string(operation)? = payload["operation"],
-                case let .string(phase)? = payload["phase"]
+                case let .string(operationValue)? = payload[
+                    NativePayloadKey.operation
+                ],
+                let operation = EditorOutputOperation(
+                    rawValue: operationValue
+                ),
+                case let .string(phaseValue)? = payload[
+                    NativePayloadKey.phase
+                ],
+                let phase = EditorOperationPhase(rawValue: phaseValue)
             else {
                 throw EditorBridgeEnvelopeError.malformedMessage
             }
             switch (operation, phase) {
             case
-                ("save", "started"),
-                ("export", "started"),
-                ("save", "completed"),
-                ("save", "superseded"),
-                ("save", "cancelled"),
-                ("export", "cancelled"),
-                ("save", "failed"),
-                ("export", "failed"):
-                guard exact(["operation", "phase"]) else {
+                (.save, .started),
+                (.export, .started),
+                (.save, .completed),
+                (.save, .superseded),
+                (.save, .cancelled),
+                (.export, .cancelled),
+                (.save, .failed),
+                (.export, .failed):
+                guard exact([
+                    NativePayloadKey.operation,
+                    NativePayloadKey.phase,
+                ]) else {
                     throw EditorBridgeEnvelopeError.malformedMessage
                 }
-            case ("export", "completed"):
+            case (.export, .completed):
                 guard
-                    exact(["operation", "phase", "displayName"]),
-                    case .string = payload["displayName"]
+                    exact([
+                        NativePayloadKey.operation,
+                        NativePayloadKey.phase,
+                        NativePayloadKey.displayName,
+                    ]),
+                    case .string = payload[
+                        NativePayloadKey.displayName
+                    ]
                 else {
                     throw EditorBridgeEnvelopeError.malformedMessage
                 }
