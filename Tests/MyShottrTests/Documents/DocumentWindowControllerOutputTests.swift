@@ -158,6 +158,49 @@ final class DocumentWindowControllerOutputTests:
         )
     }
 
+    func testCopyUnknownProviderFailurePresentsApplicationErrorWithoutClipboardStatusOrHide()
+        async throws
+    {
+        let project = ProjectFixtures.project(
+            text: "Copy unknown provider failure"
+        )
+        let session = DocumentSession()
+        try session.open(project: project)
+        var clipboardWriteCount = 0
+        var statusSendCount = 0
+        var hideCount = 0
+        let presenter = OutputErrorPresenterSpy()
+        let controller = try makeController(
+            project: project,
+            session: session,
+            errorPresenter: presenter,
+            compositeProvider: { _ in
+                throw CocoaError(.fileReadNoSuchFile)
+            },
+            clipboardWriter: { _ in
+                clipboardWriteCount += 1
+            },
+            windowHider: { hideCount += 1 },
+            operationStatusSender: { _, _ in
+                statusSendCount += 1
+            }
+        )
+        try await controller.waitForEditorLoad()
+
+        XCTAssertTrue(controller.copyComposite(nil))
+        await waitUntil {
+            presenter.presentedViewModels.count == 1
+        }
+
+        XCTAssertEqual(
+            presenter.presentedViewModels,
+            [MyShottrUserFacingError.application.viewModel]
+        )
+        XCTAssertEqual(clipboardWriteCount, 0)
+        XCTAssertEqual(statusSendCount, 0)
+        XCTAssertEqual(hideCount, 0)
+    }
+
     func testCopyClipboardFailureKeepsWindowVisiblePresentsClipboardErrorAndDiscards()
         async throws
     {
@@ -168,6 +211,7 @@ final class DocumentWindowControllerOutputTests:
         try session.open(project: project)
         let completed = try makeCompletedTransfer()
         var clipboardWriteCount = 0
+        var statusSendCount = 0
         var hideCount = 0
         let presenter = OutputErrorPresenterSpy()
         let controller = try makeController(
@@ -179,7 +223,10 @@ final class DocumentWindowControllerOutputTests:
                 clipboardWriteCount += 1
                 throw PNGClipboardWriterError.writeFailed
             },
-            windowHider: { hideCount += 1 }
+            windowHider: { hideCount += 1 },
+            operationStatusSender: { _, _ in
+                statusSendCount += 1
+            }
         )
         try await controller.waitForEditorLoad()
 
@@ -189,6 +236,7 @@ final class DocumentWindowControllerOutputTests:
         }
 
         XCTAssertEqual(clipboardWriteCount, 1)
+        XCTAssertEqual(statusSendCount, 0)
         XCTAssertEqual(hideCount, 0)
         XCTAssertEqual(
             presenter.presentedViewModels,

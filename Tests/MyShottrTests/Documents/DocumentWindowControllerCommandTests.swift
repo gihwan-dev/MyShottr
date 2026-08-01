@@ -421,8 +421,11 @@ final class DocumentWindowControllerCommandTests:
             .resolvePendingChangesForTermination()
         XCTAssertFalse(firstResolution)
 
+        let firstStoredProject = try XCTUnwrap(
+            projectStore.savedProjects.first
+        )
         XCTAssertEqual(
-            projectStore.savedProjects[0].annotationJSON,
+            firstStoredProject.annotationJSON,
             firstSave.annotationJSON
         )
         XCTAssertEqual(

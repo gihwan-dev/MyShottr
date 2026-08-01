@@ -29,6 +29,7 @@ enum UserFacingErrorContext {
     case projectOpen
     case projectSave
     case pngExport
+    case compositeTransfer
     case clipboard
     case editorBridge
     case globalShortcut
@@ -109,6 +110,18 @@ enum MyShottrUserFacingError: Error {
                 return .editorBridge(error)
             }
             return .pngExport
+
+        case .compositeTransfer:
+            if let error = error as? CompositeTransferError {
+                return .compositeTransfer(error)
+            }
+            if let error = error as? EditorBridgeEnvelopeError {
+                return .editorProtocol(error)
+            }
+            if let error = error as? EditorBridgeError {
+                return .editorBridge(error)
+            }
+            return .application
 
         case .clipboard:
             if let error = error as? CompositeTransferError {

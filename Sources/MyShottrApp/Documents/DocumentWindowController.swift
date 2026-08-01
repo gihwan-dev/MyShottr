@@ -7,34 +7,6 @@ enum DocumentPendingChangesDecision {
     case cancel
 }
 
-enum ProjectSaveOutcome: Equatable {
-    case saved
-    case superseded
-    case cancelledBeforeStart
-    case cancelledAfterStart
-    case failed
-}
-
-typealias CompositeProvider = @MainActor (
-    _ destinationDirectory: URL?
-) async throws -> CompositeTransfer
-
-typealias ClipboardWriter = @MainActor (_ data: Data) throws -> Void
-typealias URLProvider = @MainActor () -> URL?
-typealias OperationStatusSender = @MainActor (
-    _ requestID: UUID,
-    _ status: EditorOperationStatus
-) -> Void
-typealias WindowHider = @MainActor () -> Void
-
-func displaySafeBasename(for url: URL) -> String {
-    let filtered = url.lastPathComponent.unicodeScalars.filter {
-        !CharacterSet.controlCharacters.contains($0)
-    }
-    let filteredString = String(String.UnicodeScalarView(filtered))
-    return String(filteredString.prefix(120))
-}
-
 @MainActor
 final class DocumentTerminationResolutionGate {
     private var inFlight: Task<Bool, Never>?
@@ -63,10 +35,30 @@ final class DocumentWindowController:
     NSToolbarDelegate,
     NSToolbarItemValidation
 {
+    typealias CompositeProvider = @MainActor (
+        _ destinationDirectory: URL?
+    ) async throws -> CompositeTransfer
+
+    typealias ClipboardWriter = @MainActor (Data) throws -> Void
+    typealias URLProvider = @MainActor () -> URL?
+    typealias OperationStatusSender = @MainActor (
+        _ requestID: UUID,
+        _ status: EditorOperationStatus
+    ) -> Void
+    typealias WindowHider = @MainActor () -> Void
+
     private enum OutputOperation {
         case copy
         case save
         case export
+    }
+
+    private enum ProjectSaveOutcome: Equatable {
+        case saved
+        case superseded
+        case cancelledBeforeStart
+        case cancelledAfterStart
+        case failed
     }
 
     private struct SaveOutputReservation {}
@@ -474,7 +466,10 @@ final class DocumentWindowController:
                 hideWindow()
             } catch {
                 present(
-                    .wrapping(error, context: .clipboard)
+                    .wrapping(
+                        error,
+                        context: .compositeTransfer
+                    )
                 )
             }
         }
@@ -515,7 +510,7 @@ final class DocumentWindowController:
                 operationStatusSender(
                     requestID,
                     .exportCompleted(
-                        displayName: displaySafeBasename(
+                        displayName: Self.displaySafeBasename(
                             for: destinationURL
                         )
                     )
@@ -698,6 +693,18 @@ final class DocumentWindowController:
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = "Annotated.png"
         return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    private static func displaySafeBasename(
+        for url: URL
+    ) -> String {
+        let filtered = url.lastPathComponent.unicodeScalars.filter {
+            !CharacterSet.controlCharacters.contains($0)
+        }
+        let filteredString = String(
+            String.UnicodeScalarView(filtered)
+        )
+        return String(filteredString.prefix(120))
     }
 
     private func makeToolbar() -> NSToolbar {

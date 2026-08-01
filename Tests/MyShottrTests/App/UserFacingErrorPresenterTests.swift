@@ -501,6 +501,43 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         )
     }
 
+    func testCompositeTransferContextPreservesKnownErrorsAndMapsUnknownToApplication() {
+        let cases: [(any Error, UserFacingErrorViewModel)] = [
+            (
+                CompositeTransferError.invalidPNG,
+                MyShottrUserFacingError.compositeTransfer(
+                    .invalidPNG
+                ).viewModel
+            ),
+            (
+                EditorBridgeEnvelopeError.malformedMessage,
+                MyShottrUserFacingError.editorProtocol(
+                    .malformedMessage
+                ).viewModel
+            ),
+            (
+                EditorBridgeError.invalidMessage,
+                MyShottrUserFacingError.editorBridge(
+                    .invalidMessage
+                ).viewModel
+            ),
+            (
+                CocoaError(.fileReadNoSuchFile),
+                MyShottrUserFacingError.application.viewModel
+            ),
+        ]
+
+        for (error, expectedViewModel) in cases {
+            XCTAssertEqual(
+                MyShottrUserFacingError.wrapping(
+                    error,
+                    context: .compositeTransfer
+                ).viewModel,
+                expectedViewModel
+            )
+        }
+    }
+
     func testPresenterUsesSheetOnlyForProvidedDocumentWindow() {
         let recorder = AlertPresentationRecorder()
         var openedSettings = 0
