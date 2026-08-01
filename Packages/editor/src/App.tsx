@@ -308,6 +308,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
               selectedIds={selectedIds}
               onSelect={select}
               onEditText={beginTextEdit}
+              onBeginNewText={() => {}}
               onCommand={dispatch}
               onBeginTransaction={(label) => history.beginTransaction(label)}
               onCommitTransaction={() => {

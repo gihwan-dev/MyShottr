@@ -13,6 +13,7 @@ export type CreationContext = {
   nextNumberMarker: number;
   nextZIndex: number;
   seed: number;
+  id?: string;
 };
 
 export function createElementId(): string {
@@ -131,6 +132,32 @@ export function createElement(
   }
 }
 
+export function createElementFromDocument(
+  document: EditorDocument,
+  tool: Exclude<EditorTool, "selection">,
+  gesture: CreationGesture,
+  id?: string,
+): EditorElement {
+  return createElement(tool, gesture, {
+    defaults: document.defaults,
+    nextNumberMarker: Math.max(
+      0,
+      ...document.elements
+        .filter((candidate) => candidate.type === "numberMarker")
+        .map((candidate) => candidate.number),
+    ) + 1,
+    nextZIndex: Math.max(
+      -1,
+      ...document.elements.map((candidate) => candidate.zIndex),
+    ) + 1,
+    seed: Math.max(
+      0,
+      ...document.elements.map((candidate) => candidate.seed),
+    ) + 1,
+    id,
+  });
+}
+
 function createBase(
   tool: Exclude<EditorTool, "selection">,
   gesture: CreationGesture,
@@ -138,7 +165,7 @@ function createBase(
 ) {
   const bounds = boundsFor(tool, gesture);
   return {
-    id: createElementId(),
+    id: context.id ?? createElementId(),
     ...bounds,
     rotation: 0,
     opacity: context.defaults.opacity,

@@ -1,8 +1,9 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import Konva from "konva";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createHistoryStore } from "../model/history";
+import type { EditorTool } from "../model/elements";
 import { keyboardCommandFor } from "../input/ShortcutRouter";
 import { fixtureBlur, fixtureDocument, fixtureText } from "../test/fixtures";
 import { cancelAnnotationInteraction, EditorCanvas } from "./EditorCanvas";
@@ -13,6 +14,9 @@ const konvaControl = vi.hoisted(() => ({
   forceUpdate: vi.fn(),
   draw: vi.fn(),
   preventDefault: vi.fn(),
+  setPointerCapture: vi.fn(),
+  releasePointerCapture: vi.fn(),
+  capturedPointers: new Set<number>(),
   annotationValues: {
     x: 0,
     y: 0,
@@ -68,7 +72,9 @@ vi.mock("react-konva", async () => {
         onTransformEnd?.({ currentTarget: node });
       },
     }, props.children);
-    if (!onDragStart) return React.createElement("div", null, props.children);
+    if (!onDragStart) return React.createElement("div", {
+      "data-testid": props["data-testid"],
+    }, props.children);
     return React.createElement("div", {
       "data-testid": props["data-testid"] === "element-text-1"
         ? props["data-testid"]
@@ -109,25 +115,41 @@ vi.mock("react-konva", async () => {
     }));
     return React.createElement("div");
   });
-  const Stage = ({ children, width, height, onMouseDown, onMouseMove, onMouseUp, onWheel }: {
+  const Stage = ({ children, width, height, onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onWheel }: {
     children?: React.ReactNode;
     width: number;
     height: number;
-    onMouseDown?: (event: unknown) => void;
-    onMouseMove?: (event: unknown) => void;
-    onMouseUp?: (event: unknown) => void;
+    onPointerDown?: (event: unknown) => void;
+    onPointerMove?: (event: unknown) => void;
+    onPointerUp?: (event: unknown) => void;
+    onPointerCancel?: (event: unknown) => void;
     onWheel?: (event: unknown) => void;
   }) => {
     const pointer = { x: 0, y: 0 };
+    const container = {
+      setPointerCapture: (pointerId: number) => {
+        konvaControl.capturedPointers.add(pointerId);
+        konvaControl.setPointerCapture(pointerId);
+      },
+      releasePointerCapture: (pointerId: number) => {
+        konvaControl.capturedPointers.delete(pointerId);
+        konvaControl.releasePointerCapture(pointerId);
+      },
+      hasPointerCapture: (pointerId: number) => konvaControl.capturedPointers.has(pointerId),
+    };
     const stage = {
       getPointerPosition: () => ({ ...pointer }),
+      container: () => container,
+      getStage: () => stage,
     };
-    const eventFor = (event: React.MouseEvent) => {
+    const eventFor = (event: React.PointerEvent | React.WheelEvent) => {
       pointer.x = event.clientX;
       pointer.y = event.clientY;
       return {
         evt: {
+          pointerId: "pointerId" in event ? event.pointerId : 0,
           shiftKey: event.shiftKey,
+          altKey: event.altKey,
           metaKey: event.metaKey,
           ctrlKey: event.ctrlKey,
           deltaX: "deltaX" in event ? Number(event.deltaX) : 0,
@@ -137,18 +159,17 @@ vi.mock("react-konva", async () => {
             event.preventDefault();
           },
         },
-        target: {
-          getStage: () => stage,
-        },
+        target: stage,
       };
     };
     return React.createElement("div", {
       "data-testid": "stage",
       "data-width": width,
       "data-height": height,
-      onMouseDown: (event: React.MouseEvent) => onMouseDown?.(eventFor(event)),
-      onMouseMove: (event: React.MouseEvent) => onMouseMove?.(eventFor(event)),
-      onMouseUp: (event: React.MouseEvent) => onMouseUp?.(eventFor(event)),
+      onPointerDown: (event: React.PointerEvent) => onPointerDown?.(eventFor(event)),
+      onPointerMove: (event: React.PointerEvent) => onPointerMove?.(eventFor(event)),
+      onPointerUp: (event: React.PointerEvent) => onPointerUp?.(eventFor(event)),
+      onPointerCancel: (event: React.PointerEvent) => onPointerCancel?.(eventFor(event)),
       onWheel: (event: React.WheelEvent) => onWheel?.(eventFor(event)),
     }, children);
   };
@@ -179,8 +200,33 @@ const VIEWPORT_PROPS = {
   onViewportWheel: () => {},
   onViewportPanBy: () => {},
   onInteractionActiveChange: () => {},
+  onBeginNewText: () => {},
   toSourcePoint: (point: { x: number; y: number }) => point,
 };
+
+let nextAnimationFrame = 1;
+const animationFrames = new Map<number, FrameRequestCallback>();
+
+beforeEach(() => {
+  nextAnimationFrame = 1;
+  animationFrames.clear();
+  vi.stubGlobal("PointerEvent", class extends MouseEvent {
+    public readonly pointerId: number;
+
+    public constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 0;
+    }
+  });
+  vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
+    const frame = nextAnimationFrame++;
+    animationFrames.set(frame, callback);
+    return frame;
+  }));
+  vi.stubGlobal("cancelAnimationFrame", vi.fn((frame: number) => {
+    animationFrames.delete(frame);
+  }));
+});
 
 afterEach(() => {
   cleanup();
@@ -188,6 +234,9 @@ afterEach(() => {
   konvaControl.transformerNodes = [];
   konvaControl.rotateEnabled = true;
   konvaControl.dragTarget = { x: 40, y: 50 };
+  konvaControl.capturedPointers.clear();
+  animationFrames.clear();
+  vi.unstubAllGlobals();
 });
 
 describe("cancelAnnotationInteraction", () => {
@@ -334,9 +383,10 @@ describe("EditorCanvas gesture terminals", () => {
     );
     const stage = screen.getByTestId("stage");
 
-    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20 });
-    fireEvent.mouseMove(stage, { clientX: 40, clientY: 55 });
-    fireEvent.mouseUp(stage, { clientX: 40, clientY: 55 });
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(stage, { clientX: 40, clientY: 55, pointerId: 1 });
+    flushAnimationFrame();
+    fireEvent.pointerUp(stage, { clientX: 40, clientY: 55, pointerId: 1 });
 
     expect(onViewportPanBy).toHaveBeenCalledWith({ x: 30, y: 35 });
     expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
@@ -372,11 +422,12 @@ describe("EditorCanvas gesture terminals", () => {
     );
     const stage = screen.getByTestId("stage");
 
-    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20 });
-    fireEvent.mouseMove(stage, { clientX: 30, clientY: 45 });
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(stage, { clientX: 30, clientY: 45, pointerId: 1 });
+    flushAnimationFrame();
     window.dispatchEvent(new Event("blur"));
     window.dispatchEvent(new Event("blur"));
-    fireEvent.mouseMove(stage, { clientX: 80, clientY: 90 });
+    fireEvent.pointerMove(stage, { clientX: 80, clientY: 90, pointerId: 1 });
 
     expect(onViewportPanBy).toHaveBeenCalledTimes(1);
     expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
@@ -387,9 +438,10 @@ describe("EditorCanvas gesture terminals", () => {
       textEditing: false,
     })).toEqual({ type: "selectTool", tool: "rectangle" });
 
-    fireEvent.mouseDown(stage, { clientX: 100, clientY: 110 });
-    fireEvent.mouseMove(stage, { clientX: 120, clientY: 140 });
-    fireEvent.mouseUp(stage, { clientX: 120, clientY: 140 });
+    fireEvent.pointerDown(stage, { clientX: 100, clientY: 110, pointerId: 2 });
+    fireEvent.pointerMove(stage, { clientX: 120, clientY: 140, pointerId: 2 });
+    flushAnimationFrame();
+    fireEvent.pointerUp(stage, { clientX: 120, clientY: 140, pointerId: 2 });
     expect(onViewportPanBy).toHaveBeenLastCalledWith({ x: 20, y: 30 });
     expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
       .toEqual([true, false, true, false]);
@@ -417,9 +469,9 @@ describe("EditorCanvas gesture terminals", () => {
     const stage = screen.getByTestId("stage");
 
     expect(canvas.style.cursor).toBe("grab");
-    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20 });
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 20, pointerId: 1 });
     expect(canvas.style.cursor).toBe("grabbing");
-    fireEvent.mouseUp(stage, { clientX: 10, clientY: 20 });
+    fireEvent.pointerUp(stage, { clientX: 10, clientY: 20, pointerId: 1 });
     expect(canvas.style.cursor).toBe("grab");
   });
 
@@ -448,10 +500,10 @@ describe("EditorCanvas gesture terminals", () => {
     const view = render(canvas(false));
     const stage = screen.getByTestId("stage");
 
-    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20 });
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 20, pointerId: 1 });
     view.rerender(canvas(true));
-    fireEvent.mouseMove(stage, { clientX: 40, clientY: 55 });
-    fireEvent.mouseUp(stage, { clientX: 40, clientY: 55 });
+    fireEvent.pointerMove(stage, { clientX: 40, clientY: 55, pointerId: 1 });
+    fireEvent.pointerUp(stage, { clientX: 40, clientY: 55, pointerId: 1 });
 
     expect(onViewportPanBy).not.toHaveBeenCalled();
     expect(history.document.elements).toEqual([
@@ -480,54 +532,197 @@ describe("EditorCanvas gesture terminals", () => {
     );
     const stage = screen.getByTestId("stage");
 
-    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20, shiftKey: true });
-    fireEvent.mouseMove(stage, { clientX: 40, clientY: 55, shiftKey: true });
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 20, shiftKey: true, pointerId: 1 });
+    fireEvent.pointerMove(stage, { clientX: 40, clientY: 55, shiftKey: true, pointerId: 1 });
 
     expect(onViewportPanBy).not.toHaveBeenCalled();
   });
 
-  it("renders a rectangle preview during drag before committing the element", () => {
-    const initial = fixtureDocument({ elements: [] });
-    const history = createHistoryStore(initial);
-    const onInteractionActiveChange = vi.fn();
-    render(
+  it.each([
+    "rectangle",
+    "arrow",
+    "line",
+    "freehand",
+    "highlighter",
+    "blur",
+    "redaction",
+  ] as const)("previews %s without changing the document", (tool) => {
+    const onCommand = vi.fn();
+    renderCreationCanvas(tool, { onCommand });
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerMove(stage, { clientX: 80, clientY: 70, pointerId: 1 });
+    fireEvent.pointerMove(stage, { clientX: 120, clientY: 90, pointerId: 1 });
+
+    expect(requestAnimationFrame).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId("creation-preview")).toBeNull();
+    expect(onCommand).not.toHaveBeenCalled();
+    flushAnimationFrame();
+    expect(screen.getByTestId("creation-preview")).toBeTruthy();
+    expect(onCommand).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(stage, { clientX: 120, clientY: 90, pointerId: 1 });
+    expect(onCommand).toHaveBeenCalledOnce();
+    expect(onCommand).toHaveBeenCalledWith({
+      type: "create",
+      element: expect.objectContaining({ type: tool }),
+    });
+  });
+
+  it("previews and commits a number marker from a click", () => {
+    const onCommand = vi.fn();
+    renderCreationCanvas("numberMarker", { onCommand });
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { clientX: 25, clientY: 35, pointerId: 3 });
+    expect(screen.getByTestId("creation-preview")).toBeTruthy();
+    expect(onCommand).not.toHaveBeenCalled();
+    fireEvent.pointerUp(stage, { clientX: 25, clientY: 35, pointerId: 3 });
+
+    expect(onCommand).toHaveBeenCalledWith({
+      type: "create",
+      element: expect.objectContaining({ type: "numberMarker", x: 25, y: 35 }),
+    });
+  });
+
+  it("emits beginNewText without previewing or committing a placeholder element", () => {
+    const onCommand = vi.fn();
+    const onBeginNewText = vi.fn();
+    renderCreationCanvas("text", { onCommand, onBeginNewText });
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { clientX: 20, clientY: 30, pointerId: 4 });
+    fireEvent.pointerMove(stage, { clientX: 100, clientY: 110, pointerId: 4 });
+    flushAnimationFrame();
+    expect(screen.queryByTestId("creation-preview")).toBeNull();
+    fireEvent.pointerUp(stage, { clientX: 100, clientY: 110, pointerId: 4 });
+
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onBeginNewText).toHaveBeenCalledWith({ x: 20, y: 30 }, fixtureDocument().defaults);
+  });
+
+  it("commits the source-space Shift preview with the pointer-down tool and defaults", () => {
+    const onCommand = vi.fn();
+    const initial = fixtureDocument({
+      elements: [],
+      defaults: { ...fixtureDocument().defaults, rectangleFillColor: "#FADB14" },
+    });
+    const canvas = (tool: EditorTool, document = initial) => (
       <EditorCanvas
-        document={initial}
+        document={document}
         sourceImageURL="data:image/png;base64,iVBORw0KGgo="
-        tool="rectangle"
+        tool={tool}
         {...VIEWPORT_PROPS}
-        onInteractionActiveChange={onInteractionActiveChange}
         selectedIds={[]}
         onSelect={() => {}}
         onEditText={() => {}}
-        onCommand={(command) => history.dispatch(command)}
-        onBeginTransaction={(label) => history.beginTransaction(label)}
-        onCommitTransaction={() => history.commitTransaction()}
-        onCancelTransaction={() => history.cancelTransaction()}
+        onCommand={onCommand}
+        onBeginTransaction={() => {}}
+        onCommitTransaction={() => {}}
+        onCancelTransaction={() => {}}
+        textEditorOverlay={undefined}
+      />
+    );
+    const view = render(canvas("rectangle"));
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 10, pointerId: 7 });
+    fireEvent.pointerMove(stage, { clientX: 50, clientY: 30, pointerId: 7, shiftKey: true });
+    flushAnimationFrame();
+    view.rerender(canvas("arrow", fixtureDocument({
+      elements: [],
+      defaults: { ...fixtureDocument().defaults, rectangleFillColor: null },
+    })));
+    fireEvent.pointerUp(stage, { clientX: 50, clientY: 30, pointerId: 7, shiftKey: true });
+
+    expect(onCommand).toHaveBeenCalledWith({
+      type: "create",
+      element: expect.objectContaining({
+        type: "rectangle",
+        fillColor: "#FADB14",
+        width: 40,
+        height: 40,
+      }),
+    });
+  });
+
+  it("applies Shift constraints after converting workspace points to source space", () => {
+    const onCommand = vi.fn();
+    render(
+      <EditorCanvas
+        document={fixtureDocument({ elements: [] })}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="rectangle"
+        {...VIEWPORT_PROPS}
+        toSourcePoint={(point) => ({
+          x: (point.x - 100) / 2,
+          y: (point.y - 50) / 2,
+        })}
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={onCommand}
+        onBeginTransaction={() => {}}
+        onCommitTransaction={() => {}}
+        onCancelTransaction={() => {}}
         textEditorOverlay={undefined}
       />,
     );
     const stage = screen.getByTestId("stage");
 
-    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20 });
-    fireEvent.mouseMove(stage, { clientX: 70, clientY: 90 });
+    fireEvent.pointerDown(stage, { clientX: 120, clientY: 70, pointerId: 1 });
+    fireEvent.pointerMove(stage, { clientX: 200, clientY: 110, pointerId: 1, shiftKey: true });
+    flushAnimationFrame();
+    fireEvent.pointerUp(stage, { clientX: 200, clientY: 110, pointerId: 1, shiftKey: true });
 
-    expect(screen.getByTestId("annotation-node")).toBeTruthy();
-    expect(history.document.elements).toHaveLength(0);
-
-    fireEvent.mouseUp(stage, { clientX: 70, clientY: 90 });
-
-    expect(history.document.elements).toEqual([
-      expect.objectContaining({
-        type: "rectangle",
+    expect(onCommand).toHaveBeenCalledWith({
+      type: "create",
+      element: expect.objectContaining({
         x: 10,
-        y: 20,
-        width: 60,
-        height: 70,
+        y: 10,
+        width: 40,
+        height: 40,
       }),
-    ]);
-    expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
-      .toEqual([true, false]);
+    });
+  });
+
+  it("ignores wrong pointer ids and repeated terminals while capture owns the gesture", () => {
+    const onCommand = vi.fn();
+    const onInteractionActiveChange = vi.fn();
+    renderCreationCanvas("rectangle", { onCommand, onInteractionActiveChange });
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 10, pointerId: 7 });
+    fireEvent.pointerMove(stage, { clientX: 40, clientY: 50, pointerId: 8 });
+    fireEvent.pointerUp(stage, { clientX: 40, clientY: 50, pointerId: 8 });
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onInteractionActiveChange).toHaveBeenCalledTimes(1);
+    expect(konvaControl.releasePointerCapture).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(stage, { clientX: 40, clientY: 50, pointerId: 7 });
+    fireEvent.pointerUp(stage, { clientX: 80, clientY: 90, pointerId: 7 });
+    fireEvent.pointerCancel(stage, { pointerId: 7 });
+
+    expect(konvaControl.setPointerCapture).toHaveBeenCalledWith(7);
+    expect(konvaControl.releasePointerCapture).toHaveBeenCalledOnce();
+    expect(onCommand).toHaveBeenCalledOnce();
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true, false]);
+  });
+
+  it("does not treat window mouseup as a competing terminal", () => {
+    const onCommand = vi.fn();
+    const onInteractionActiveChange = vi.fn();
+    renderCreationCanvas("rectangle", { onCommand, onInteractionActiveChange });
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 10, pointerId: 9 });
+    fireEvent(window, new MouseEvent("mouseup"));
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true]);
+    fireEvent.pointerUp(stage, { clientX: 30, clientY: 40, pointerId: 9 });
+
+    expect(onCommand).toHaveBeenCalledOnce();
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true, false]);
   });
 
   it("does not begin text editing from a non-selection tool", () => {
@@ -558,11 +753,12 @@ describe("EditorCanvas gesture terminals", () => {
     expect(history.document.elements).toEqual(document.elements);
   });
 
-  it.each(["mouseup", "pointercancel", "blur"] as const)(
-    "clears an abandoned creation on window %s so create undo and redo remain usable",
+  it.each(["pointercancel", "blur"] as const)(
+    "clears an abandoned creation on %s so create undo and redo remain usable",
     (terminalEvent) => {
       const initial = fixtureDocument({ elements: [] });
       const history = createHistoryStore(initial);
+      const onCommand = vi.fn((command) => history.dispatch(command));
       const onInteractionActiveChange = vi.fn();
       render(
         <EditorCanvas
@@ -573,7 +769,7 @@ describe("EditorCanvas gesture terminals", () => {
           selectedIds={[]}
           onSelect={() => {}}
           onEditText={() => {}}
-          onCommand={(command) => history.dispatch(command)}
+          onCommand={onCommand}
           onBeginTransaction={(label) => history.beginTransaction(label)}
           onCommitTransaction={() => history.commitTransaction()}
           onCancelTransaction={() => history.cancelTransaction()}
@@ -583,15 +779,24 @@ describe("EditorCanvas gesture terminals", () => {
       );
       const stage = screen.getByTestId("stage");
 
-      fireEvent.mouseDown(stage, { clientX: 10, clientY: 10 });
-      window.dispatchEvent(new Event(terminalEvent, { bubbles: true, cancelable: true }));
-      window.dispatchEvent(new Event(terminalEvent, { bubbles: true, cancelable: true }));
+      fireEvent.pointerDown(stage, { clientX: 10, clientY: 10, pointerId: 1 });
+      fireEvent.pointerMove(stage, { clientX: 30, clientY: 30, pointerId: 1 });
+      if (terminalEvent === "pointercancel") {
+        fireEvent.pointerCancel(stage, { pointerId: 1 });
+        fireEvent.pointerCancel(stage, { pointerId: 1 });
+      } else {
+        fireEvent(window, new Event("blur"));
+        fireEvent(window, new Event("blur"));
+      }
       expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
         .toEqual([true, false]);
-      expect(() => fireEvent.mouseDown(stage, { clientX: 20, clientY: 20 })).not.toThrow();
-      fireEvent.mouseUp(stage, { clientX: 40, clientY: 40 });
+      expect(cancelAnimationFrame).toHaveBeenCalledOnce();
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(() => fireEvent.pointerDown(stage, { clientX: 20, clientY: 20, pointerId: 2 })).not.toThrow();
+      fireEvent.pointerUp(stage, { clientX: 40, clientY: 40, pointerId: 2 });
 
       expect(history.document.elements).toHaveLength(1);
+      expect(onCommand).toHaveBeenCalledOnce();
       expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
         .toEqual([true, false, true, false]);
       history.undo();
@@ -608,12 +813,12 @@ describe("EditorCanvas gesture terminals", () => {
     const stage = screen.getByTestId("stage");
     const annotation = screen.getByTestId("annotation-node");
 
-    fireEvent.mouseDown(stage);
+    fireEvent.pointerDown(stage, { pointerId: 1 });
     fireEvent.dragStart(annotation);
     fireEvent.drag(annotation, { clientX: 40, clientY: 50 });
     expect(history.document.elements[0]).toMatchObject({ x: 40, y: 50 });
-    window.dispatchEvent(new Event("pointercancel", { bubbles: true, cancelable: true }));
-    window.dispatchEvent(new Event("pointercancel", { bubbles: true, cancelable: true }));
+    fireEvent.pointerCancel(stage, { pointerId: 1 });
+    fireEvent.pointerCancel(stage, { pointerId: 1 });
     expect(konvaControl.stopDrag).toHaveBeenCalledOnce();
     expect(konvaControl.annotationValues).toMatchObject({
       x: initial.elements[0].x,
@@ -681,7 +886,7 @@ describe("EditorCanvas gesture terminals", () => {
 
     fireEvent(window, new Event("blur"));
     fireEvent(window, new Event("mouseup"));
-    fireEvent(window, new Event("pointercancel"));
+    fireEvent.pointerCancel(screen.getByTestId("stage"), { pointerId: 1 });
     expect(onCancelTransaction).toHaveBeenCalledOnce();
 
     konvaControl.dragTarget = { x: 25, y: 35 };
@@ -724,7 +929,7 @@ describe("EditorCanvas gesture terminals", () => {
       />,
     );
 
-    fireEvent.mouseDown(screen.getByTestId("stage"), { shiftKey: true });
+    fireEvent.pointerDown(screen.getByTestId("stage"), { shiftKey: true, pointerId: 1 });
     fireEvent.click(screen.getByTestId("element-text-1"));
 
     expect(onSelect).toHaveBeenCalledWith("text-1", true);
@@ -747,7 +952,7 @@ describe("EditorCanvas gesture terminals", () => {
     const stage = screen.getByTestId("stage");
     const annotation = screen.getByTestId("annotation-node");
 
-    fireEvent.mouseDown(stage);
+    fireEvent.pointerDown(stage, { pointerId: 1 });
     fireEvent.dragStart(annotation);
     fireEvent.drag(annotation);
     fireEvent.dragEnd(annotation);
@@ -787,7 +992,7 @@ describe("EditorCanvas gesture terminals", () => {
     );
     const annotation = screen.getByTestId("annotation-node");
 
-    fireEvent.mouseDown(screen.getByTestId("stage"));
+    fireEvent.pointerDown(screen.getByTestId("stage"), { pointerId: 1 });
     fireEvent.doubleClick(annotation);
     fireEvent.contextMenu(annotation);
 
@@ -828,7 +1033,7 @@ describe("EditorCanvas gesture terminals", () => {
       screen.getByTestId("element-text-1"),
     ];
 
-    fireEvent.mouseDown(screen.getByTestId("stage"));
+    fireEvent.pointerDown(screen.getByTestId("stage"), { pointerId: 1 });
     fireEvent.doubleClick(annotations[0]);
     fireEvent(annotations[1], new MouseEvent("auxclick", { bubbles: true }));
     annotations.forEach((annotation) => fireEvent.contextMenu(annotation));
@@ -847,10 +1052,10 @@ describe("EditorCanvas gesture terminals", () => {
     const stage = screen.getByTestId("stage");
     const annotation = screen.getByTestId("annotation-node");
 
-    fireEvent.mouseDown(stage);
+    fireEvent.pointerDown(stage, { pointerId: 1 });
     fireEvent.doubleClick(annotation);
-    window.dispatchEvent(new Event("pointercancel", { bubbles: true, cancelable: true }));
-    window.dispatchEvent(new Event("pointercancel", { bubbles: true, cancelable: true }));
+    fireEvent.pointerCancel(stage, { pointerId: 1 });
+    fireEvent.pointerCancel(stage, { pointerId: 1 });
     expect(konvaControl.stopTransform).toHaveBeenCalledOnce();
     expect(konvaControl.annotationValues).toMatchObject({
       x: initial.elements[0].x,
@@ -915,7 +1120,7 @@ describe("EditorCanvas gesture terminals", () => {
 
     fireEvent(window, new Event("blur"));
     fireEvent(window, new Event("mouseup"));
-    fireEvent(window, new Event("pointercancel"));
+    fireEvent.pointerCancel(screen.getByTestId("stage"), { pointerId: 1 });
     expect(onCancelTransaction).toHaveBeenCalledOnce();
 
     fireEvent.doubleClick(annotation);
@@ -947,4 +1152,38 @@ function renderSelectionCanvas(
     textEditorOverlay={undefined}
     />,
   );
+}
+
+function renderCreationCanvas(
+  tool: Exclude<EditorTool, "selection" | "text"> | "text",
+  overrides: Partial<Parameters<typeof EditorCanvas>[0]> = {},
+) {
+  const document = fixtureDocument({ elements: [] });
+  return render(
+    <EditorCanvas
+      document={document}
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      tool={tool}
+      {...VIEWPORT_PROPS}
+      selectedIds={[]}
+      onSelect={() => {}}
+      onEditText={() => {}}
+      onCommand={() => {}}
+      onBeginTransaction={() => {}}
+      onCommitTransaction={() => {}}
+      onCancelTransaction={() => {}}
+      textEditorOverlay={undefined}
+      {...overrides}
+    />,
+  );
+}
+
+function flushAnimationFrame(): void {
+  const next = animationFrames.entries().next().value as
+    | [number, FrameRequestCallback]
+    | undefined;
+  if (!next) return;
+  const [frame, callback] = next;
+  animationFrames.delete(frame);
+  act(() => callback(0));
 }

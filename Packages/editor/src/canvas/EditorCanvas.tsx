@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type Konva from "konva";
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Transformer } from "react-konva";
-import type { CreationGesture, EditorCommand, EditorDocument, EditorElement, EditorTool, Point } from "../model/elements";
+import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, Point } from "../model/elements";
+import {
+  InteractionController,
+  type InteractionCommit,
+  type InteractionModifiers,
+  type InteractionPreview,
+} from "../interaction/InteractionController";
 import type { ViewportSnapshot } from "../viewport/ViewportController";
 import {
   moveElementsWithinBounds,
   resizeElementWithinBounds,
 } from "./SelectionController";
-import { createElement } from "./tools/createElement";
+import { createElementFromDocument } from "./tools/createElement";
 import {
   renderElement,
   type ElementInteractionHandlers,
@@ -15,7 +21,7 @@ import {
 import { BLUR_RADIUS_PX, createBlurredSourceCanvas } from "./blurSource";
 import { cursorForTool } from "./tools/ToolController";
 
-export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePanReady, selectedIds, onSelect, onEditText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onViewportWheel, onViewportPanBy, onInteractionActiveChange, toSourcePoint, textEditorOverlay }: {
+export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePanReady, selectedIds, onSelect, onEditText, onBeginNewText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onViewportWheel, onViewportPanBy, onInteractionActiveChange, toSourcePoint, textEditorOverlay }: {
   document: EditorDocument;
   sourceImageURL: string;
   tool: EditorTool;
@@ -24,6 +30,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
   selectedIds: readonly string[];
   onSelect: (id: string | undefined, toggle?: boolean) => void;
   onEditText: (id: string) => void;
+  onBeginNewText: (point: Point, defaults: EditorDefaults) => void;
   onCommand: (command: EditorCommand) => void;
   onBeginTransaction: (label: string) => void;
   onCommitTransaction: () => void;
@@ -54,8 +61,20 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
   );
   const nodes = useRef(new Map<string, Konva.Group>());
   const transformer = useRef<Konva.Transformer | null>(null);
-  const gesture = useRef<ActiveCreationGesture | undefined>(undefined);
-  const panGesture = useRef<{ last: Point } | undefined>(undefined);
+  const interactionControllerRef = useRef<InteractionController | undefined>(undefined);
+  if (!interactionControllerRef.current) {
+    interactionControllerRef.current = new InteractionController();
+  }
+  const interactionController = interactionControllerRef.current;
+  const captureContainer = useRef<HTMLDivElement | undefined>(undefined);
+  const capturedPointerId = useRef<number | undefined>(undefined);
+  const spacePanActive = useRef(false);
+  const appliedViewportPan = useRef<Point>({ x: 0, y: 0 });
+  const latestMove = useRef<{
+    point: Point;
+    modifiers: InteractionModifiers;
+  } | undefined>(undefined);
+  const frame = useRef<number | null>(null);
   const selectionToggle = useRef(false);
   const activeAnnotationInteraction = useRef<ActiveAnnotationInteraction | undefined>(undefined);
   const [isTransforming, setIsTransforming] = useState(false);
@@ -71,25 +90,85 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
     transformer.current?.getLayer()?.draw();
   }, [selectedIds, document]);
 
-  const sourcePoint = (stage: Konva.Stage): Point => {
+  const workspacePoint = (stage: Konva.Stage): Point => {
     const pointer = stage.getPointerPosition();
     if (!pointer) {
       throw new Error("Canvas pointer position is unavailable");
     }
-    return toSourcePoint(pointer);
+    return pointer;
   };
-  const finishGesture = (stage: Konva.Stage) => {
-    const activeGesture = gesture.current;
-    if (!activeGesture) return;
-    gesture.current = undefined;
+  const interactionPoint = (stage: Konva.Stage): Point => {
+    const point = workspacePoint(stage);
+    return spacePanActive.current ? point : toSourcePoint(point);
+  };
+  const applyPreview = (preview: InteractionPreview) => {
+    if (preview.type === "creation") {
+      setCreationPreview(preview.element);
+      return;
+    }
+    if (preview.type === "viewport") {
+      const delta = {
+        x: preview.pan.x - appliedViewportPan.current.x,
+        y: preview.pan.y - appliedViewportPan.current.y,
+      };
+      appliedViewportPan.current = preview.pan;
+      if (delta.x !== 0 || delta.y !== 0) onViewportPanBy(delta);
+    }
+  };
+  const clearScheduledMove = () => {
+    if (frame.current !== null) {
+      cancelAnimationFrame(frame.current);
+      frame.current = null;
+    }
+    latestMove.current = undefined;
+  };
+  const flushScheduledMove = () => {
+    if (frame.current !== null) {
+      cancelAnimationFrame(frame.current);
+      frame.current = null;
+    }
+    const latest = latestMove.current;
+    latestMove.current = undefined;
+    if (latest) {
+      applyPreview(interactionController.update(latest.point, latest.modifiers));
+    }
+  };
+  const releasePointerCapture = () => {
+    const pointerId = capturedPointerId.current;
+    if (pointerId === undefined) return;
+    const container = captureContainer.current;
+    capturedPointerId.current = undefined;
+    captureContainer.current = undefined;
+    if (container?.hasPointerCapture(pointerId)) {
+      container.releasePointerCapture(pointerId);
+    }
+  };
+  const finishPointerInteraction = () => {
+    clearScheduledMove();
     setCreationPreview(undefined);
-    const end = sourcePoint(stage);
-    const creationGesture = creationGestureFor(
-      tool as Exclude<EditorTool, "selection">,
-      activeGesture,
-      end,
-    );
-    onCommand({ type: "create", element: createCanvasElement(document, tool as Exclude<EditorTool, "selection">, creationGesture) });
+    releasePointerCapture();
+    appliedViewportPan.current = { x: 0, y: 0 };
+    spacePanActive.current = false;
+    setIsSpacePanning(false);
+    onInteractionActiveChange(false);
+  };
+  const routeCommit = (result: InteractionCommit) => {
+    switch (result.type) {
+      case "none":
+        return;
+      case "command":
+        onCommand(result.command);
+        return;
+      case "selection":
+        if (result.selectedIds.length === 0) onSelect(undefined);
+        else result.selectedIds.forEach((id, index) => onSelect(id, index > 0));
+        return;
+      case "beginNewText":
+        onBeginNewText(result.point, result.defaults);
+        return;
+      case "viewport":
+        applyPreview(result);
+    }
   };
   const cancelAnnotationTransaction = () => {
     const activeInteraction = activeAnnotationInteraction.current;
@@ -105,28 +184,24 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
       }
     }
   };
-  useEffect(() => {
-    const clearPointerInteraction = () => {
-      const wasActive = gesture.current !== undefined || panGesture.current !== undefined;
-      gesture.current = undefined;
+  const cancelPointerInteraction = () => {
+    try {
+      cancelAnnotationTransaction();
+    } finally {
+      const wasActive = interactionController.active;
+      interactionController.cancel();
+      clearScheduledMove();
       setCreationPreview(undefined);
-      panGesture.current = undefined;
+      releasePointerCapture();
+      appliedViewportPan.current = { x: 0, y: 0 };
+      spacePanActive.current = false;
       setIsSpacePanning(false);
       if (wasActive) onInteractionActiveChange(false);
-    };
-    const cancelPointerInteraction = () => {
-      try {
-        cancelAnnotationTransaction();
-      } finally {
-        clearPointerInteraction();
-      }
-    };
-    window.addEventListener("mouseup", clearPointerInteraction);
-    window.addEventListener("pointercancel", cancelPointerInteraction);
+    }
+  };
+  useEffect(() => {
     window.addEventListener("blur", cancelPointerInteraction);
     return () => {
-      window.removeEventListener("mouseup", clearPointerInteraction);
-      window.removeEventListener("pointercancel", cancelPointerInteraction);
       window.removeEventListener("blur", cancelPointerInteraction);
     };
   });
@@ -167,91 +242,81 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
             ctrlKey: event.evt.ctrlKey,
           });
         }}
-        onMouseDown={(event) => {
+        onPointerDown={(event) => {
           const stage = event.target.getStage();
           if (!stage) throw new Error("Canvas stage is unavailable");
           selectionToggle.current = event.evt.shiftKey;
-          if (spacePanReady) {
-            const start = stage.getPointerPosition();
-            if (!start) throw new Error("Canvas pointer position is unavailable");
-            panGesture.current = { last: start };
-            setIsSpacePanning(true);
-            onInteractionActiveChange(true);
-            return;
-          }
-          if (tool === "selection" || isTransforming) {
+          if (!spacePanReady && (tool === "selection" || isTransforming)) {
             if (event.target === event.target.getStage()) onSelect(undefined);
             return;
           }
-          const start = sourcePoint(stage);
-          const preview = createCanvasElement(
+          if (interactionController.active) return;
+          spacePanActive.current = spacePanReady;
+          appliedViewportPan.current = { x: 0, y: 0 };
+          const start = interactionPoint(stage);
+          const preview = interactionController.begin({
+            pointerId: event.evt.pointerId,
+            tool,
+            point: start,
+            modifiers: modifiersFor(event.evt),
+            defaults: document.defaults,
             document,
-            tool as Exclude<EditorTool, "selection">,
-            creationGestureFor(
-              tool as Exclude<EditorTool, "selection">,
-              { start, points: [start] },
-              start,
-            ),
-          );
-          gesture.current = {
-            start,
-            points: [start],
-            previewId: preview.id,
-          };
+            selectedIds,
+            spaceHeld: spacePanReady,
+          });
+          const container = stage.container();
+          container.setPointerCapture(event.evt.pointerId);
+          captureContainer.current = container;
+          capturedPointerId.current = event.evt.pointerId;
+          if (preview) applyPreview(preview);
+          setIsSpacePanning(spacePanReady);
           onInteractionActiveChange(true);
         }}
-        onMouseMove={(event) => {
+        onPointerMove={(event) => {
+          if (
+            !interactionController.active
+            || event.evt.pointerId !== capturedPointerId.current
+          ) return;
           const stage = event.target.getStage();
           if (!stage) throw new Error("Canvas stage is unavailable");
-          if (panGesture.current) {
-            const pointer = stage.getPointerPosition();
-            if (!pointer) throw new Error("Canvas pointer position is unavailable");
-            const delta = {
-              x: pointer.x - panGesture.current.last.x,
-              y: pointer.y - panGesture.current.last.y,
-            };
-            panGesture.current.last = pointer;
-            onViewportPanBy({
-              x: delta.x,
-              y: delta.y,
+          latestMove.current = {
+            point: interactionPoint(stage),
+            modifiers: modifiersFor(event.evt),
+          };
+          if (frame.current === null) {
+            frame.current = requestAnimationFrame(() => {
+              frame.current = null;
+              const latest = latestMove.current;
+              latestMove.current = undefined;
+              if (latest) {
+                applyPreview(interactionController.update(latest.point, latest.modifiers));
+              }
             });
-            return;
           }
-          const activeGesture = gesture.current;
-          if (!activeGesture) return;
-          const end = sourcePoint(stage);
-          if (tool === "freehand" || tool === "highlighter") {
-            activeGesture.points.push(end);
-          }
-          setCreationPreview({
-            ...createCanvasElement(
-              document,
-              tool as Exclude<EditorTool, "selection">,
-              creationGestureFor(
-                tool as Exclude<EditorTool, "selection">,
-                activeGesture,
-                end,
-              ),
-            ),
-            id: activeGesture.previewId,
-          });
         }}
-        onMouseUp={(event) => {
+        onPointerUp={(event) => {
+          if (
+            !interactionController.active
+            || event.evt.pointerId !== capturedPointerId.current
+          ) return;
           const stage = event.target.getStage();
           if (!stage) throw new Error("Canvas stage is unavailable");
-          if (panGesture.current) {
-            panGesture.current = undefined;
-            setIsSpacePanning(false);
-            onInteractionActiveChange(false);
-            return;
+          try {
+            flushScheduledMove();
+            const point = interactionPoint(stage);
+            const modifiers = modifiersFor(event.evt);
+            applyPreview(interactionController.update(point, modifiers));
+            routeCommit(interactionController.commit(point, modifiers));
+          } finally {
+            finishPointerInteraction();
           }
-          if (gesture.current) {
-            try {
-              finishGesture(stage);
-            } finally {
-              onInteractionActiveChange(false);
-            }
-          }
+        }}
+        onPointerCancel={(event) => {
+          if (
+            capturedPointerId.current !== undefined
+            && event.evt.pointerId !== capturedPointerId.current
+          ) return;
+          cancelPointerInteraction();
         }}
       >
         <Layer id="workspaceLayer">
@@ -384,7 +449,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
               },
             }, blurredSource))}
             {creationPreview && (
-              <Group listening={false}>
+              <Group listening={false} data-testid="creation-preview">
                 {renderElement(
                   creationPreview,
                   previewInteractionHandlers,
@@ -430,31 +495,6 @@ const previewInteractionHandlers = {
   onTransformEnd: () => {},
   registerNode: () => {},
 } satisfies ElementInteractionHandlers;
-
-type ActiveCreationGesture = {
-  start: Point;
-  points: Point[];
-  previewId: string;
-};
-
-function creationGestureFor(
-  tool: Exclude<EditorTool, "selection">,
-  gesture: Pick<ActiveCreationGesture, "start" | "points">,
-  end: Point,
-): CreationGesture {
-  if (tool === "freehand" || tool === "highlighter") {
-    return {
-      kind: "path",
-      points: gesture.points.at(-1) === end
-        ? gesture.points
-        : [...gesture.points, end],
-    };
-  }
-  if (tool === "text" || tool === "numberMarker") {
-    return { kind: "point", point: gesture.start };
-  }
-  return { kind: "box", start: gesture.start, end };
-}
 
 function byZIndex(left: EditorElement, right: EditorElement): number {
   return left.zIndex - right.zIndex;
@@ -514,14 +554,13 @@ function selectedNodeMap(
 export function createCanvasElement(
   document: EditorDocument,
   tool: Exclude<EditorTool, "selection">,
-  gesture: CreationGesture,
+  gesture: Parameters<typeof createElementFromDocument>[2],
 ): EditorElement {
-  return createElement(tool, gesture, {
-    defaults: document.defaults,
-    nextNumberMarker: Math.max(0, ...document.elements.filter((candidate) => candidate.type === "numberMarker").map((candidate) => candidate.number)) + 1,
-    nextZIndex: Math.max(-1, ...document.elements.map((candidate) => candidate.zIndex)) + 1,
-    seed: Math.max(0, ...document.elements.map((candidate) => candidate.seed)) + 1,
-  });
+  return createElementFromDocument(document, tool, gesture);
+}
+
+function modifiersFor(event: Pick<PointerEvent, "shiftKey" | "altKey">): InteractionModifiers {
+  return { shift: event.shiftKey, option: event.altKey };
 }
 
 function useSourceImage(sourceImageURL: string): HTMLImageElement | undefined {

@@ -1,17 +1,20 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App, EditorApp } from "./App";
 import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
 import { keyboardCommandFor } from "./input/ShortcutRouter";
-import type { EditorCommand, EditorDocument } from "./model/elements";
+import type { EditorCommand, EditorDefaults, EditorDocument, EditorTool, Point } from "./model/elements";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "./test/fixtures";
 import type { ViewportSnapshot } from "./viewport/ViewportController";
 
-vi.mock("./canvas/EditorCanvas", () => ({
-  EditorCanvas: ({ document, viewport, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onInteractionActiveChange, textEditorOverlay }: {
+vi.mock("./canvas/EditorCanvas", async () => {
+  const { createElementFromDocument } = await import("./canvas/tools/createElement");
+  return {
+    EditorCanvas: ({ document, tool, viewport, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onBeginNewText, onInteractionActiveChange, textEditorOverlay }: {
     document: EditorDocument;
+    tool: EditorTool;
     viewport: ViewportSnapshot;
     onCommand: (command: EditorCommand) => void;
     onSelect: (id: string | undefined, toggle?: boolean) => void;
@@ -19,10 +22,18 @@ vi.mock("./canvas/EditorCanvas", () => ({
     onCommitTransaction: () => void;
     onCancelTransaction: () => void;
     onEditText: (id: string) => void;
+    onBeginNewText: (point: Point, defaults: EditorDefaults) => void;
     onInteractionActiveChange: (active: boolean) => void;
     textEditorOverlay: ReactNode;
-  }) => (
-    <>
+    }) => {
+      const pointerGesture = useRef<{
+        pointerId: number;
+        tool: EditorTool;
+        document: EditorDocument;
+        start: Point;
+      } | undefined>(undefined);
+      return (
+      <>
       <output data-testid="canvas-opacities">
         {document.elements.map((element) => `${element.id}:${element.opacity}`).join(",")}
       </output>
@@ -39,6 +50,40 @@ vi.mock("./canvas/EditorCanvas", () => ({
       <button type="button" onClick={() => onEditText("text-1")}>Edit text-1</button>
       <button type="button" onClick={() => onInteractionActiveChange(true)}>Begin canvas interaction</button>
       <button type="button" onClick={() => onInteractionActiveChange(false)}>End canvas interaction</button>
+      <div
+        data-testid="mock-canvas-pointer-surface"
+        onPointerDown={(event) => {
+          if (tool === "selection" || pointerGesture.current) return;
+          pointerGesture.current = {
+            pointerId: event.pointerId,
+            tool,
+            document: structuredClone(document),
+            start: { x: event.clientX, y: event.clientY },
+          };
+          onInteractionActiveChange(true);
+        }}
+        onPointerMove={() => {}}
+        onPointerUp={(event) => {
+          const active = pointerGesture.current;
+          if (!active || active.pointerId !== event.pointerId) return;
+          pointerGesture.current = undefined;
+          const end = { x: event.clientX, y: event.clientY };
+          if (active.tool === "text") {
+            onBeginNewText(active.start, active.document.defaults);
+          } else if (active.tool !== "selection") {
+            const gesture = active.tool === "freehand" || active.tool === "highlighter"
+              ? { kind: "path" as const, points: [active.start, end] }
+              : active.tool === "numberMarker"
+                ? { kind: "point" as const, point: active.start }
+                : { kind: "box" as const, start: active.start, end };
+            onCommand({
+              type: "create",
+              element: createElementFromDocument(active.document, active.tool, gesture),
+            });
+          }
+          onInteractionActiveChange(false);
+        }}
+      />
       <button
         type="button"
         onClick={() => onCommand({
@@ -96,9 +141,11 @@ vi.mock("./canvas/EditorCanvas", () => ({
         Move then commit
       </button>
       {textEditorOverlay}
-    </>
-  ),
-}));
+      </>
+      );
+    },
+  };
+});
 
 beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class implements ResizeObserver {
@@ -112,6 +159,14 @@ beforeEach(() => {
     public unobserve() {}
   });
   vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
+  vi.stubGlobal("PointerEvent", class extends MouseEvent {
+    public readonly pointerId: number;
+
+    public constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 0;
+    }
+  });
   vi.stubGlobal("requestAnimationFrame", vi.fn());
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
@@ -249,6 +304,89 @@ describe("EditorApp", () => {
     fireEvent.click(screen.getByRole("button", { name: "End canvas interaction" }));
     fireEvent.keyDown(window, { code: "KeyR", key: "r" });
     expect(screen.getByRole("button", { name: "Rectangle, shortcut R" }).getAttribute("aria-pressed"))
+      .toBe("true");
+  });
+
+  it.each([
+    ["rectangle", "Rectangle, shortcut R"],
+    ["arrow", "Arrow, shortcut A"],
+    ["line", "Line, shortcut L"],
+    ["freehand", "Freehand, shortcut P"],
+    ["highlighter", "Highlighter, shortcut H"],
+    ["blur", "Blur, shortcut B"],
+    ["redaction", "Redaction, shortcut X"],
+  ] as const)("keeps %s active for repeated pointer creation", (_tool, buttonName) => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    const toolButton = screen.getByRole("button", { name: buttonName });
+    const selectionButton = screen.getByRole("button", { name: "Selection, shortcut V" });
+    const canvas = screen.getByTestId("mock-canvas-pointer-surface");
+
+    fireEvent.click(toolButton);
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 40, clientY: 50, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 40, clientY: 50, pointerId: 1 });
+
+    expect(toolButton.getAttribute("aria-pressed")).toBe("true");
+    expect(selectionButton.getAttribute("aria-pressed")).toBe("false");
+    expect(changes.at(-1)?.elements).toHaveLength(1);
+
+    fireEvent.pointerDown(canvas, { clientX: 60, clientY: 70, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 90, clientY: 100, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 90, clientY: 100, pointerId: 2 });
+
+    expect(toolButton.getAttribute("aria-pressed")).toBe("true");
+    expect(changes.at(-1)?.elements).toHaveLength(2);
+    expect(changes).toHaveLength(2);
+  });
+
+  it("keeps Number Marker active for repeated click creation", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    const markerButton = screen.getByRole("button", { name: "Number Marker, shortcut N" });
+    const canvas = screen.getByTestId("mock-canvas-pointer-surface");
+
+    fireEvent.click(markerButton);
+    fireEvent.pointerDown(canvas, { clientX: 25, clientY: 35, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 25, clientY: 35, pointerId: 1 });
+    fireEvent.pointerDown(canvas, { clientX: 45, clientY: 55, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 45, clientY: 55, pointerId: 2 });
+
+    expect(markerButton.getAttribute("aria-pressed")).toBe("true");
+    expect(changes.at(-1)?.elements).toEqual([
+      expect.objectContaining({ type: "numberMarker", number: 1 }),
+      expect.objectContaining({ type: "numberMarker", number: 2 }),
+    ]);
+  });
+
+  it("routes a new Text pointer gesture without publishing a placeholder element", () => {
+    const onChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [] })}
+      initialTool="text"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={() => {}}
+    />);
+    const canvas = screen.getByTestId("mock-canvas-pointer-surface");
+
+    fireEvent.pointerDown(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 80, clientY: 90, pointerId: 1 });
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Text, shortcut T" }).getAttribute("aria-pressed"))
       .toBe("true");
   });
 

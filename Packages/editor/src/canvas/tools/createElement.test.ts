@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_EDITOR_DEFAULTS } from "../../model/defaults";
 import { EditorElementSchema } from "../../model/schema";
 import { creationGesture, fixtureDocument } from "../../test/fixtures";
-import { createElement } from "./createElement";
-import { createCanvasElement } from "../EditorCanvas";
+import { createElement, createElementFromDocument } from "./createElement";
 import { cursorForTool } from "./ToolController";
 import { keyboardCommandFor } from "../../input/ShortcutRouter";
 
@@ -178,8 +177,8 @@ describe("createElement", () => {
       ],
     });
 
-    const rectangle = createCanvasElement(document, "rectangle", creationGesture("rectangle"));
-    const marker = createCanvasElement(document, "numberMarker", creationGesture("numberMarker"));
+    const rectangle = createElementFromDocument(document, "rectangle", creationGesture("rectangle"));
+    const marker = createElementFromDocument(document, "numberMarker", creationGesture("numberMarker"));
 
     expect(rectangle).toMatchObject({ type: "rectangle", fillColor: "#FADB14", zIndex: 10 });
     expect(marker).toMatchObject({ type: "numberMarker", number: 10, zIndex: 10 });
@@ -192,7 +191,7 @@ describe("createElement", () => {
       ],
     });
 
-    const rectangle = createCanvasElement(document, "rectangle", creationGesture("rectangle"));
+    const rectangle = createElementFromDocument(document, "rectangle", creationGesture("rectangle"));
 
     expect(rectangle.id).not.toBe("rectangle-2");
     expect(rectangle.seed).toBe(2);
