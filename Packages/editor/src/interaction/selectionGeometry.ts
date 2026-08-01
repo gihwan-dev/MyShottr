@@ -1,5 +1,6 @@
 import type { EditorElement, Point } from "../model/elements";
-import type { Rect } from "../viewport/ViewportController";
+import { arrowSegments } from "../model/arrowGeometry";
+import type { Rect, SourceBounds } from "../viewport/ViewportController";
 
 const MARQUEE_THRESHOLD_CSS_PX = 3;
 
@@ -69,9 +70,43 @@ export function unionBounds(
   };
 }
 
+export function moveElementsWithinBounds(
+  elements: readonly EditorElement[],
+  delta: Point,
+  bounds: SourceBounds,
+): EditorElement[] {
+  assertSourceBounds(bounds);
+  assertFinite(delta.x, "delta x");
+  assertFinite(delta.y, "delta y");
+  if (elements.length === 0) {
+    throw new Error("Cannot move an empty element selection");
+  }
+
+  const renderedBounds = elements.map(rotatedElementBounds);
+  const minimumDeltaX = Math.max(...renderedBounds.map((elementBounds) => -elementBounds.x));
+  const maximumDeltaX = Math.min(
+    ...renderedBounds.map(
+      (elementBounds) => bounds.sourceWidth - elementBounds.x - elementBounds.width,
+    ),
+  );
+  const minimumDeltaY = Math.max(...renderedBounds.map((elementBounds) => -elementBounds.y));
+  const maximumDeltaY = Math.min(
+    ...renderedBounds.map(
+      (elementBounds) => bounds.sourceHeight - elementBounds.y - elementBounds.height,
+    ),
+  );
+  const boundedDelta = {
+    x: boundedAxisDelta(delta.x, minimumDeltaX, maximumDeltaX),
+    y: boundedAxisDelta(delta.y, minimumDeltaY, maximumDeltaY),
+  };
+
+  return elements.map((element) => translateElement(element, boundedDelta));
+}
+
 function pointsForBounds(element: EditorElement): readonly Point[] {
   switch (element.type) {
     case "arrow":
+      return arrowSegments(element).flatMap(([start, end]) => [start, end]);
     case "line":
     case "freehand":
     case "highlighter":
@@ -86,6 +121,61 @@ function pointsForBounds(element: EditorElement): readonly Point[] {
         { x: element.x + element.width, y: element.y + element.height },
         { x: element.x, y: element.y + element.height },
       ];
+  }
+}
+
+function boundedAxisDelta(
+  requestedDelta: number,
+  minimumDelta: number,
+  maximumDelta: number,
+): number {
+  if (minimumDelta > maximumDelta) return 0;
+  return Math.min(Math.max(requestedDelta, minimumDelta), maximumDelta);
+}
+
+function translateElement(element: EditorElement, delta: Point): EditorElement {
+  const translate = (point: Point): Point => ({
+    x: point.x + delta.x,
+    y: point.y + delta.y,
+  });
+  switch (element.type) {
+    case "arrow":
+    case "line":
+      return {
+        ...element,
+        x: element.x + delta.x,
+        y: element.y + delta.y,
+        points: [translate(element.points[0]), translate(element.points[1])],
+      };
+    case "freehand":
+    case "highlighter":
+      return {
+        ...element,
+        x: element.x + delta.x,
+        y: element.y + delta.y,
+        points: element.points.map(translate),
+      };
+    default:
+      return {
+        ...element,
+        x: element.x + delta.x,
+        y: element.y + delta.y,
+      };
+  }
+}
+
+function assertSourceBounds(bounds: SourceBounds): void {
+  if (!Number.isFinite(bounds.sourceWidth) || bounds.sourceWidth <= 0) {
+    throw new Error("sourceWidth must be a positive finite number");
+  }
+  if (!Number.isFinite(bounds.sourceHeight) || bounds.sourceHeight <= 0) {
+    throw new Error("sourceHeight must be a positive finite number");
+  }
+}
+
+function assertFinite(value: number, name: string): void {
+  if (!Number.isFinite(value)) {
+    throw new Error(`${name} must be finite`);
   }
 }
 

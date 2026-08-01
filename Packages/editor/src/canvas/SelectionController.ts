@@ -1,5 +1,4 @@
 import type { EditorElement, Point } from "../model/elements";
-import { rotatedElementBounds } from "../interaction/selectionGeometry";
 import type { SourceBounds } from "../viewport/ViewportController";
 
 export const replaceSelection = (id: string): readonly string[] => [id];
@@ -39,53 +38,6 @@ export function moveElementWithinBounds(
     default:
       return { ...element, x, y };
   }
-}
-
-export function moveElementsWithinBounds(
-  elements: readonly EditorElement[],
-  delta: Point,
-  bounds: SourceBounds,
-): EditorElement[] {
-  assertSourceBounds(bounds);
-  assertFinite(delta.x, "delta x");
-  assertFinite(delta.y, "delta y");
-  if (elements.length === 0) {
-    throw new Error("Cannot move an empty element selection");
-  }
-
-  const renderedBounds = elements.map(rotatedElementBounds);
-  const minimumDeltaX = Math.max(...renderedBounds.map((elementBounds) => -elementBounds.x));
-  const maximumDeltaX = Math.min(
-    ...renderedBounds.map(
-      (elementBounds) => bounds.sourceWidth - elementBounds.x - elementBounds.width,
-    ),
-  );
-  const minimumDeltaY = Math.max(...renderedBounds.map((elementBounds) => -elementBounds.y));
-  const maximumDeltaY = Math.min(
-    ...renderedBounds.map(
-      (elementBounds) => bounds.sourceHeight - elementBounds.y - elementBounds.height,
-    ),
-  );
-  if (minimumDeltaX > maximumDeltaX || minimumDeltaY > maximumDeltaY) {
-    throw new Error("Selected elements cannot fit inside the source bounds");
-  }
-
-  const boundedDelta = {
-    x: Math.min(Math.max(delta.x, minimumDeltaX), maximumDeltaX),
-    y: Math.min(Math.max(delta.y, minimumDeltaY), maximumDeltaY),
-  };
-  return elements.map((element) => translateElement(
-    element,
-    { x: element.x + boundedDelta.x, y: element.y + boundedDelta.y },
-  ));
-}
-
-export function duplicateElementWithinBounds(
-  element: EditorElement,
-  targetPosition: Point,
-  bounds: SourceBounds,
-): EditorElement {
-  return moveElementWithinBounds(element, targetPosition, bounds);
 }
 
 export function resizeElementWithinBounds(

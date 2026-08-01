@@ -8,7 +8,6 @@ import {
 import { EditorCanvas, type EditorCanvasHandle } from "./canvas/EditorCanvas";
 import {
   clearSelection,
-  moveElementsWithinBounds,
   replaceSelection,
   toggleSelection,
 } from "./canvas/SelectionController";
@@ -37,7 +36,7 @@ import { applyRailProperty, findElement } from "./model/reducer";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, TextElement } from "./model/elements";
 import { KONVA_DEFAULT_FONT_FAMILY, TEXT_LINE_HEIGHT } from "./canvas/renderingConstants";
 import { isTextEntryTarget, keyboardCommandFor } from "./input/ShortcutRouter";
-import { unionBounds } from "./interaction/selectionGeometry";
+import { moveElementsWithinBounds, unionBounds } from "./interaction/selectionGeometry";
 import "./styles.css";
 
 export type EditorAppProps = {
@@ -511,25 +510,37 @@ function measureTextBounds(text: string, fontSize: TextElement["fontSize"]): Pic
 
 export function App() {
   const bridge = useNativeBridge();
-  const [loadedDocument, setLoadedDocument] = useState<{ document: EditorDocument; sourceImageURL: string; initialTool: EditorTool }>();
-  const loadedDocumentRef = useRef<{ document: EditorDocument; sourceImageURL: string; initialTool: EditorTool } | undefined>(undefined);
+  const [loadedDocument, setLoadedDocument] = useState<LoadedDocument>();
+  const loadedDocumentRef = useRef<LoadedDocument | undefined>(undefined);
+  const acceptedLoadSequence = useRef(0);
+  const latestLoadRequestSequence = useRef(0);
 
   useEffect(() => {
     const acceptLoad = async (message: Extract<Parameters<typeof bridge.subscribe>[0] extends (message: infer T) => void ? T : never, { type: "loadDocument" }>) => {
+      latestLoadRequestSequence.current += 1;
+      const loadRequestSequence = latestLoadRequestSequence.current;
       const { annotationDocument, sourceImageURL, initialTool } = message.payload;
       try {
         const dimensions = await sourceDimensions(sourceImageURL);
+        if (loadRequestSequence !== latestLoadRequestSequence.current) return;
         if (dimensions.width !== annotationDocument.sourcePixelWidth || dimensions.height !== annotationDocument.sourcePixelHeight) {
           throw new Error("Source image dimensions do not match the document");
         }
       } catch (error) {
+        if (loadRequestSequence !== latestLoadRequestSequence.current) return;
         await bridge.sendCorrelated(message.requestId, "bridgeError", {
           code: "INVALID_DOCUMENT",
           message: error instanceof Error ? error.message : "Source image could not be loaded",
         });
         return;
       }
-      const nextDocument = { document: annotationDocument, sourceImageURL, initialTool };
+      acceptedLoadSequence.current += 1;
+      const nextDocument = {
+        document: annotationDocument,
+        sourceImageURL,
+        initialTool,
+        loadInstanceId: acceptedLoadSequence.current,
+      };
       loadedDocumentRef.current = nextDocument;
       setLoadedDocument(nextDocument);
       await bridge.sendCorrelated(message.requestId, "annotationSnapshot", { document: annotationDocument });
@@ -564,6 +575,7 @@ export function App() {
     });
     window.addEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
     return () => {
+      latestLoadRequestSequence.current += 1;
       unsubscribe();
       window.removeEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
     };
@@ -571,28 +583,34 @@ export function App() {
 
   if (!loadedDocument) return <main aria-label="MyShottr editor">Waiting for document</main>;
   return <EditorApp
-    key={loadedDocument.sourceImageURL}
+    key={loadedDocument.loadInstanceId}
     initialDocument={loadedDocument.document}
     initialTool={loadedDocument.initialTool}
     sourceImageURL={loadedDocument.sourceImageURL}
     onChange={(document) => {
-      if (loadedDocumentRef.current) {
-        loadedDocumentRef.current = { ...loadedDocumentRef.current, document };
-      }
+      const loaded = loadedDocumentRef.current;
+      if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
+      loadedDocumentRef.current = { ...loaded, document };
       void bridge.send("documentChanged", {});
     }}
     onPreferencesChange={(tool, defaults) => {
       const loaded = loadedDocumentRef.current;
-      if (loaded) {
-        loadedDocumentRef.current = {
-          ...loaded,
-          document: { ...loaded.document, defaults },
-        };
-      }
+      if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
+      loadedDocumentRef.current = {
+        ...loaded,
+        document: { ...loaded.document, defaults },
+      };
       void bridge.send("editorPreferencesChanged", { tool, defaults });
     }}
   />;
 }
+
+type LoadedDocument = {
+  document: EditorDocument;
+  sourceImageURL: string;
+  initialTool: EditorTool;
+  loadInstanceId: number;
+};
 
 function sourceDimensions(sourceImageURL: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {

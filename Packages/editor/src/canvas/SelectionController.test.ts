@@ -1,19 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { allElementFixtures, fixtureLine, fixtureRect, fixtureText } from "../test/fixtures";
 import {
-  duplicateElementWithinBounds,
-  moveElementsWithinBounds,
+  moveElementWithinBounds,
   resizeElementWithinBounds,
-  clearSelection,
   replaceSelection,
   toggleSelection,
 } from "./SelectionController";
 import { createHistoryStore } from "../model/history";
 import { findElement } from "../model/reducer";
-import { rotatedElementBounds } from "../interaction/selectionGeometry";
+import { moveElementsWithinBounds, rotatedElementBounds } from "../interaction/selectionGeometry";
 
 describe("canvas element bounds", () => {
-  it("offsets every path point when duplicating an arrow", () => {
+  it("offsets every path point when moving an arrow", () => {
     const arrow = allElementFixtures().find((element) => element.type === "arrow");
     if (!arrow) throw new Error("Missing arrow fixture");
 
@@ -22,20 +20,20 @@ describe("canvas element bounds", () => {
       x: 1430,
       points: [{ x: 1430, y: 25 }, { x: 1530, y: 65 }] as [{ x: number; y: number }, { x: number; y: number }],
     };
-    const duplicate = duplicateElementWithinBounds(edgeArrow, { x: edgeArrow.x + 12, y: edgeArrow.y + 12 }, { sourceWidth: 1440, sourceHeight: 900 });
+    const moved = moveElementWithinBounds(edgeArrow, { x: edgeArrow.x + 12, y: edgeArrow.y + 12 }, { sourceWidth: 1440, sourceHeight: 900 });
 
-    expect(duplicate).toMatchObject({ x: 1439, y: 37, points: [{ x: 1439, y: 37 }, { x: 1539, y: 77 }] });
+    expect(moved).toMatchObject({ x: 1439, y: 37, points: [{ x: 1439, y: 37 }, { x: 1539, y: 77 }] });
   });
 
   it("offsets and scales both line endpoints with its bounds", () => {
     const line = fixtureLine();
-    const duplicate = duplicateElementWithinBounds(
+    const moved = moveElementWithinBounds(
       line,
       { x: 30, y: 40 },
       { sourceWidth: 1440, sourceHeight: 900 },
     );
     const transformed = resizeElementWithinBounds(
-      duplicate,
+      moved,
       { x: 30, y: 40 },
       2,
       0.5,
@@ -98,22 +96,27 @@ describe("canvas element bounds", () => {
 
 describe("selection helpers", () => {
   it("shift-click toggles membership without losing the first selection", () => {
-    const selected = toggleSelection(replaceSelection("rect-1"), "text-1");
+    const original = Object.freeze([...replaceSelection("rect-1")]);
+    const selected = toggleSelection(original, "text-1");
 
+    expect(original).toEqual(["rect-1"]);
     expect(selected).toEqual(["rect-1", "text-1"]);
     expect(toggleSelection(selected, "rect-1")).toEqual(["text-1"]);
-  });
-
-  it("returns new replacement and empty selections without retaining mutable state", () => {
-    const selected = replaceSelection("rect-1");
-
-    expect(selected).toEqual(["rect-1"]);
-    expect(clearSelection()).toEqual([]);
-    expect(selected).toEqual(["rect-1"]);
   });
 });
 
 describe("moveElementsWithinBounds", () => {
+  it("rejects an empty selection and invalid movement inputs", () => {
+    const bounds = { sourceWidth: 100, sourceHeight: 100 };
+
+    expect(() => moveElementsWithinBounds([], { x: 1, y: 1 }, bounds))
+      .toThrow("Cannot move an empty element selection");
+    expect(() => moveElementsWithinBounds([fixtureRect()], { x: Number.NaN, y: 1 }, bounds))
+      .toThrow("delta x must be finite");
+    expect(() => moveElementsWithinBounds([fixtureRect()], { x: 1, y: 1 }, { ...bounds, sourceWidth: 0 }))
+      .toThrow("sourceWidth must be a positive finite number");
+  });
+
   it("clamps one shared delta so every selected element stays inside the source", () => {
     const rectangle = { ...fixtureRect(), x: 0, y: 0, width: 20, height: 20 };
     const text = { ...fixtureText(), x: 70, y: 60, width: 30, height: 40 };
@@ -190,5 +193,52 @@ describe("moveElementsWithinBounds", () => {
     const renderedBounds = rotatedElementBounds(moved);
     expect(renderedBounds.x).toBeCloseTo(0);
     expect(renderedBounds.y + renderedBounds.height).toBeCloseTo(200);
+  });
+
+  it("clamps an arrow by its rendered arrowhead and stroke at the source edge", () => {
+    const fixture = allElementFixtures().find((element) => element.type === "arrow");
+    if (!fixture) throw new Error("Missing arrow fixture");
+    const arrow = {
+      ...fixture,
+      x: 20,
+      y: 40,
+      width: 60,
+      height: 0,
+      strokeWidth: 8 as const,
+      points: [
+        { x: 20, y: 40 },
+        { x: 80, y: 40 },
+      ] as [{ x: number; y: number }, { x: number; y: number }],
+    };
+
+    const [moved] = moveElementsWithinBounds(
+      [arrow],
+      { x: 0, y: 100 },
+      { sourceWidth: 120, sourceHeight: 100 },
+    );
+
+    expect(moved).toMatchObject({
+      x: 20,
+      y: 80,
+      points: [{ x: 20, y: 80 }, { x: 80, y: 80 }],
+    });
+  });
+
+  it("keeps an oversized axis fixed while clamping a fit-capable axis", () => {
+    const oversized = {
+      ...fixtureRect(),
+      x: -25,
+      y: 10,
+      width: 150,
+      height: 20,
+    };
+
+    const [moved] = moveElementsWithinBounds(
+      [oversized],
+      { x: 40, y: 30 },
+      { sourceWidth: 100, sourceHeight: 100 },
+    );
+
+    expect(moved).toMatchObject({ x: -25, y: 40 });
   });
 });

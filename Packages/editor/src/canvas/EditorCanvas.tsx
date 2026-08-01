@@ -9,12 +9,9 @@ import {
   type InteractionPreview,
 } from "../interaction/InteractionController";
 import type { Rect as SourceRect, ViewportSnapshot } from "../viewport/ViewportController";
-import {
-  moveElementsWithinBounds,
-  resizeElementWithinBounds,
-} from "./SelectionController";
+import { resizeElementWithinBounds } from "./SelectionController";
 import { createDuplicateElements } from "../interaction/duplication";
-import { rotatedElementBounds } from "../interaction/selectionGeometry";
+import { moveElementsWithinBounds, rotatedElementBounds } from "../interaction/selectionGeometry";
 import { createElementFromDocument } from "./tools/createElement";
 import {
   pointerOwnerFor,
@@ -572,13 +569,29 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                 let duplicatedIds: readonly string[] | undefined;
                 try {
                   const previewElements = activeInteraction.previewElements;
-                  if (previewElements) {
-                    onCommand(activeInteraction.optionDuplicate
-                      ? { type: "createMany", elements: [...previewElements] }
-                      : { type: "updateMany", elements: [...previewElements] });
-                    if (activeInteraction.optionDuplicate) {
-                      duplicatedIds = previewElements.map((element) => element.id);
+                  if (!previewElements) {
+                    cancelAnnotationTransaction();
+                    return;
+                  }
+                  const changed = (() => {
+                    if (!activeInteraction.optionDuplicate) {
+                      return !sameElementSnapshots(activeInteraction.elements, previewElements);
                     }
+                    const previewDelta = activeInteraction.previewDelta;
+                    if (!previewDelta) {
+                      throw new Error("Option-drag preview delta is unavailable");
+                    }
+                    return previewDelta.x !== 0 || previewDelta.y !== 0;
+                  })();
+                  if (!changed) {
+                    cancelAnnotationTransaction();
+                    return;
+                  }
+                  onCommand(activeInteraction.optionDuplicate
+                    ? { type: "createMany", elements: [...previewElements] }
+                    : { type: "updateMany", elements: [...previewElements] });
+                  if (activeInteraction.optionDuplicate) {
+                    duplicatedIds = previewElements.map((element) => element.id);
                   }
                   onCommitTransaction();
                   releaseAnnotationPointerCapture(activeInteraction);
@@ -931,6 +944,14 @@ function sameOrderedIds(
 ): boolean {
   return left.length === right.length
     && left.every((id, index) => id === right[index]);
+}
+
+function sameElementSnapshots(
+  left: readonly EditorElement[],
+  right: readonly EditorElement[],
+): boolean {
+  return left.length === right.length
+    && left.every((element, index) => JSON.stringify(element) === JSON.stringify(right[index]));
 }
 
 export function createCanvasElement(

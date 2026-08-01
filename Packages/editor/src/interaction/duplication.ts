@@ -3,7 +3,7 @@ import type {
   EditorElement,
   Point,
 } from "../model/elements";
-import { moveElementsWithinBounds } from "../canvas/SelectionController";
+import { moveElementsWithinBounds } from "./selectionGeometry";
 import { createElementId } from "../canvas/tools/createElement";
 
 export function createDuplicateElements(

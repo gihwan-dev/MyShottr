@@ -90,4 +90,26 @@ describe("createDuplicateElements", () => {
     expect(copy).toMatchObject({ x: 65, y: 43 });
     expect(source).toMatchObject({ x: 40, y: 50 });
   });
+
+  it("keeps an oversized axis fixed while duplicating on a fit-capable axis", () => {
+    const source = {
+      ...fixtureRect(),
+      x: -25,
+      y: 10,
+      width: 150,
+      height: 20,
+    };
+
+    const [copy] = createDuplicateElements(
+      fixtureDocument({
+        sourcePixelWidth: 100,
+        sourcePixelHeight: 100,
+        elements: [source],
+      }),
+      [source],
+    );
+
+    expect(copy).toMatchObject({ x: -25, y: 22 });
+    expect(copy.id).not.toBe(source.id);
+  });
 });

@@ -668,6 +668,44 @@ describe("EditorApp", () => {
     ]);
   });
 
+  it("duplicates an oversized loaded selection with one command and one Undo entry", () => {
+    const oversized = {
+      ...fixtureRect(),
+      x: -25,
+      y: 10,
+      width: 150,
+      height: 20,
+    };
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({
+        sourcePixelWidth: 100,
+        sourcePixelHeight: 100,
+        elements: [oversized],
+      })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+
+    expect(() => fireEvent.keyDown(window, {
+      code: "KeyD",
+      key: "d",
+      metaKey: true,
+    })).not.toThrow();
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].elements).toHaveLength(2);
+    expect(changes[0].elements[1]).toMatchObject({ x: -25, y: 22 });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(2);
+    expect(changes[1].elements).toEqual([oversized]);
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(2);
+  });
+
   it("previews repeated held-key nudges and commits one updateMany on final keyup", () => {
     const rectangle = { ...fixtureRect(), x: 20, y: 20, width: 20, height: 20 };
     const changes: EditorDocument[] = [];
@@ -747,6 +785,49 @@ describe("EditorApp", () => {
     expect(changes[0].elements[0]).toMatchObject({ x: 80, y: 20 });
   });
 
+  it("keeps an oversized nudge axis fixed without adding no-op history", () => {
+    const oversized = {
+      ...fixtureRect(),
+      x: -25,
+      y: 10,
+      width: 150,
+      height: 20,
+    };
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({
+        sourcePixelWidth: 100,
+        sourcePixelHeight: 100,
+        elements: [oversized],
+      })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+
+    expect(() => fireEvent.keyDown(window, {
+      code: "ArrowRight",
+      key: "ArrowRight",
+    })).not.toThrow();
+    fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:-25,10");
+    expect(changes).toHaveLength(0);
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(0);
+
+    fireEvent.keyDown(window, { code: "ArrowDown", key: "ArrowDown" });
+    fireEvent.keyUp(window, { code: "ArrowDown", key: "ArrowDown" });
+    expect(changes).toHaveLength(1);
+    expect(changes[0].elements[0]).toMatchObject({ x: -25, y: 11 });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(2);
+    expect(changes[1].elements[0]).toMatchObject({ x: -25, y: 10 });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(2);
+  });
+
   it.each(["Escape", "blur"] as const)(
     "restores a nudge preview on %s without a command or Undo entry",
     (terminal) => {
@@ -812,6 +893,49 @@ describe("EditorApp", () => {
       .toBe("rect-1:20,20;line-1:50,50");
     expect(screen.getByTestId("canvas-selection").textContent).toBe("line-1");
     expect(changes).toHaveLength(0);
+  });
+
+  it("cancels a held nudge on tool switch so late keyup cannot create history", () => {
+    const onChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+
+    fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:1,0");
+
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
+    fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:0,0");
+    expect(screen.getByTestId("canvas-selection").textContent).toBe("");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("removes a held nudge owner on unmount so late keyup cannot publish", () => {
+    const onChange = vi.fn();
+    const view = render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:1,0");
+
+    view.unmount();
+    fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("reorders every selected element from shortcuts and palette controls", () => {
@@ -1341,6 +1465,145 @@ describe("EditorApp", () => {
       type: "annotationSnapshot",
       payload: { document: fixtureDocument() },
     });
+  });
+
+  it("replaces editor state for every accepted same-URL load instance", async () => {
+    vi.stubGlobal("Image", class {
+      naturalWidth = 1440;
+      naturalHeight = 900;
+      onload: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    });
+    let receiveNative: ((message: Parameters<NativeBridge["subscribe"]>[0] extends (message: infer Message) => void ? Message : never) => void) | undefined;
+    const sent: Array<{ requestId?: string; type: string; payload: unknown }> = [];
+    const bridge: NativeBridge = {
+      send: async (type, payload) => { sent.push({ type, payload }); },
+      sendCorrelated: async (requestId, type, payload) => { sent.push({ requestId, type, payload }); },
+      subscribe: (handler) => {
+        receiveNative = handler;
+        return () => { receiveNative = undefined; };
+      },
+    };
+    const sourceImageURL = "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png";
+    const firstDocument = fixtureDocument();
+    const secondDocument = fixtureDocument({ elements: [fixtureLine()] });
+
+    render(<NativeBridgeProvider bridge={bridge}><App /></NativeBridgeProvider>);
+    receiveNative!({
+      protocolVersion: 1,
+      requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      type: "loadDocument",
+      payload: {
+        documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        sourceImageURL,
+        annotationDocument: firstDocument,
+        initialTool: "selection",
+      },
+    });
+    await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("rect-1:0,0"));
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:1,0");
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("true");
+
+    receiveNative!({
+      protocolVersion: 1,
+      requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB",
+      type: "loadDocument",
+      payload: {
+        documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        sourceImageURL,
+        annotationDocument: secondDocument,
+        initialTool: "line",
+      },
+    });
+    await vi.waitFor(() => expect(sent).toContainEqual({
+      requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB",
+      type: "annotationSnapshot",
+      payload: { document: secondDocument },
+    }));
+    fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
+
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("line-1:15,20");
+    expect(screen.getByTestId("canvas-selection").textContent).toBe("");
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("false");
+    expect(screen.getByRole("button", { name: "Line, shortcut L" }).getAttribute("aria-pressed"))
+      .toBe("true");
+    expect(sent.filter(({ type }) => type === "documentChanged")).toEqual([]);
+  });
+
+  it("ignores an older load that finishes source validation after a newer load", async () => {
+    const pendingImages = new Map<string, () => void>();
+    vi.stubGlobal("Image", class {
+      naturalWidth = 1440;
+      naturalHeight = 900;
+      onload: (() => void) | null = null;
+      set src(value: string) {
+        pendingImages.set(value, () => this.onload?.());
+      }
+    });
+    let receiveNative: ((message: Parameters<NativeBridge["subscribe"]>[0] extends (message: infer Message) => void ? Message : never) => void) | undefined;
+    const sent: Array<{ requestId?: string; type: string; payload: unknown }> = [];
+    const bridge: NativeBridge = {
+      send: async (type, payload) => { sent.push({ type, payload }); },
+      sendCorrelated: async (requestId, type, payload) => { sent.push({ requestId, type, payload }); },
+      subscribe: (handler) => {
+        receiveNative = handler;
+        return () => { receiveNative = undefined; };
+      },
+    };
+    const firstRequestId = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    const secondRequestId = "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB";
+    const firstSourceURL = `myshottr-editor://editor/document/${firstRequestId}/original.png`;
+    const secondSourceURL = `myshottr-editor://editor/document/${secondRequestId}/original.png`;
+    const firstDocument = fixtureDocument();
+    const secondDocument = fixtureDocument({ elements: [fixtureLine()] });
+
+    render(<NativeBridgeProvider bridge={bridge}><App /></NativeBridgeProvider>);
+    receiveNative!({
+      protocolVersion: 1,
+      requestId: firstRequestId,
+      type: "loadDocument",
+      payload: {
+        documentId: firstRequestId,
+        sourceImageURL: firstSourceURL,
+        annotationDocument: firstDocument,
+        initialTool: "selection",
+      },
+    });
+    receiveNative!({
+      protocolVersion: 1,
+      requestId: secondRequestId,
+      type: "loadDocument",
+      payload: {
+        documentId: secondRequestId,
+        sourceImageURL: secondSourceURL,
+        annotationDocument: secondDocument,
+        initialTool: "line",
+      },
+    });
+
+    const finishSecondLoad = pendingImages.get(secondSourceURL);
+    if (!finishSecondLoad) throw new Error("Missing second pending source image");
+    finishSecondLoad();
+    await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("line-1:15,20"));
+
+    const finishFirstLoad = pendingImages.get(firstSourceURL);
+    if (!finishFirstLoad) throw new Error("Missing first pending source image");
+    finishFirstLoad();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    await vi.waitFor(() => expect(sent.filter(({ type }) => type === "annotationSnapshot"))
+      .toEqual([{
+        requestId: secondRequestId,
+        type: "annotationSnapshot",
+        payload: { document: secondDocument },
+      }]));
+
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("line-1:15,20");
+    expect(screen.getByRole("button", { name: "Line, shortcut L" }).getAttribute("aria-pressed"))
+      .toBe("true");
   });
 
   it("returns a correlated annotation snapshot through the local native request event", async () => {

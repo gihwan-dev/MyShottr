@@ -1,5 +1,6 @@
 import rough from "roughjs";
 import type { ArrowElement, LineElement, RectangleElement } from "../model/elements";
+import { arrowSegments } from "../model/arrowGeometry";
 
 export type RoughPath = {
   d: string;
@@ -23,10 +24,6 @@ export function roughPathsFor(
     }));
   }
 
-  const startX = element.points[0].x - element.x;
-  const startY = element.points[0].y - element.y;
-  const endX = element.points[1].x - element.x;
-  const endY = element.points[1].y - element.y;
   const line = (x1: number, y1: number, x2: number, y2: number, seed: number) =>
     pathsForDrawable(generator.line(x1, y1, x2, y2, {
       stroke: element.strokeColor,
@@ -34,25 +31,19 @@ export function roughPathsFor(
       roughness: element.roughness,
       seed,
     }));
-  const shaft = line(startX, startY, endX, endY, element.seed);
-  if (element.type === "line") return shaft;
+  const segments = element.type === "arrow"
+    ? arrowSegments(element)
+    : [[element.points[0], element.points[1]]] as const;
 
-  const angle = Math.atan2(endY - startY, endX - startX);
-  const headLength = Math.max(12, element.strokeWidth * 4);
-  const left = {
-    x: endX - headLength * Math.cos(angle - Math.PI / 6),
-    y: endY - headLength * Math.sin(angle - Math.PI / 6),
-  };
-  const right = {
-    x: endX - headLength * Math.cos(angle + Math.PI / 6),
-    y: endY - headLength * Math.sin(angle + Math.PI / 6),
-  };
-
-  return [
-    ...shaft,
-    ...line(endX, endY, left.x, left.y, element.seed + 1),
-    ...line(endX, endY, right.x, right.y, element.seed + 2),
-  ];
+  return segments.flatMap(([start, end], index) =>
+    line(
+      start.x - element.x,
+      start.y - element.y,
+      end.x - element.x,
+      end.y - element.y,
+      element.seed + index,
+    )
+  );
 }
 
 function pathsForDrawable(drawable: ReturnType<typeof generator.line>): RoughPath[] {

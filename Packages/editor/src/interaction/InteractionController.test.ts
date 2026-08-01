@@ -211,11 +211,19 @@ describe("InteractionController", () => {
       height: 20,
       rotation: 45,
     };
+    const previouslySelected = {
+      ...fixtureRect(),
+      id: "previous-rect",
+      x: 10,
+      y: 10,
+      width: 20,
+      height: 20,
+    };
     controller.begin(beginInput({
       tool: "selection",
       point: { x: 150, y: 150 },
-      document: fixtureDocument({ elements: [rectangle] }),
-      selectedIds: [rectangle.id],
+      document: fixtureDocument({ elements: [previouslySelected, rectangle] }),
+      selectedIds: [previouslySelected.id],
     }));
 
     expect(controller.update({ x: 160, y: 160 }, NO_MODIFIERS)).toEqual({

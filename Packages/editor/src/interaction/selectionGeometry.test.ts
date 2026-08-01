@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fixtureLine, fixtureRect } from "../test/fixtures";
+import { allElementFixtures, fixtureLine, fixtureRect } from "../test/fixtures";
 import {
   intersectingElementIds,
   isMarqueeGesture,
@@ -60,6 +60,28 @@ describe("selection geometry", () => {
     expect(bounds.y).toBeCloseTo(18);
     expect(bounds.width).toBeCloseTo(49);
     expect(bounds.height).toBeCloseTo(94);
+  });
+
+  it("selects an arrow through a rotated arrowhead-only marquee intersection", () => {
+    const fixture = allElementFixtures().find((element) => element.type === "arrow");
+    if (!fixture) throw new Error("Missing arrow fixture");
+    const arrow = {
+      ...fixture,
+      x: 20,
+      y: 50,
+      width: 80,
+      height: 0,
+      rotation: 90,
+      points: [
+        { x: 20, y: 50 },
+        { x: 100, y: 50 },
+      ] as [{ x: number; y: number }, { x: number; y: number }],
+    };
+
+    expect(intersectingElementIds(
+      [arrow],
+      { x: 13.5, y: 119, width: 1, height: 1 },
+    )).toEqual([arrow.id]);
   });
 
   it("uses the same rotated primitive when forming selection union bounds", () => {

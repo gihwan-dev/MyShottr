@@ -1021,8 +1021,8 @@ describe("EditorCanvas gesture terminals", () => {
     expect(konvaControl.setPointerCapture).toHaveBeenCalledWith(7);
     expect(konvaControl.releasePointerCapture).toHaveBeenCalledOnce();
     expect(konvaControl.releasePointerCapture).toHaveBeenCalledWith(7);
-    expect(onCommitTransaction).toHaveBeenCalledOnce();
-    expect(onCancelTransaction).not.toHaveBeenCalled();
+    expect(onCommitTransaction).not.toHaveBeenCalled();
+    expect(onCancelTransaction).toHaveBeenCalledOnce();
     expect(onCommand).not.toHaveBeenCalled();
   });
 
@@ -1578,6 +1578,162 @@ describe("EditorCanvas gesture terminals", () => {
     });
     expect(history.document.elements[0]).toMatchObject({ x: 25, y: 35 });
     expect(history.undo()).toBe(true);
+    expect(history.document.elements).toEqual(initial.elements);
+    expect(history.undo()).toBe(false);
+  });
+
+  it("keeps an oversized move axis fixed and commits one fit-axis update on release", () => {
+    const oversized = {
+      ...fixtureRect(),
+      x: -25,
+      y: 10,
+      width: 150,
+      height: 20,
+    };
+    const initial = fixtureDocument({
+      sourcePixelWidth: 100,
+      sourcePixelHeight: 100,
+      elements: [oversized],
+    });
+    const history = createHistoryStore(initial);
+    const onCommand = vi.fn((command) => history.dispatch(command));
+    konvaControl.dragTarget = { x: 20, y: 30 };
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        selectedIds={["rect-1"]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={onCommand}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={() => history.commitTransaction()}
+        onCancelTransaction={() => history.cancelTransaction()}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const annotation = screen.getByTestId("annotation-node");
+
+    startAnnotationMove(annotation, 1);
+    expect(() => fireEvent.drag(annotation)).not.toThrow();
+
+    expect(history.document.elements).toEqual(initial.elements);
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(konvaControl.annotationValues).toMatchObject({ x: -25, y: 30 });
+
+    fireEvent.dragEnd(annotation);
+    expect(onCommand).toHaveBeenCalledOnce();
+    expect(onCommand).toHaveBeenCalledWith({
+      type: "updateMany",
+      elements: [expect.objectContaining({ id: "rect-1", x: -25, y: 30 })],
+    });
+    expect(history.undo()).toBe(true);
+    expect(history.document.elements).toEqual(initial.elements);
+    expect(history.undo()).toBe(false);
+  });
+
+  it("cancels an x-only oversized move without a command, commit, publication, or Undo entry", () => {
+    const oversized = {
+      ...fixtureRect(),
+      x: -25,
+      y: 10,
+      width: 150,
+      height: 20,
+    };
+    const initial = fixtureDocument({
+      sourcePixelWidth: 100,
+      sourcePixelHeight: 100,
+      elements: [oversized],
+    });
+    const history = createHistoryStore(initial);
+    const onCommand = vi.fn((command) => history.dispatch(command));
+    const onCommitTransaction = vi.fn(() => history.commitTransaction());
+    const onCancelTransaction = vi.fn(() => history.cancelTransaction());
+    const onHistoryChange = vi.fn();
+    history.subscribe(onHistoryChange);
+    konvaControl.dragTarget = { x: 20, y: 10 };
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        selectedIds={["rect-1"]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={onCommand}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={onCommitTransaction}
+        onCancelTransaction={onCancelTransaction}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const annotation = screen.getByTestId("annotation-node");
+
+    startAnnotationMove(annotation, 1);
+    fireEvent.drag(annotation);
+    expect(konvaControl.annotationValues).toMatchObject({ x: -25, y: 10 });
+
+    fireEvent.dragEnd(annotation);
+
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onCommitTransaction).not.toHaveBeenCalled();
+    expect(onCancelTransaction).toHaveBeenCalledOnce();
+    expect(onHistoryChange).not.toHaveBeenCalled();
+    expect(history.document.elements).toEqual(initial.elements);
+    expect(history.isTransactionActive).toBe(false);
+    expect(history.undo()).toBe(false);
+  });
+
+  it("cancels an x-only oversized Option-drag without creating an overlapping copy", () => {
+    const oversized = {
+      ...fixtureRect(),
+      x: -25,
+      y: 10,
+      width: 150,
+      height: 20,
+    };
+    const initial = fixtureDocument({
+      sourcePixelWidth: 100,
+      sourcePixelHeight: 100,
+      elements: [oversized],
+    });
+    const history = createHistoryStore(initial);
+    const onCommand = vi.fn((command) => history.dispatch(command));
+    const onCommitTransaction = vi.fn(() => history.commitTransaction());
+    const onCancelTransaction = vi.fn(() => history.cancelTransaction());
+    const onSelect = vi.fn();
+    konvaControl.dragTarget = { x: 20, y: 10 };
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        selectedIds={["rect-1"]}
+        onSelect={onSelect}
+        onEditText={() => {}}
+        onCommand={onCommand}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={onCommitTransaction}
+        onCancelTransaction={onCancelTransaction}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const annotation = screen.getByTestId("annotation-node");
+
+    startAnnotationMove(annotation, 1, { altKey: true });
+    fireEvent.drag(annotation);
+    expect(screen.getByTestId("duplication-preview")).toBeTruthy();
+
+    fireEvent.dragEnd(annotation);
+
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onCommitTransaction).not.toHaveBeenCalled();
+    expect(onCancelTransaction).toHaveBeenCalledOnce();
+    expect(onSelect).not.toHaveBeenCalled();
     expect(history.document.elements).toEqual(initial.elements);
     expect(history.undo()).toBe(false);
   });
