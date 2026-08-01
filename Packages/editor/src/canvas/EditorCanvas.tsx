@@ -123,9 +123,11 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
     };
     window.addEventListener("mouseup", clearPointerInteraction);
     window.addEventListener("pointercancel", cancelPointerInteraction);
+    window.addEventListener("blur", clearPointerInteraction);
     return () => {
       window.removeEventListener("mouseup", clearPointerInteraction);
       window.removeEventListener("pointercancel", cancelPointerInteraction);
+      window.removeEventListener("blur", clearPointerInteraction);
     };
   });
   const orderedElements = [...document.elements].sort(byZIndex);

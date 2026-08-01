@@ -64,6 +64,7 @@ export const EditorWorkspace = forwardRef<EditorWorkspaceHandle, EditorWorkspace
   const railVisibleRef = useRef(railVisible);
   railVisibleRef.current = railVisible;
   const animationFrame = useRef<number | undefined>(undefined);
+  const animationGeneration = useRef(0);
   const [viewport, setViewport] = useState<ViewportSnapshot>();
   const viewportRef = useRef<ViewportSnapshot | undefined>(undefined);
   const [spacePanReady, setSpacePanReady] = useState(false);
@@ -76,13 +77,14 @@ export const EditorWorkspace = forwardRef<EditorWorkspaceHandle, EditorWorkspace
   }, []);
 
   const cancelPanAnimation = useCallback(() => {
+    animationGeneration.current += 1;
     if (animationFrame.current !== undefined) {
       cancelAnimationFrame(animationFrame.current);
       animationFrame.current = undefined;
     }
   }, []);
 
-  const publishReflow = useCallback((next: ViewportSnapshot) => {
+  const publishReflow = useCallback((current: ViewportController, next: ViewportSnapshot) => {
     cancelPanAnimation();
     const previous = viewportRef.current;
     if (
@@ -95,19 +97,18 @@ export const EditorWorkspace = forwardRef<EditorWorkspaceHandle, EditorWorkspace
     }
 
     const startedAt = performance.now();
-    setDisplayedViewport({ ...next, pan: { ...previous.pan } });
+    const generation = animationGeneration.current;
+    setDisplayedViewport(current.setReflowPan(previous.pan));
     const tick = (timestamp: number) => {
+      if (animationGeneration.current !== generation) return;
       const progress = Math.min(
         Math.max((timestamp - startedAt) / RAIL_REFLOW_DURATION_MS, 0),
         1,
       );
-      setDisplayedViewport({
-        ...next,
-        pan: {
-          x: previous.pan.x + (next.pan.x - previous.pan.x) * progress,
-          y: previous.pan.y + (next.pan.y - previous.pan.y) * progress,
-        },
-      });
+      setDisplayedViewport(current.setReflowPan({
+        x: previous.pan.x + (next.pan.x - previous.pan.x) * progress,
+        y: previous.pan.y + (next.pan.y - previous.pan.y) * progress,
+      }));
       if (progress < 1) {
         animationFrame.current = requestAnimationFrame(tick);
       } else {
@@ -128,9 +129,12 @@ export const EditorWorkspace = forwardRef<EditorWorkspaceHandle, EditorWorkspace
       setDisplayedViewport(controller.current.snapshot);
       return;
     }
-    publishReflow(controller.current.setWorkspace(metrics, {
-      preserveCenteredSourcePoint: true,
-    }));
+    publishReflow(
+      controller.current,
+      controller.current.setWorkspace(metrics, {
+        preserveCenteredSourcePoint: true,
+      }),
+    );
   }, [publishReflow, setDisplayedViewport, sourceHeight, sourceWidth]);
 
   const publishMutation = useCallback((mutate: (current: ViewportController) => ViewportSnapshot) => {
@@ -164,6 +168,7 @@ export const EditorWorkspace = forwardRef<EditorWorkspaceHandle, EditorWorkspace
 
   useImperativeHandle(ref, () => ({
     applyIntent: (intent) => {
+      if (!controller.current) return;
       publishMutation((current) => {
         switch (intent.type) {
           case "zoomIn":
@@ -186,10 +191,13 @@ export const EditorWorkspace = forwardRef<EditorWorkspaceHandle, EditorWorkspace
   useLayoutEffect(() => {
     const workspace = measuredWorkspace.current;
     if (!workspace || !controller.current) return;
-    publishReflow(controller.current.setWorkspace(
-      metricsFor(workspace, railVisible),
-      { preserveCenteredSourcePoint: true },
-    ));
+    publishReflow(
+      controller.current,
+      controller.current.setWorkspace(
+        metricsFor(workspace, railVisible),
+        { preserveCenteredSourcePoint: true },
+      ),
+    );
   }, [publishReflow, railVisible]);
 
   useEffect(() => {
@@ -217,7 +225,7 @@ export const EditorWorkspace = forwardRef<EditorWorkspaceHandle, EditorWorkspace
         || event.ctrlKey
         || event.altKey
         || event.shiftKey
-        || isTextEntryTarget(event.target)
+        || isSpacePanBlockedTarget(event.target)
       ) return;
       event.preventDefault();
       setSpacePanReady(true);
@@ -249,10 +257,29 @@ export const EditorWorkspace = forwardRef<EditorWorkspaceHandle, EditorWorkspace
   );
 });
 
-function isTextEntryTarget(target: EventTarget | null): boolean {
+function isSpacePanBlockedTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  return target.matches("input, textarea, select, [contenteditable]")
-    || target.closest("[contenteditable]") !== null;
+  return target.closest([
+    "button",
+    "a[href]",
+    "input",
+    "textarea",
+    "select",
+    "[contenteditable]:not([contenteditable='false'])",
+    "[role='button']",
+    "[role='link']",
+    "[role='menuitem']",
+    "[role='option']",
+    "[role='checkbox']",
+    "[role='radio']",
+    "[role='switch']",
+    "[role='tab']",
+    "[role='slider']",
+    "[role='spinbutton']",
+    "[role='combobox']",
+    "[role='textbox']",
+    "[tabindex]:not([tabindex='-1'])",
+  ].join(", ")) !== null;
 }
 
 function metricsFor(workspace: Size, railVisible: boolean): WorkspaceMetrics {

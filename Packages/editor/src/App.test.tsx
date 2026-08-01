@@ -7,10 +7,12 @@ import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
 import { keyboardCommandFor } from "./input/ShortcutRouter";
 import type { EditorCommand, EditorDocument } from "./model/elements";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "./test/fixtures";
+import type { ViewportSnapshot } from "./viewport/ViewportController";
 
 vi.mock("./canvas/EditorCanvas", () => ({
-  EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onInteractionActiveChange, textEditorOverlay }: {
+  EditorCanvas: ({ document, viewport, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onInteractionActiveChange, textEditorOverlay }: {
     document: EditorDocument;
+    viewport: ViewportSnapshot;
     onCommand: (command: EditorCommand) => void;
     onSelect: (id: string | undefined, toggle?: boolean) => void;
     onBeginTransaction: (label: string) => void;
@@ -24,7 +26,14 @@ vi.mock("./canvas/EditorCanvas", () => ({
       <output data-testid="canvas-opacities">
         {document.elements.map((element) => `${element.id}:${element.opacity}`).join(",")}
       </output>
+      <output
+        data-testid="canvas-viewport"
+        data-available={`${viewport.availableRect.x},${viewport.availableRect.y},${viewport.availableRect.width},${viewport.availableRect.height}`}
+        data-pan={`${viewport.pan.x},${viewport.pan.y}`}
+        data-zoom={viewport.zoom}
+      />
       <button type="button" onClick={() => onSelect("rect-1")}>Select rect-1</button>
+      <button type="button" onClick={() => onSelect("line-1")}>Select line-1</button>
       <button type="button" onClick={() => onSelect("text-1", true)}>Shift-select text-1</button>
       <button type="button" onClick={() => onSelect("highlighter-1", true)}>Shift-select highlighter-1</button>
       <button type="button" onClick={() => onEditText("text-1")}>Edit text-1</button>
@@ -157,6 +166,70 @@ describe("EditorApp", () => {
     expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("46%");
     fireEvent.keyDown(window, { code: "Digit0", key: "0", metaKey: true });
     expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("100%");
+  });
+
+  it.each([
+    {
+      label: "a rectangle rotated 90° around its Konva Group origin",
+      element: { ...fixtureRect(), x: 500, y: 300, rotation: 90 },
+      selectName: "Select rect-1",
+      bounds: { x: 420, y: 300, width: 80, height: 120 },
+    },
+    {
+      label: "a line rotated 30° around its Konva Group origin",
+      element: {
+        ...fixtureLine(),
+        x: 500,
+        y: 300,
+        rotation: 30,
+        points: [{ x: 500, y: 300 }, { x: 590, y: 345 }] as [{ x: number; y: number }, { x: number; y: number }],
+      },
+      selectName: "Select line-1",
+      bounds: {
+        x: 477.5,
+        y: 300,
+        width: 100.44228634059948,
+        height: 83.97114317029974,
+      },
+    },
+  ])("fits and centers $label with at least 24px padding", ({ element, selectName, bounds }) => {
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [element] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: selectName }));
+    fireEvent.click(screen.getByRole("button", { name: "Fit Selection" }));
+
+    const output = screen.getByTestId("canvas-viewport");
+    const [availableX, availableY, availableWidth, availableHeight] = output
+      .getAttribute("data-available")!.split(",").map(Number);
+    const [panX, panY] = output.getAttribute("data-pan")!.split(",").map(Number);
+    const zoom = Number(output.getAttribute("data-zoom"));
+    const transformed = {
+      left: bounds.x * zoom + panX,
+      top: bounds.y * zoom + panY,
+      right: (bounds.x + bounds.width) * zoom + panX,
+      bottom: (bounds.y + bounds.height) * zoom + panY,
+    };
+
+    expect((transformed.left + transformed.right) / 2)
+      .toBeCloseTo(availableX + availableWidth / 2);
+    expect((transformed.top + transformed.bottom) / 2)
+      .toBeCloseTo(availableY + availableHeight / 2);
+    expect(transformed.left).toBeGreaterThanOrEqual(availableX + 24 - 0.001);
+    expect(transformed.top).toBeGreaterThanOrEqual(availableY + 24 - 0.001);
+    expect(transformed.right).toBeLessThanOrEqual(availableX + availableWidth - 24 + 0.001);
+    expect(transformed.bottom).toBeLessThanOrEqual(availableY + availableHeight - 24 + 0.001);
+    expect(Math.min(
+      transformed.left - availableX,
+      transformed.top - availableY,
+      availableX + availableWidth - transformed.right,
+      availableY + availableHeight - transformed.bottom,
+    )).toBeCloseTo(24);
   });
 
   it("suppresses shortcuts while a creation or Space-pan interaction is active", () => {
@@ -566,6 +639,41 @@ describe("EditorApp", () => {
       window.dispatchEvent(event);
       expect(event.defaultPrevented).toBe(false);
     });
+  });
+
+  it("leaves Space native on zoom-toolbar and shortcut-dialog buttons while canvas Space arms pan", () => {
+    render(<EditorApp initialDocument={fixtureDocument()} initialTool="selection" sourceImageURL="data:image/png;base64,iVBORw0KGgo=" onChange={() => {}} onPreferencesChange={() => {}} />);
+
+    const toolbarSpace = new KeyboardEvent("keydown", {
+      code: "Space",
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+    });
+    screen.getByRole("button", { name: "Zoom in" }).dispatchEvent(toolbarSpace);
+    expect(toolbarSpace.defaultPrevented).toBe(false);
+
+    fireEvent.keyDown(window, { code: "Slash", key: "?", shiftKey: true });
+    const dialogSpace = new KeyboardEvent("keydown", {
+      code: "Space",
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+    });
+    screen.getByRole("button", { name: "Close keyboard shortcuts" })
+      .dispatchEvent(dialogSpace);
+    expect(dialogSpace.defaultPrevented).toBe(false);
+    expect(screen.getByRole("dialog", { name: "Keyboard Shortcuts" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close keyboard shortcuts" }));
+    const canvasSpace = new KeyboardEvent("keydown", {
+      code: "Space",
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(canvasSpace);
+    expect(canvasSpace.defaultPrevented).toBe(true);
   });
 
   it("applies Escape priority one state at a time", () => {

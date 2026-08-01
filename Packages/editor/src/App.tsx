@@ -349,24 +349,18 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
 function selectionBoundsFor(elements: readonly EditorElement[]): Rect | undefined {
   if (elements.length === 0) return undefined;
   const points = elements.flatMap((element) => {
-    const center = {
-      x: element.x + element.width / 2,
-      y: element.y + element.height / 2,
-    };
     const radians = element.rotation * Math.PI / 180;
     const cosine = Math.cos(radians);
     const sine = Math.sin(radians);
     return [
-      { x: element.x, y: element.y },
-      { x: element.x + element.width, y: element.y },
-      { x: element.x + element.width, y: element.y + element.height },
-      { x: element.x, y: element.y + element.height },
+      { x: 0, y: 0 },
+      { x: element.width, y: 0 },
+      { x: element.width, y: element.height },
+      { x: 0, y: element.height },
     ].map((point) => {
-      const deltaX = point.x - center.x;
-      const deltaY = point.y - center.y;
       return {
-        x: center.x + deltaX * cosine - deltaY * sine,
-        y: center.y + deltaX * sine + deltaY * cosine,
+        x: element.x + point.x * cosine - point.y * sine,
+        y: element.y + point.x * sine + point.y * cosine,
       };
     });
   });

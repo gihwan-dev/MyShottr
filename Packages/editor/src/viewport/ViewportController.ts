@@ -120,6 +120,12 @@ export class ViewportController {
     return this.snapshot;
   }
 
+  public setReflowPan(pan: Point): ViewportSnapshot {
+    assertPoint(pan, "reflow pan");
+    this.pan = { ...pan };
+    return this.snapshot;
+  }
+
   public set100Percent(): ViewportSnapshot {
     return this.zoomAt(center(this.metrics.availableRect), 1);
   }
@@ -146,11 +152,18 @@ export class ViewportController {
     assertRect(bounds, "fit bounds", allowDegenerateAxes);
     assertFinite(padding, "fit padding");
     if (padding < 0) throw new Error("fit padding must not be negative");
-    const fitWidth = this.metrics.availableRect.width - padding * 2;
-    const fitHeight = this.metrics.availableRect.height - padding * 2;
-    if (fitWidth <= 0 || fitHeight <= 0) {
-      throw new Error("fit padding must leave a positive available area");
-    }
+    const effectivePadding = Math.min(
+      padding,
+      Math.max(
+        0,
+        (Math.min(
+          this.metrics.availableRect.width,
+          this.metrics.availableRect.height,
+        ) - 1) / 2,
+      ),
+    );
+    const fitWidth = this.metrics.availableRect.width - effectivePadding * 2;
+    const fitHeight = this.metrics.availableRect.height - effectivePadding * 2;
     this.zoom = clamp(
       Math.min(
         bounds.width === 0 ? Number.POSITIVE_INFINITY : fitWidth / bounds.width,

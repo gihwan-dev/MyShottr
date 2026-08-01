@@ -174,4 +174,29 @@ describe("ViewportController", () => {
     expect(controller.toWorkspacePoint({ x: 100, y: 100 }))
       .toEqual(center(AVAILABLE_RECT));
   });
+
+  it.each([
+    { width: 1, height: 1 },
+    { width: 1, height: 8 },
+    { width: 48, height: 20 },
+  ])("reduces fit padding for a $width×$height available rect without throwing", (available) => {
+    const metrics = {
+      workspace: { ...available },
+      availableRect: { x: 0, y: 0, ...available },
+    };
+
+    expect(() => new ViewportController({ width: 100, height: 80 }, metrics).fitImage())
+      .not.toThrow();
+
+    for (const bounds of [
+      { x: 10, y: 20, width: 0, height: 0 },
+      { x: 10, y: 20, width: 0, height: 40 },
+      { x: 10, y: 20, width: 30, height: 0 },
+    ]) {
+      const controller = new ViewportController({ width: 100, height: 80 }, metrics);
+      expect(() => controller.fitSelection(bounds)).not.toThrow();
+      expect(controller.snapshot.zoom).toBeGreaterThanOrEqual(MIN_ZOOM);
+      expect(controller.snapshot.zoom).toBeLessThanOrEqual(MAX_ZOOM);
+    }
+  });
 });

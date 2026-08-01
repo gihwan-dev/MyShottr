@@ -3,6 +3,7 @@ import Konva from "konva";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createHistoryStore } from "../model/history";
+import { keyboardCommandFor } from "../input/ShortcutRouter";
 import { fixtureBlur, fixtureDocument, fixtureText } from "../test/fixtures";
 import { cancelAnnotationInteraction, EditorCanvas } from "./EditorCanvas";
 
@@ -343,6 +344,57 @@ describe("EditorCanvas gesture terminals", () => {
     expect(history.document.elements).toHaveLength(0);
   });
 
+  it("ends Space-pan exactly once on window blur so shortcuts and the next pan recover", () => {
+    const onViewportPanBy = vi.fn();
+    const onInteractionActiveChange = vi.fn();
+    let interactionActive = false;
+    onInteractionActiveChange.mockImplementation((active: boolean) => {
+      interactionActive = active;
+    });
+    render(
+      <EditorCanvas
+        document={fixtureDocument({ elements: [] })}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="rectangle"
+        {...VIEWPORT_PROPS}
+        spacePanReady
+        onViewportPanBy={onViewportPanBy}
+        onInteractionActiveChange={onInteractionActiveChange}
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={() => {}}
+        onBeginTransaction={() => {}}
+        onCommitTransaction={() => {}}
+        onCancelTransaction={() => {}}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20 });
+    fireEvent.mouseMove(stage, { clientX: 30, clientY: 45 });
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("blur"));
+    fireEvent.mouseMove(stage, { clientX: 80, clientY: 90 });
+
+    expect(onViewportPanBy).toHaveBeenCalledTimes(1);
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
+      .toEqual([true, false]);
+    expect(keyboardCommandFor(new KeyboardEvent("keydown", { code: "KeyR", key: "r" }), {
+      interactionActive,
+      shortcutHelpOpen: false,
+      textEditing: false,
+    })).toEqual({ type: "selectTool", tool: "rectangle" });
+
+    fireEvent.mouseDown(stage, { clientX: 100, clientY: 110 });
+    fireEvent.mouseMove(stage, { clientX: 120, clientY: 140 });
+    fireEvent.mouseUp(stage, { clientX: 120, clientY: 140 });
+    expect(onViewportPanBy).toHaveBeenLastCalledWith({ x: 20, y: 30 });
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
+      .toEqual([true, false, true, false]);
+  });
+
   it("shows grab while Space is ready and grabbing only during its pan", () => {
     render(
       <EditorCanvas
@@ -506,11 +558,12 @@ describe("EditorCanvas gesture terminals", () => {
     expect(history.document.elements).toEqual(document.elements);
   });
 
-  it.each(["mouseup", "pointercancel"] as const)(
+  it.each(["mouseup", "pointercancel", "blur"] as const)(
     "clears an abandoned creation on window %s so create undo and redo remain usable",
     (terminalEvent) => {
       const initial = fixtureDocument({ elements: [] });
       const history = createHistoryStore(initial);
+      const onInteractionActiveChange = vi.fn();
       render(
         <EditorCanvas
           document={initial}
@@ -524,6 +577,7 @@ describe("EditorCanvas gesture terminals", () => {
           onBeginTransaction={(label) => history.beginTransaction(label)}
           onCommitTransaction={() => history.commitTransaction()}
           onCancelTransaction={() => history.cancelTransaction()}
+          onInteractionActiveChange={onInteractionActiveChange}
           textEditorOverlay={undefined}
         />,
       );
@@ -531,10 +585,15 @@ describe("EditorCanvas gesture terminals", () => {
 
       fireEvent.mouseDown(stage, { clientX: 10, clientY: 10 });
       window.dispatchEvent(new Event(terminalEvent, { bubbles: true, cancelable: true }));
+      window.dispatchEvent(new Event(terminalEvent, { bubbles: true, cancelable: true }));
+      expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
+        .toEqual([true, false]);
       expect(() => fireEvent.mouseDown(stage, { clientX: 20, clientY: 20 })).not.toThrow();
       fireEvent.mouseUp(stage, { clientX: 40, clientY: 40 });
 
       expect(history.document.elements).toHaveLength(1);
+      expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
+        .toEqual([true, false, true, false]);
       history.undo();
       expect(history.document.elements).toHaveLength(0);
       history.redo();

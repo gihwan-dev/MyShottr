@@ -61,6 +61,7 @@ function Snapshot({ state }: { state: EditorWorkspaceRenderState }) {
           ctrlKey: true,
         })}
       >Zoom wheel</button>
+      <div role="button" tabIndex={0}>Dialog action</div>
     </>
   );
 }
@@ -202,9 +203,13 @@ describe("EditorWorkspace", () => {
       frames.push(callback);
       return frames.length;
     });
+    let latestState: EditorWorkspaceRenderState | undefined;
     const view = render(
       <EditorWorkspace source={{ width: 2000, height: 1000 }} railVisible={false}>
-        {(state) => <Snapshot state={state} />}
+        {(state) => {
+          latestState = state;
+          return <Snapshot state={state} />;
+        }}
       </EditorWorkspace>,
     );
     triggerResize(1000, 700);
@@ -221,18 +226,65 @@ describe("EditorWorkspace", () => {
       .toBe("0,0");
     expect(screen.getByTestId("viewport-snapshot").getAttribute("data-zoom"))
       .toBe(beforeZoom);
+    expect(latestState!.toSourcePoint({ x: 500, y: 350 }))
+      .toEqual({ x: 500, y: 350 });
 
     act(() => frames.shift()?.(80));
     expect(screen.getByTestId("viewport-snapshot").getAttribute("data-pan"))
       .toBe("66,0");
     expect(screen.getByTestId("viewport-snapshot").getAttribute("data-zoom"))
       .toBe(beforeZoom);
+    expect(latestState!.toSourcePoint({ x: 500, y: 350 }))
+      .toEqual({ x: 434, y: 350 });
 
     act(() => frames.shift()?.(160));
     expect(screen.getByTestId("viewport-snapshot").getAttribute("data-pan"))
       .toBe("132,0");
     expect(screen.getByTestId("viewport-snapshot").getAttribute("data-zoom"))
       .toBe(beforeZoom);
+    expect(latestState!.toSourcePoint({ x: 500, y: 350 }))
+      .toEqual({ x: 368, y: 350 });
+  });
+
+  it("keeps wheel and creation coordinates anchored to the displayed mid-reflow frame and ignores a cancelled frame", () => {
+    vi.mocked(matchMedia).mockReturnValue({ matches: false } as MediaQueryList);
+    vi.spyOn(performance, "now").mockReturnValue(0);
+    const frames: FrameRequestCallback[] = [];
+    vi.mocked(requestAnimationFrame).mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    let latestState: EditorWorkspaceRenderState | undefined;
+    const view = render(
+      <EditorWorkspace source={{ width: 2000, height: 1000 }} railVisible={false}>
+        {(state) => {
+          latestState = state;
+          return <Snapshot state={state} />;
+        }}
+      </EditorWorkspace>,
+    );
+    triggerResize(1000, 700);
+    view.rerender(
+      <EditorWorkspace source={{ width: 2000, height: 1000 }} railVisible>
+        {(state) => {
+          latestState = state;
+          return <Snapshot state={state} />;
+        }}
+      </EditorWorkspace>,
+    );
+
+    act(() => frames.shift()?.(80));
+    const expectedSourceAtPointer = latestState!.toSourcePoint({ x: 500, y: 350 });
+    const cancelledFrame = frames.shift()!;
+    fireEvent.click(screen.getByRole("button", { name: "Zoom wheel" }));
+
+    expect(latestState!.toSourcePoint({ x: 500, y: 350 }).x)
+      .toBeCloseTo(expectedSourceAtPointer.x);
+    expect(latestState!.toSourcePoint({ x: 500, y: 350 }).y)
+      .toBeCloseTo(expectedSourceAtPointer.y);
+    const afterWheel = latestState!.viewport;
+    act(() => cancelledFrame(160));
+    expect(latestState!.viewport).toEqual(afterWheel);
   });
 
   it("routes an ordinary wheel as bounded two-axis trackpad pan", () => {
@@ -278,6 +330,93 @@ describe("EditorWorkspace", () => {
     fireEvent.keyUp(window, { code: "Space" });
     expect(screen.getByTestId("viewport-snapshot").getAttribute("data-space-pan"))
       .toBe("false");
+  });
+
+  it("leaves Space native on buttons and interactive roles but arms Space-pan from the canvas window", () => {
+    render(
+      <EditorWorkspace source={{ width: 2000, height: 1000 }} railVisible={false}>
+        {(state) => <Snapshot state={state} />}
+      </EditorWorkspace>,
+    );
+    triggerResize(1000, 700);
+
+    for (const target of [
+      screen.getByRole("button", { name: "Pan wheel" }),
+      screen.getByRole("button", { name: "Dialog action" }),
+    ]) {
+      const event = new KeyboardEvent("keydown", {
+        code: "Space",
+        key: " ",
+        bubbles: true,
+        cancelable: true,
+      });
+      fireEvent(target, event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(screen.getByTestId("viewport-snapshot").getAttribute("data-space-pan"))
+        .toBe("false");
+    }
+
+    const canvasSpace = new KeyboardEvent("keydown", {
+      code: "Space",
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(window, canvasSpace);
+    expect(canvasSpace.defaultPrevented).toBe(true);
+    expect(screen.getByTestId("viewport-snapshot").getAttribute("data-space-pan"))
+      .toBe("true");
+  });
+
+  it("ignores semantic global viewport commands before measurement and executes them after measurement", () => {
+    const workspaceRef = createRef<EditorWorkspaceHandle>();
+    render(
+      <EditorWorkspace
+        ref={workspaceRef}
+        source={{ width: 2000, height: 1000 }}
+        railVisible={false}
+        selectionBounds={{ x: 400, y: 200, width: 200, height: 100 }}
+      >
+        {(state) => <Snapshot state={state} />}
+      </EditorWorkspace>,
+    );
+
+    for (const intent of [
+      { type: "zoom100" },
+      { type: "fitImage" },
+      { type: "fitSelection" },
+    ] as const) {
+      expect(() => act(() => workspaceRef.current?.applyIntent(intent))).not.toThrow();
+    }
+    expect(screen.queryByTestId("viewport-snapshot")).toBeNull();
+
+    triggerResize(1000, 700);
+    act(() => workspaceRef.current?.applyIntent({ type: "fitImage" }));
+    expect(screen.getByTestId("viewport-snapshot").getAttribute("data-zoom")).toBe("0.46");
+    act(() => workspaceRef.current?.applyIntent({ type: "fitSelection" }));
+    expect(screen.getByTestId("viewport-snapshot").getAttribute("data-zoom")).toBe("4.6");
+    act(() => workspaceRef.current?.applyIntent({ type: "zoom100" }));
+    expect(screen.getByTestId("viewport-snapshot").getAttribute("data-zoom")).toBe("1");
+  });
+
+  it("fits image and degenerate selections in a one-pixel measured safe area", () => {
+    const workspaceRef = createRef<EditorWorkspaceHandle>();
+    render(
+      <EditorWorkspace
+        ref={workspaceRef}
+        source={{ width: 2000, height: 1000 }}
+        railVisible
+        selectionBounds={{ x: 400, y: 200, width: 0, height: 0 }}
+      >
+        {(state) => <Snapshot state={state} />}
+      </EditorWorkspace>,
+    );
+    triggerResize(0, 0);
+
+    expect(() => act(() => workspaceRef.current?.applyIntent({ type: "fitImage" })))
+      .not.toThrow();
+    expect(() => act(() => workspaceRef.current?.applyIntent({ type: "fitSelection" })))
+      .not.toThrow();
   });
 
   it("routes semantic zoom and fit commands through the sole controller", () => {
