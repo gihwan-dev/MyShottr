@@ -134,6 +134,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     dispatch({ type: "reorder", ids: selectedIds, direction });
   }, [dispatch, selectedIds]);
   const beginTextEdit = useCallback((id: string) => {
+    if (selectedIds.length !== 1 || selectedIds[0] !== id) return;
     const element = findElement(history.document, id);
     if (element.type !== "text") {
       throw new Error(`Cannot edit non-text element: ${id}`);
@@ -145,7 +146,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     };
     setNudgeSession(undefined);
     setTextEditSession(session);
-  }, [history]);
+  }, [history, selectedIds]);
   const beginNewText = useCallback((point: { x: number; y: number }, defaults: EditorDefaults) => {
     const session: TextEditSession = {
       kind: "new",

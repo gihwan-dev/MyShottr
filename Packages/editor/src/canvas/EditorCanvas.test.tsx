@@ -7,7 +7,12 @@ import { createHistoryStore } from "../model/history";
 import type { EditorTool } from "../model/elements";
 import { keyboardCommandFor } from "../input/ShortcutRouter";
 import { fixtureBlur, fixtureDocument, fixtureRect, fixtureText } from "../test/fixtures";
-import { cancelAnnotationInteraction, EditorCanvas, type EditorCanvasHandle } from "./EditorCanvas";
+import {
+  cancelAnnotationInteraction,
+  createCanvasElement,
+  EditorCanvas,
+  type EditorCanvasHandle,
+} from "./EditorCanvas";
 
 const konvaControl = vi.hoisted(() => ({
   stopDrag: vi.fn(),
@@ -685,6 +690,16 @@ describe("EditorCanvas gesture terminals", () => {
     expect(onBeginNewText).toHaveBeenCalledWith({ x: 20, y: 30 }, fixtureDocument().defaults);
   });
 
+  it("keeps placeholder Text creation out of the exported canvas factory", () => {
+    if (false) {
+      // @ts-expect-error Canvas creation must route Text through beginNewText.
+      createCanvasElement(fixtureDocument(), "text", {
+        kind: "point",
+        point: { x: 20, y: 30 },
+      });
+    }
+  });
+
   it("commits the source-space Shift preview with the pointer-down tool and defaults", () => {
     const onCommand = vi.fn();
     const initial = fixtureDocument({
@@ -1126,7 +1141,7 @@ describe("EditorCanvas gesture terminals", () => {
         sourceImageURL="data:image/png;base64,iVBORw0KGgo="
         tool="selection"
         {...VIEWPORT_PROPS}
-        selectedIds={[]}
+        selectedIds={["text-1"]}
         onSelect={() => {}}
         onEditText={onEditText}
         onCommand={onCommand}
@@ -1147,6 +1162,46 @@ describe("EditorCanvas gesture terminals", () => {
     expect(onCancelTransaction).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { label: "the selection is empty", selectedIds: [] },
+    { label: "a different element is selected", selectedIds: ["rect-1"] },
+    { label: "multiple elements are selected", selectedIds: ["rect-1", "text-1"] },
+  ] as const)(
+    "keeps a Text double-click inert when $label",
+    ({ selectedIds }) => {
+      const document = fixtureDocument({ elements: [fixtureRect(), fixtureText()] });
+      const onEditText = vi.fn();
+      const onCommand = vi.fn();
+      const onBeginTransaction = vi.fn();
+      const onCommitTransaction = vi.fn();
+      const onCancelTransaction = vi.fn();
+      render(
+        <EditorCanvas
+          document={document}
+          sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+          tool="selection"
+          {...VIEWPORT_PROPS}
+          selectedIds={selectedIds}
+          onSelect={() => {}}
+          onEditText={onEditText}
+          onCommand={onCommand}
+          onBeginTransaction={onBeginTransaction}
+          onCommitTransaction={onCommitTransaction}
+          onCancelTransaction={onCancelTransaction}
+          textEditorOverlay={undefined}
+        />,
+      );
+
+      fireEvent.doubleClick(screen.getByTestId("element-text-1"));
+
+      expect(onEditText).not.toHaveBeenCalled();
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(onBeginTransaction).not.toHaveBeenCalled();
+      expect(onCommitTransaction).not.toHaveBeenCalled();
+      expect(onCancelTransaction).not.toHaveBeenCalled();
+    },
+  );
+
   it("blocks an existing Text double-click while canvas interaction is locked", () => {
     const document = fixtureDocument({ elements: [fixtureText()] });
     const onEditText = vi.fn();
@@ -1161,7 +1216,7 @@ describe("EditorCanvas gesture terminals", () => {
         tool="selection"
         {...VIEWPORT_PROPS}
         interactionLocked
-        selectedIds={[]}
+        selectedIds={["text-1"]}
         onSelect={() => {}}
         onEditText={onEditText}
         onCommand={onCommand}
@@ -1245,7 +1300,7 @@ describe("EditorCanvas gesture terminals", () => {
         sourceImageURL="data:image/png;base64,iVBORw0KGgo="
         tool="rectangle"
         {...VIEWPORT_PROPS}
-        selectedIds={[]}
+        selectedIds={["text-1"]}
         onSelect={() => {}}
         onEditText={onEditText}
         onCommand={(command) => history.dispatch(command)}

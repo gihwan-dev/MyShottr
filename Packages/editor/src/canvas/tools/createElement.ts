@@ -20,6 +20,13 @@ export type CreateTextElementInput = {
   bounds: Pick<TextElement, "width" | "height">;
 };
 
+export type NonTextCreationTool = Exclude<
+  EditorTool,
+  "selection" | "text"
+>;
+
+export type NonTextEditorElement = Exclude<EditorElement, TextElement>;
+
 export type CreationContext = {
   defaults: EditorDefaults;
   nextNumberMarker: number;
@@ -48,10 +55,10 @@ export function createTextDraftPresentation(
 }
 
 export function createElement(
-  tool: Exclude<EditorTool, "selection">,
+  tool: NonTextCreationTool,
   gesture: CreationGesture,
   context: CreationContext,
-): EditorElement {
+): NonTextEditorElement {
   assertCreationContext(context);
   const base = createBase(tool, gesture, context);
 
@@ -86,20 +93,6 @@ export function createElement(
         strokeWidth: context.defaults.strokeWidth,
         roughness: context.defaults.roughness,
       };
-    case "text": {
-      assertPointGesture(gesture, tool);
-      const presentation = createTextDraftPresentation(
-        gesture.point,
-        context.defaults,
-      );
-      return {
-        ...base,
-        type: "text",
-        text: "Text",
-        color: presentation.color,
-        fontSize: presentation.fontSize,
-      };
-    }
     case "freehand":
       assertPathGesture(gesture, tool);
       return {
@@ -138,12 +131,50 @@ export function createElement(
 
 export function createElementFromDocument(
   document: EditorDocument,
-  tool: Exclude<EditorTool, "selection">,
+  tool: NonTextCreationTool,
   gesture: CreationGesture,
   id?: string,
-): EditorElement {
-  return createElement(tool, gesture, {
-    defaults: document.defaults,
+): NonTextEditorElement {
+  return createElement(tool, gesture, creationContextFor(document, id));
+}
+
+export function createTextElementFromDocument(
+  document: EditorDocument,
+  input: CreateTextElementInput,
+): TextElement {
+  const context = creationContextFor(
+    document,
+    undefined,
+    input.defaults,
+  );
+  assertCreationContext(context);
+  const presentation = createTextDraftPresentation(
+    input.point,
+    input.defaults,
+  );
+  return {
+    id: context.id ?? createElementId(),
+    type: "text",
+    x: presentation.x,
+    y: presentation.y,
+    ...input.bounds,
+    rotation: presentation.rotation,
+    opacity: input.defaults.opacity,
+    zIndex: context.nextZIndex,
+    seed: context.seed,
+    text: input.text,
+    color: presentation.color,
+    fontSize: presentation.fontSize,
+  };
+}
+
+function creationContextFor(
+  document: EditorDocument,
+  id?: string,
+  defaults: EditorDefaults = document.defaults,
+): CreationContext {
+  return {
+    defaults,
     nextNumberMarker: Math.max(
       0,
       ...document.elements
@@ -159,34 +190,15 @@ export function createElementFromDocument(
       ...document.elements.map((candidate) => candidate.seed),
     ) + 1,
     id,
-  });
-}
-
-export function createTextElementFromDocument(
-  document: EditorDocument,
-  input: CreateTextElementInput,
-): TextElement {
-  const element = createElementFromDocument(
-    { ...document, defaults: input.defaults },
-    "text",
-    { kind: "point", point: input.point },
-  );
-  if (element.type !== "text") {
-    throw new Error("Text factory created a non-text element");
-  }
-  return {
-    ...element,
-    text: input.text,
-    ...input.bounds,
   };
 }
 
 function createBase(
-  tool: Exclude<EditorTool, "selection">,
+  tool: NonTextCreationTool,
   gesture: CreationGesture,
   context: CreationContext,
 ) {
-  const bounds = boundsFor(tool, gesture, context.defaults);
+  const bounds = boundsFor(tool, gesture);
   return {
     id: context.id ?? createElementId(),
     ...bounds,
@@ -198,29 +210,19 @@ function createBase(
 }
 
 function boundsFor(
-  tool: Exclude<EditorTool, "selection">,
+  tool: NonTextCreationTool,
   gesture: CreationGesture,
-  defaults: EditorDefaults,
 ) {
   if (tool === "rectangle" || tool === "arrow" || tool === "line" || tool === "blur" || tool === "redaction") {
     assertBoxGesture(gesture, tool);
     return boxBounds(gesture.start, gesture.end);
   }
-  if (tool === "text" || tool === "numberMarker") {
+  if (tool === "numberMarker") {
     assertPointGesture(gesture, tool);
-    return tool === "text"
-      ? pickTextBounds(createTextDraftPresentation(gesture.point, defaults))
-      : { x: gesture.point.x, y: gesture.point.y, width: 32, height: 32 };
+    return { x: gesture.point.x, y: gesture.point.y, width: 32, height: 32 };
   }
   assertPathGesture(gesture, tool);
   return pointsBounds(gesture.points);
-}
-
-function pickTextBounds(
-  presentation: TextDraftPresentation,
-): Pick<TextElement, "x" | "y" | "width" | "height"> {
-  const { x, y, width, height } = presentation;
-  return { x, y, width, height };
 }
 
 function boxBounds(start: Point, end: Point) {

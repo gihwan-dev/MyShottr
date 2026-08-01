@@ -464,7 +464,10 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
             {orderedElements.map((element) => renderElement(element, {
               selected: selectedIdSet.has(element.id),
               draggable: !interactionLocked && tool === "selection" && selectedIdSet.has(element.id),
-              textEditingEnabled: !interactionLocked && tool === "selection",
+              textEditingEnabled: !interactionLocked
+                && tool === "selection"
+                && selectedIds.length === 1
+                && selectedIds[0] === element.id,
               onSelect: (id, toggle) => {
                 if (interactionLocked) return;
                 onSelect(id, toggle);
@@ -963,9 +966,9 @@ function sameElementSnapshots(
 
 export function createCanvasElement(
   document: EditorDocument,
-  tool: Exclude<EditorTool, "selection">,
+  tool: Parameters<typeof createElementFromDocument>[1],
   gesture: Parameters<typeof createElementFromDocument>[2],
-): EditorElement {
+): ReturnType<typeof createElementFromDocument> {
   return createElementFromDocument(document, tool, gesture);
 }
 

@@ -34,7 +34,7 @@ const context = {
 
 describe("createElement", () => {
   it.each([
-    "rectangle", "arrow", "line", "text", "freehand",
+    "rectangle", "arrow", "line", "freehand",
     "highlighter", "blur", "redaction", "numberMarker",
   ] as const)("creates a valid %s element", (tool) => {
     expect(() => EditorElementSchema.parse(createElement(tool, creationGesture(tool), context))).not.toThrow();
@@ -224,6 +224,13 @@ describe("createElement", () => {
       color: "#FF4D4F" as const,
       textSize: 36 as const,
     };
+
+    if (false) {
+      // @ts-expect-error Generic element creation must never persist placeholder Text.
+      createElement("text", creationGesture("text"), context);
+      // @ts-expect-error Generic document creation must never persist placeholder Text.
+      createElementFromDocument(document, "text", creationGesture("text"));
+    }
 
     expect(createTextElementFromDocument(document, {
       point: { x: 32, y: 48 },

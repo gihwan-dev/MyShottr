@@ -556,6 +556,7 @@ describe("EditorApp", () => {
       onPreferencesChange={onPreferencesChange}
     />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
     const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
     fireEvent.change(editor, { target: { value: "Existing stays open" } });
@@ -639,6 +640,36 @@ describe("EditorApp", () => {
     expect(selection.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("accepts a direct existing-Text edit callback only for that sole selection", () => {
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureRect(), fixtureText()] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={() => {}}
+    />);
+    const editText = screen.getByRole("button", { name: "Edit text-1" });
+
+    fireEvent.click(editText);
+    expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.click(editText);
+    expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    fireEvent.click(editText);
+    expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
+
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    fireEvent.click(editText);
+
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    expect(document.activeElement).toBe(editor);
+    expect((editor as HTMLTextAreaElement).value).toBe("Annotate this");
+  });
+
   it("edits existing text with exact whitespace and multiline content in one history command", () => {
     const changes: EditorDocument[] = [];
     render(<EditorApp
@@ -649,6 +680,7 @@ describe("EditorApp", () => {
       onPreferencesChange={() => {}}
     />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
     const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
     expect(document.activeElement).toBe(editor);
@@ -682,6 +714,7 @@ describe("EditorApp", () => {
       onPreferencesChange={() => {}}
     />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
     fireEvent.keyDown(
       screen.getByRole("textbox", { name: "Edit annotation text" }),
@@ -705,6 +738,7 @@ describe("EditorApp", () => {
       onPreferencesChange={() => {}}
     />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
     const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
     fireEvent.change(editor, { target: { value: "Discard me" } });
@@ -725,6 +759,7 @@ describe("EditorApp", () => {
       onPreferencesChange={() => {}}
     />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
     const staleEditor = screen.getByRole("textbox", { name: "Edit annotation text" });
     fireEvent.change(staleEditor, { target: { value: "must not publish" } });
@@ -1904,6 +1939,7 @@ describe("EditorApp", () => {
     });
     await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
       .toBe("text-1:40,50"));
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
     const staleEditor = screen.getByRole("textbox", { name: "Edit annotation text" });
     fireEvent.change(staleEditor, { target: { value: "must not cross documents" } });
