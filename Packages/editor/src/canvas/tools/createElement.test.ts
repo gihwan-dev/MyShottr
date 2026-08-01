@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_EDITOR_DEFAULTS } from "../../model/defaults";
 import { EditorElementSchema } from "../../model/schema";
 import { creationGesture, fixtureDocument } from "../../test/fixtures";
-import { createElement, createElementFromDocument } from "./createElement";
+import {
+  createElement,
+  createElementFromDocument,
+  createTextDraftPresentation,
+  createTextElementFromDocument,
+} from "./createElement";
 import { cursorForTool } from "./ToolController";
 import { keyboardCommandFor } from "../../input/ShortcutRouter";
 
@@ -195,5 +200,50 @@ describe("createElement", () => {
 
     expect(rectangle.id).not.toBe("rectangle-2");
     expect(rectangle.seed).toBe(2);
+  });
+
+  it("derives the canonical Text draft presentation from the insertion snapshot", () => {
+    expect(createTextDraftPresentation(
+      { x: 32, y: 48 },
+      { ...DEFAULT_EDITOR_DEFAULTS, color: "#FF4D4F", textSize: 36 },
+    )).toEqual({
+      x: 32,
+      y: 48,
+      width: 160,
+      height: 36,
+      rotation: 0,
+      color: "#FF4D4F",
+      fontSize: 36,
+    });
+  });
+
+  it("materializes a committed Text draft through the canonical element factory", () => {
+    const document = fixtureDocument({ elements: [] });
+    const defaults = {
+      ...document.defaults,
+      color: "#FF4D4F" as const,
+      textSize: 36 as const,
+    };
+
+    expect(createTextElementFromDocument(document, {
+      point: { x: 32, y: 48 },
+      defaults,
+      text: "  exact\ntext  ",
+      bounds: { width: 222, height: 66 },
+    })).toEqual({
+      id: expect.any(String),
+      type: "text",
+      x: 32,
+      y: 48,
+      width: 222,
+      height: 66,
+      rotation: 0,
+      opacity: defaults.opacity,
+      zIndex: 0,
+      seed: 1,
+      text: "  exact\ntext  ",
+      color: "#FF4D4F",
+      fontSize: 36,
+    });
   });
 });

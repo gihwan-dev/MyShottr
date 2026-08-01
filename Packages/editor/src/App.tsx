@@ -23,6 +23,11 @@ import {
 import { FloatingToolPalette } from "./components/FloatingToolPalette";
 import { ShortcutHelpDialog } from "./components/ShortcutHelpDialog";
 import { TextEditorOverlay } from "./components/TextEditorOverlay";
+import {
+  textEditCommand,
+  type TextEditResult,
+  type TextEditSession,
+} from "./components/textEditSession";
 import { ZoomControls } from "./components/ZoomControls";
 import {
   EditorWorkspace,
@@ -61,7 +66,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   );
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<EditorTool>(initialTool);
-  const [editingTextId, setEditingTextId] = useState<string>();
+  const [textEditSession, setTextEditSession] = useState<TextEditSession>();
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [canvasInteractionActive, setCanvasInteractionActive] = useState(false);
   const [selectionOpacityPreview, setSelectionOpacityPreview] = useState<{
@@ -69,6 +74,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   }>();
   const [locks, setLocks] = useState({ slider: false });
   const [nudgeSession, setNudgeSession] = useState<NudgeSession>();
+  const textLocked = textEditSession !== undefined;
 
   const publishSceneChange = useCallback(() => {
     onChange(history.getSnapshot());
@@ -87,7 +93,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   const select = useCallback((id: string | undefined, toggle = false) => {
     setNudgeSession(undefined);
     setSelectionOpacityPreview(undefined);
-    setLocks({ slider: false });
+    setLocks((current) => ({ ...current, slider: false }));
     setSelectedIds((current) => {
       if (!id) return [...clearSelection()];
       return [...(toggle
@@ -96,11 +102,12 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     });
   }, []);
   const selectTool = useCallback((nextTool: EditorTool) => {
+    if (textLocked) return;
     setNudgeSession(undefined);
     setTool(nextTool);
     if (nextTool !== "selection") select(undefined);
     onPreferencesChange(nextTool, history.getSnapshot().defaults);
-  }, [history, onPreferencesChange, select]);
+  }, [history, onPreferencesChange, select, textLocked]);
   const duplicateSelection = useCallback(() => {
     if (selectedIds.length === 0) return;
     const current = history.document;
@@ -119,7 +126,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     const elements = createDuplicateElements(history.document, copiedElements.current);
     dispatch({ type: "createMany", elements });
     setSelectionOpacityPreview(undefined);
-    setLocks({ slider: false });
+    setLocks((current) => ({ ...current, slider: false }));
     setSelectedIds(elements.map((element) => element.id));
   }, [dispatch, history]);
   const reorderSelection = useCallback((direction: "forward" | "backward") => {
@@ -131,24 +138,41 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     if (element.type !== "text") {
       throw new Error(`Cannot edit non-text element: ${id}`);
     }
-    setEditingTextId(id);
+    const session: TextEditSession = {
+      kind: "existing",
+      element: structuredClone(element),
+      initialText: element.text,
+    };
+    setNudgeSession(undefined);
+    setTextEditSession(session);
   }, [history]);
-  const commitTextEdit = useCallback((text: string) => {
-    const id = editingTextId;
-    if (!id) return;
-    const element = findElement(history.document, id);
-    if (element.type !== "text") {
-      throw new Error(`Cannot edit non-text element: ${id}`);
+  const beginNewText = useCallback((point: { x: number; y: number }, defaults: EditorDefaults) => {
+    const session: TextEditSession = {
+      kind: "new",
+      point: { ...point },
+      defaults: structuredClone(defaults),
+      initialText: "",
+    };
+    setNudgeSession(undefined);
+    setTextEditSession(session);
+  }, []);
+  const finishTextEdit = useCallback((session: TextEditSession, result: TextEditResult) => {
+    setTextEditSession(undefined);
+    const command = textEditCommand(
+      history.document,
+      session,
+      result,
+      measureTextBounds,
+    );
+    if (!command) return;
+
+    dispatch(command);
+    if (command.type === "delete") {
+      setSelectedIds((current) => current.filter(
+        (id) => !command.ids.includes(id),
+      ));
     }
-    const nextText = text.trim();
-    if (nextText.length === 0) {
-      dispatch({ type: "delete", ids: [id] });
-      select(undefined);
-    } else {
-      dispatch({ type: "update", element: { ...element, text: nextText, ...measureTextBounds(nextText, element.fontSize) } });
-    }
-    setEditingTextId(undefined);
-  }, [dispatch, editingTextId, history, select]);
+  }, [dispatch, history]);
   const selectedElements = selectedIds.map((id) => findElement(document, id));
   const scenePreviewElements = nudgeSession
     ? nudgeSession.previewElements
@@ -169,10 +193,6 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     document: renderedDocument,
     selectedIds,
   });
-  const editingText = editingTextId
-    ? document.elements.find((element): element is TextElement => element.id === editingTextId && element.type === "text")
-    : undefined;
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isNudgeCode(event.code)) {
@@ -187,9 +207,9 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
           && selectedIds.length > 0
           && !history.isTransactionActive
           && !locks.slider
+          && !textLocked
           && !canvasInteractionActive
-          && !shortcutHelpOpen
-          && editingTextId === undefined;
+          && !shortcutHelpOpen;
         if (!nudgeSession && !canStartNudge) return;
         event.preventDefault();
         const startingElements = nudgeSession
@@ -210,13 +230,38 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         setNudgeSession({ startingElements, previewElements, heldCodes });
         return;
       }
+      if (
+        event.code === "Enter"
+        && !event.isComposing
+        && !isTextEntryTarget(event.target)
+        && !event.metaKey
+        && !event.ctrlKey
+        && !event.altKey
+        && !event.shiftKey
+        && tool === "selection"
+        && selectedIds.length === 1
+        && !history.isTransactionActive
+        && !locks.slider
+        && !textLocked
+        && nudgeSession === undefined
+        && !canvasInteractionActive
+        && !shortcutHelpOpen
+      ) {
+        const selected = findElement(history.document, selectedIds[0]);
+        if (selected.type === "text") {
+          event.preventDefault();
+          beginTextEdit(selected.id);
+        }
+        return;
+      }
       const command = keyboardCommandFor(event, {
         interactionActive: history.isTransactionActive
           || locks.slider
+          || textLocked
           || nudgeSession !== undefined
           || canvasInteractionActive,
         shortcutHelpOpen,
-        textEditing: editingTextId !== undefined,
+        textEditing: textLocked,
       });
       if (!command) return;
       event.preventDefault();
@@ -227,11 +272,11 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
           setNudgeSession(undefined);
         } else if (shortcutHelpOpen) {
           setShortcutHelpOpen(false);
-        } else if (editingTextId) {
-          setEditingTextId(undefined);
+        } else if (textEditSession) {
+          finishTextEdit(textEditSession, { type: "cancel" });
         } else if (locks.slider) {
           setSelectionOpacityPreview(undefined);
-          setLocks({ slider: false });
+          setLocks((current) => ({ ...current, slider: false }));
         } else if (history.isTransactionActive) {
           if (history.cancelTransaction()) publishSceneChange();
         } else if (tool !== "selection") {
@@ -312,7 +357,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [canvasInteractionActive, copySelection, dispatch, duplicateSelection, editingTextId, history, locks.slider, nudgeSession, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, tool]);
+  }, [beginTextEdit, canvasInteractionActive, copySelection, dispatch, duplicateSelection, finishTextEdit, history, locks.slider, nudgeSession, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, textEditSession, textLocked, tool]);
 
   useEffect(() => {
     const cancelNudge = () => setNudgeSession(undefined);
@@ -321,7 +366,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   }, []);
 
   const handleContextRailIntent = useCallback((intent: ContextRailIntent) => {
-    if (nudgeSession) return;
+    if (nudgeSession || textLocked) return;
     switch (intent.type) {
       case "setDefaultProperty":
         updateDefaults(applyRailDefault(document.defaults, tool, intent.property, intent.value));
@@ -338,20 +383,20 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         const selected = selectedIds.map((id) => findElement(history.document, id));
         applyRailProperty(selected, "opacity", intent.value);
         setSelectionOpacityPreview({ value: intent.value });
-        setLocks({ slider: true });
+        setLocks((current) => ({ ...current, slider: true }));
         return;
       }
       case "commitSelectionOpacity": {
         const selected = selectedIds.map((id) => findElement(history.document, id));
         const elements = applyRailProperty(selected, "opacity", intent.value);
         setSelectionOpacityPreview(undefined);
-        setLocks({ slider: false });
+        setLocks((current) => ({ ...current, slider: false }));
         dispatch({ type: "updateMany", elements });
         return;
       }
       case "cancelSelectionOpacity":
         setSelectionOpacityPreview(undefined);
-        setLocks({ slider: false });
+        setLocks((current) => ({ ...current, slider: false }));
         return;
       case "bringForward":
         reorderSelection("forward");
@@ -368,7 +413,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         select(undefined);
         return;
     }
-  }, [dispatch, document.defaults, duplicateSelection, history, nudgeSession, reorderSelection, select, selectedIds, tool, updateDefaults]);
+  }, [dispatch, document.defaults, duplicateSelection, history, nudgeSession, reorderSelection, select, selectedIds, textLocked, tool, updateDefaults]);
 
   return (
     <main
@@ -394,11 +439,11 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
               tool={tool}
               viewport={viewport}
               spacePanReady={spacePanReady}
-              interactionLocked={nudgeSession !== undefined}
+              interactionLocked={nudgeSession !== undefined || textLocked}
               selectedIds={selectedIds}
               onSelect={select}
               onEditText={beginTextEdit}
-              onBeginNewText={() => {}}
+              onBeginNewText={beginNewText}
               onCommand={dispatch}
               onBeginTransaction={(label) => history.beginTransaction(label)}
               onCommitTransaction={() => {
@@ -413,12 +458,14 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
               onViewportPanBy={panBy}
               onInteractionActiveChange={setCanvasInteractionActive}
               toSourcePoint={toSourcePoint}
-              textEditorOverlay={editingText && <TextEditorOverlay
-                element={editingText}
+              textEditorOverlay={textEditSession && <TextEditorOverlay
+                key={textEditSession.kind === "new"
+                  ? `new:${textEditSession.point.x}:${textEditSession.point.y}`
+                  : `existing:${textEditSession.element.id}`}
+                session={textEditSession}
                 zoom={viewport.zoom}
                 pan={viewport.pan}
-                onCommit={commitTextEdit}
-                onCancel={() => setEditingTextId(undefined)}
+                onResult={(result) => finishTextEdit(textEditSession, result)}
               />}
             />
             <ZoomControls

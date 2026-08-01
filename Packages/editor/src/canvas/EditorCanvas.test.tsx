@@ -1113,6 +1113,128 @@ describe("EditorCanvas gesture terminals", () => {
     expect(onCommand).not.toHaveBeenCalled();
   });
 
+  it("routes a Selection-tool Text double-click into one existing edit without a document command", () => {
+    const document = fixtureDocument({ elements: [fixtureText()] });
+    const onEditText = vi.fn();
+    const onCommand = vi.fn();
+    const onBeginTransaction = vi.fn();
+    const onCommitTransaction = vi.fn();
+    const onCancelTransaction = vi.fn();
+    render(
+      <EditorCanvas
+        document={document}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={onEditText}
+        onCommand={onCommand}
+        onBeginTransaction={onBeginTransaction}
+        onCommitTransaction={onCommitTransaction}
+        onCancelTransaction={onCancelTransaction}
+        textEditorOverlay={undefined}
+      />,
+    );
+
+    fireEvent.doubleClick(screen.getByTestId("element-text-1"));
+
+    expect(onEditText).toHaveBeenCalledOnce();
+    expect(onEditText).toHaveBeenCalledWith("text-1");
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onBeginTransaction).not.toHaveBeenCalled();
+    expect(onCommitTransaction).not.toHaveBeenCalled();
+    expect(onCancelTransaction).not.toHaveBeenCalled();
+  });
+
+  it("blocks an existing Text double-click while canvas interaction is locked", () => {
+    const document = fixtureDocument({ elements: [fixtureText()] });
+    const onEditText = vi.fn();
+    const onCommand = vi.fn();
+    const onBeginTransaction = vi.fn();
+    const onCommitTransaction = vi.fn();
+    const onCancelTransaction = vi.fn();
+    render(
+      <EditorCanvas
+        document={document}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        interactionLocked
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={onEditText}
+        onCommand={onCommand}
+        onBeginTransaction={onBeginTransaction}
+        onCommitTransaction={onCommitTransaction}
+        onCancelTransaction={onCancelTransaction}
+        textEditorOverlay={undefined}
+      />,
+    );
+
+    fireEvent.doubleClick(screen.getByTestId("element-text-1"));
+
+    expect(onEditText).not.toHaveBeenCalled();
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onBeginTransaction).not.toHaveBeenCalled();
+    expect(onCommitTransaction).not.toHaveBeenCalled();
+    expect(onCancelTransaction).not.toHaveBeenCalled();
+  });
+
+  it("blocks ordinary element selection clicks while canvas interaction is locked", () => {
+    const document = fixtureDocument({ elements: [fixtureRect()] });
+    const onSelect = vi.fn();
+    render(
+      <EditorCanvas
+        document={document}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        interactionLocked
+        selectedIds={[]}
+        onSelect={onSelect}
+        onEditText={() => {}}
+        onCommand={() => {}}
+        onBeginTransaction={() => {}}
+        onCommitTransaction={() => {}}
+        onCancelTransaction={() => {}}
+        textEditorOverlay={undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("annotation-node"));
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("blocks a new Text pointer entry while canvas interaction is locked", () => {
+    const onBeginNewText = vi.fn();
+    const onCommand = vi.fn();
+    const onBeginTransaction = vi.fn();
+    const onCommitTransaction = vi.fn();
+    const onCancelTransaction = vi.fn();
+    renderCreationCanvas("text", {
+      interactionLocked: true,
+      onBeginNewText,
+      onCommand,
+      onBeginTransaction,
+      onCommitTransaction,
+      onCancelTransaction,
+    });
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { clientX: 20, clientY: 30, pointerId: 4 });
+    fireEvent.pointerMove(stage, { clientX: 100, clientY: 110, pointerId: 4 });
+    flushAnimationFrame();
+    fireEvent.pointerUp(stage, { clientX: 100, clientY: 110, pointerId: 4 });
+
+    expect(onBeginNewText).not.toHaveBeenCalled();
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onBeginTransaction).not.toHaveBeenCalled();
+    expect(onCommitTransaction).not.toHaveBeenCalled();
+    expect(onCancelTransaction).not.toHaveBeenCalled();
+  });
+
   it("does not begin text editing from a non-selection tool", () => {
     const document = fixtureDocument({ elements: [fixtureText()] });
     const history = createHistoryStore(document);

@@ -465,7 +465,10 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
               selected: selectedIdSet.has(element.id),
               draggable: !interactionLocked && tool === "selection" && selectedIdSet.has(element.id),
               textEditingEnabled: !interactionLocked && tool === "selection",
-              onSelect: (id, toggle) => onSelect(id, toggle),
+              onSelect: (id, toggle) => {
+                if (interactionLocked) return;
+                onSelect(id, toggle);
+              },
               onEditText: (id) => onEditText(id),
               onPointerDown: (id, node, owner) => {
                 if (

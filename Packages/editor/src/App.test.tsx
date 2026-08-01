@@ -70,7 +70,11 @@ vi.mock("./canvas/EditorCanvas", async () => {
       <div
         data-testid="mock-canvas-pointer-surface"
         onPointerDown={(event) => {
-          if ((!spacePanReady && tool === "selection") || pointerGesture.current) return;
+          if (
+            interactionLocked
+            || (!spacePanReady && tool === "selection")
+            || pointerGesture.current
+          ) return;
           pointerGesture.current = {
             pointerId: event.pointerId,
             tool,
@@ -388,7 +392,64 @@ describe("EditorApp", () => {
     ]);
   });
 
-  it("routes a new Text pointer gesture without publishing a placeholder element", () => {
+  it("opens a locked new Text draft without a placeholder, then creates exactly one undoable element", () => {
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [] })}
+      initialTool="text"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    const canvas = screen.getByTestId("mock-canvas-pointer-surface");
+
+    fireEvent.pointerDown(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 80, clientY: 90, pointerId: 1 });
+
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    expect(document.activeElement).toBe(editor);
+    expect((editor as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("");
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("true");
+    expect(changes).toHaveLength(0);
+
+    fireEvent.keyDown(window, { code: "KeyD", key: "d", metaKey: true });
+    fireEvent.pointerDown(canvas, { clientX: 200, clientY: 210, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 200, clientY: 210, pointerId: 2 });
+    expect(changes).toHaveLength(0);
+    expect(screen.getAllByRole("textbox", { name: "Edit annotation text" })).toHaveLength(1);
+
+    fireEvent.change(editor, { target: { value: "  first line\nsecond line  " } });
+    fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
+    fireEvent.blur(editor);
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].elements).toEqual([
+      expect.objectContaining({
+        type: "text",
+        x: 20,
+        y: 30,
+        text: "  first line\nsecond line  ",
+        color: "#1677FF",
+        fontSize: 24,
+      }),
+    ]);
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("false");
+    expect(screen.getByRole("button", { name: "Text, shortcut T" }).getAttribute("aria-pressed"))
+      .toBe("true");
+
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(2);
+    expect(changes[1].elements).toEqual([]);
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true, shiftKey: true });
+    expect(changes).toHaveLength(3);
+    expect(changes[2].elements[0]).toMatchObject({
+      type: "text",
+      text: "  first line\nsecond line  ",
+    });
+  });
+
+  it("closes a blank new Text draft without publishing or creating Undo history", () => {
     const onChange = vi.fn();
     render(<EditorApp
       initialDocument={fixtureDocument({ elements: [] })}
@@ -400,11 +461,105 @@ describe("EditorApp", () => {
     const canvas = screen.getByTestId("mock-canvas-pointer-surface");
 
     fireEvent.pointerDown(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
-    fireEvent.pointerUp(canvas, { clientX: 80, clientY: 90, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    fireEvent.change(editor, { target: { value: " \n\t " } });
+    fireEvent.blur(editor);
 
+    expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("");
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("false");
     expect(onChange).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("cancels a new Text draft on the first Escape without changing its tool or selection", () => {
+    const onChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [] })}
+      initialTool="text"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={() => {}}
+    />);
+    const canvas = screen.getByTestId("mock-canvas-pointer-surface");
+    fireEvent.pointerDown(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
+
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    fireEvent.change(editor, { target: { value: "Discard me" } });
+    fireEvent.keyDown(editor, { code: "Escape", key: "Escape" });
+    fireEvent.blur(editor);
+
+    expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
     expect(screen.getByRole("button", { name: "Text, shortcut T" }).getAttribute("aria-pressed"))
       .toBe("true");
+    expect(screen.getByTestId("canvas-selection").textContent).toBe("");
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("false");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Text tool when another palette tool is pressed during its locked draft", () => {
+    const onPreferencesChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [] })}
+      initialTool="text"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={onPreferencesChange}
+    />);
+    const canvas = screen.getByTestId("mock-canvas-pointer-surface");
+    fireEvent.pointerDown(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
+
+    expect(screen.getByRole("button", { name: "Text, shortcut T" }).getAttribute("aria-pressed"))
+      .toBe("true");
+    expect(screen.getByRole("button", { name: "Rectangle, shortcut R" }).getAttribute("aria-pressed"))
+      .toBe("false");
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    expect(onPreferencesChange).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(editor, { code: "Escape", key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
+
+    expect(screen.getByRole("button", { name: "Text, shortcut T" }).getAttribute("aria-pressed"))
+      .toBe("false");
+    expect(screen.getByRole("button", { name: "Rectangle, shortcut R" }).getAttribute("aria-pressed"))
+      .toBe("true");
+    expect(onPreferencesChange).toHaveBeenCalledOnce();
+    expect(onPreferencesChange.mock.calls[0]?.[0]).toBe("rectangle");
+  });
+
+  it("keeps the active tool through an existing Text draft and unlocks the palette after cancel", () => {
+    const onPreferencesChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureText()] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={onPreferencesChange}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
+
+    expect(screen.getByRole("button", { name: "Selection, shortcut V" }).getAttribute("aria-pressed"))
+      .toBe("true");
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    expect(onPreferencesChange).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(editor, { code: "Escape", key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
+
+    expect(screen.getByRole("button", { name: "Selection, shortcut V" }).getAttribute("aria-pressed"))
+      .toBe("false");
+    expect(screen.getByRole("button", { name: "Rectangle, shortcut R" }).getAttribute("aria-pressed"))
+      .toBe("true");
+    expect(onPreferencesChange).toHaveBeenCalledOnce();
+    expect(onPreferencesChange.mock.calls[0]?.[0]).toBe("rectangle");
   });
 
   it("cancels an active creation on the first Escape and changes tool only on the second idle Escape", () => {
@@ -462,7 +617,7 @@ describe("EditorApp", () => {
     expect(selection.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("edits existing text and commits one history command", () => {
+  it("edits existing text with exact whitespace and multiline content in one history command", () => {
     const changes: EditorDocument[] = [];
     render(<EditorApp
       initialDocument={fixtureDocument({ elements: [fixtureText()] })}
@@ -474,12 +629,48 @@ describe("EditorApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
     const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
-    fireEvent.change(editor, { target: { value: "Ship this" } });
+    expect(document.activeElement).toBe(editor);
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("true");
+    fireEvent.change(editor, { target: { value: "  Ship this\nnow  " } });
     fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
+    fireEvent.blur(editor);
 
-    expect(changes.at(-1)?.elements[0]).toMatchObject({ type: "text", text: "Ship this" });
+    expect(changes).toHaveLength(1);
+    expect(changes.at(-1)?.elements[0]).toMatchObject({
+      type: "text",
+      text: "  Ship this\nnow  ",
+    });
     fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
     expect(changes.at(-1)?.elements[0]).toMatchObject({ type: "text", text: "Annotate this" });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true, shiftKey: true });
+    expect(changes.at(-1)?.elements[0]).toMatchObject({
+      type: "text",
+      text: "  Ship this\nnow  ",
+    });
+  });
+
+  it("keeps an identical existing text commit as one explicit update and Undo entry", () => {
+    const changes: EditorDocument[] = [];
+    const text = { ...fixtureText(), width: 156, height: 29 };
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [text] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
+    fireEvent.keyDown(
+      screen.getByRole("textbox", { name: "Edit annotation text" }),
+      { key: "Enter", metaKey: true },
+    );
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].elements).toEqual([text]);
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(2);
+    expect(changes[1].elements).toEqual([text]);
   });
 
   it("escapes text editing without changing the document", () => {
@@ -496,12 +687,32 @@ describe("EditorApp", () => {
     const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
     fireEvent.change(editor, { target: { value: "Discard me" } });
     fireEvent.keyDown(editor, { key: "Escape" });
+    fireEvent.blur(editor);
 
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
   });
 
-  it("deletes a text element when its committed text is empty", () => {
+  it("cannot publish a late existing-text blur after the editor unmounts", () => {
+    const onChange = vi.fn();
+    const { unmount } = render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureText()] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
+    const staleEditor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    fireEvent.change(staleEditor, { target: { value: "must not publish" } });
+    unmount();
+    fireEvent.blur(staleEditor);
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("deletes a selected existing text when blank, clears selection, and records one Undo", () => {
     const changes: EditorDocument[] = [];
     render(<EditorApp
       initialDocument={fixtureDocument({ elements: [fixtureText()] })}
@@ -511,12 +722,76 @@ describe("EditorApp", () => {
       onPreferencesChange={() => {}}
     />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    expect(screen.getByTestId("canvas-selection").textContent).toBe("text-1");
     fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
     const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
     fireEvent.change(editor, { target: { value: "   " } });
     fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
 
+    expect(changes).toHaveLength(1);
     expect(changes.at(-1)?.elements).toEqual([]);
+    expect(screen.getByTestId("canvas-selection").textContent).toBe("");
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("false");
+
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(2);
+    expect(changes.at(-1)?.elements[0]).toMatchObject({
+      id: "text-1",
+      text: "Annotate this",
+    });
+    expect(screen.getByTestId("canvas-selection").textContent).toBe("");
+  });
+
+  it("opens existing text with Enter only for exactly one selected Text element", () => {
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureRect(), fixtureText()] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.keyDown(window, { code: "Enter", key: "Enter" });
+    expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    fireEvent.keyDown(window, { code: "Enter", key: "Enter" });
+    expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
+
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    fireEvent.keyDown(window, { code: "Enter", key: "Enter" });
+
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    expect(document.activeElement).toBe(editor);
+    expect((editor as HTMLTextAreaElement).value).toBe("Annotate this");
+  });
+
+  it("starts consecutive new Text sessions from fresh empty drafts and source anchors", () => {
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [] })}
+      initialTool="text"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={() => {}}
+    />);
+    const canvas = screen.getByTestId("mock-canvas-pointer-surface");
+
+    fireEvent.pointerDown(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
+    const firstEditor = screen.getByRole("textbox", { name: "Edit annotation text" }) as HTMLTextAreaElement;
+    const firstLeft = firstEditor.style.left;
+    fireEvent.change(firstEditor, { target: { value: "stale" } });
+    fireEvent.keyDown(firstEditor, { code: "Escape", key: "Escape" });
+
+    fireEvent.pointerDown(canvas, { clientX: 100, clientY: 110, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 110, pointerId: 2 });
+    const secondEditor = screen.getByRole("textbox", { name: "Edit annotation text" }) as HTMLTextAreaElement;
+
+    expect(secondEditor.value).toBe("");
+    expect(secondEditor.style.left).not.toBe(firstLeft);
   });
 
   it("applies a color change to the selected rectangle", () => {
@@ -893,6 +1168,37 @@ describe("EditorApp", () => {
       .toBe("rect-1:20,20;line-1:50,50");
     expect(screen.getByTestId("canvas-selection").textContent).toBe("line-1");
     expect(changes).toHaveLength(0);
+  });
+
+  it("keeps Enter inert for selected Text until a held nudge commits", () => {
+    const text = { ...fixtureText(), x: 20, y: 20, width: 20, height: 20 };
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({
+        sourcePixelWidth: 100,
+        sourcePixelHeight: 100,
+        elements: [text],
+      })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" }));
+    fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
+
+    fireEvent.keyDown(window, { code: "Enter", key: "Enter" });
+
+    expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("text-1:21,20");
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("true");
+    expect(changes).toHaveLength(0);
+
+    fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].elements[0]).toMatchObject({ id: "text-1", x: 21, y: 20 });
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("false");
   });
 
   it("cancels a held nudge on tool switch so late keyup cannot create history", () => {
@@ -1536,6 +1842,66 @@ describe("EditorApp", () => {
     expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("false");
     expect(screen.getByRole("button", { name: "Line, shortcut L" }).getAttribute("aria-pressed"))
       .toBe("true");
+    expect(sent.filter(({ type }) => type === "documentChanged")).toEqual([]);
+  });
+
+  it("discards an existing-text session when a native document replacement unmounts it", async () => {
+    vi.stubGlobal("Image", class {
+      naturalWidth = 1440;
+      naturalHeight = 900;
+      onload: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    });
+    let receiveNative: ((message: Parameters<NativeBridge["subscribe"]>[0] extends (message: infer Message) => void ? Message : never) => void) | undefined;
+    const sent: Array<{ requestId?: string; type: string; payload: unknown }> = [];
+    const bridge: NativeBridge = {
+      send: async (type, payload) => { sent.push({ type, payload }); },
+      sendCorrelated: async (requestId, type, payload) => { sent.push({ requestId, type, payload }); },
+      subscribe: (handler) => {
+        receiveNative = handler;
+        return () => { receiveNative = undefined; };
+      },
+    };
+    const sourceImageURL = "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png";
+    const firstRequestId = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    const secondRequestId = "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB";
+    const firstDocument = fixtureDocument({ elements: [fixtureText()] });
+    const secondDocument = fixtureDocument({ elements: [fixtureLine()] });
+
+    render(<NativeBridgeProvider bridge={bridge}><App /></NativeBridgeProvider>);
+    receiveNative!({
+      protocolVersion: 1,
+      requestId: firstRequestId,
+      type: "loadDocument",
+      payload: {
+        documentId: firstRequestId,
+        sourceImageURL,
+        annotationDocument: firstDocument,
+        initialTool: "selection",
+      },
+    });
+    await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("text-1:40,50"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
+    const staleEditor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    fireEvent.change(staleEditor, { target: { value: "must not cross documents" } });
+
+    receiveNative!({
+      protocolVersion: 1,
+      requestId: secondRequestId,
+      type: "loadDocument",
+      payload: {
+        documentId: secondRequestId,
+        sourceImageURL,
+        annotationDocument: secondDocument,
+        initialTool: "line",
+      },
+    });
+    await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("line-1:15,20"));
+    expect(screen.queryByRole("textbox", { name: "Edit annotation text" })).toBeNull();
+    fireEvent.blur(staleEditor);
+
     expect(sent.filter(({ type }) => type === "documentChanged")).toEqual([]);
   });
 

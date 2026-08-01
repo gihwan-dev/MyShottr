@@ -1,23 +1,26 @@
 import { useEffect, useRef, useState } from "react";
-import type { TextElement } from "../model/elements";
 import { TEXT_LINE_HEIGHT } from "../canvas/renderingConstants";
+import type {
+  TextEditResult,
+  TextEditSession,
+} from "./textEditSession";
+import { textEditPresentation } from "./textEditSession";
 
 export function TextEditorOverlay({
-  element,
+  session,
   zoom,
   pan,
-  onCommit,
-  onCancel,
+  onResult,
 }: {
-  element: TextElement;
+  session: TextEditSession;
   zoom: number;
   pan: { x: number; y: number };
-  onCommit: (text: string) => void;
-  onCancel: () => void;
+  onResult: (result: TextEditResult) => void;
 }) {
-  const [value, setValue] = useState(element.text);
+  const [value, setValue] = useState(session.initialText);
   const ref = useRef<HTMLTextAreaElement>(null);
   const completed = useRef(false);
+  const presentation = textEditPresentation(session);
 
   useEffect(() => {
     ref.current?.focus();
@@ -27,12 +30,12 @@ export function TextEditorOverlay({
   const commit = () => {
     if (completed.current) return;
     completed.current = true;
-    onCommit(value);
+    onResult({ type: "commit", text: value });
   };
   const cancel = () => {
     if (completed.current) return;
     completed.current = true;
-    onCancel();
+    onResult({ type: "cancel" });
   };
 
   return (
@@ -42,14 +45,14 @@ export function TextEditorOverlay({
       value={value}
       style={{
         position: "absolute",
-        left: pan.x + element.x * zoom,
-        top: pan.y + element.y * zoom,
-        width: Math.max(48, element.width * zoom),
-        minHeight: Math.max(32, element.height * zoom),
-        fontSize: element.fontSize * zoom,
+        left: pan.x + presentation.x * zoom,
+        top: pan.y + presentation.y * zoom,
+        width: Math.max(48, presentation.width * zoom),
+        minHeight: Math.max(32, presentation.height * zoom),
+        fontSize: presentation.fontSize * zoom,
         lineHeight: TEXT_LINE_HEIGHT,
-        color: element.color,
-        transform: `rotate(${element.rotation}deg)`,
+        color: presentation.color,
+        transform: `rotate(${presentation.rotation}deg)`,
         transformOrigin: "top left",
       }}
       onChange={(event) => setValue(event.target.value)}
