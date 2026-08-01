@@ -355,7 +355,7 @@ input:focus-visible {
   bottom: 24px;
   z-index: 11;
   width: max-content;
-  max-width: min(360px, calc(100vw - 552px));
+  max-width: min(360px, calc(100vw - 32px));
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -375,13 +375,20 @@ input:focus-visible {
   opacity: 0;
 }
 
-@media (max-width: 700px) {
-  .editor-feedback {
-    right: 184px;
-    left: 16px;
-    width: auto;
-    max-width: none;
-    transform: none;
+@media (max-width: 1260px) {
+  .zoom-controls {
+    bottom: 140px;
+  }
+}
+
+@media (max-width: 520px) {
+  .zoom-controls {
+    right: auto;
+    left: 50%;
+    width: calc(100vw - 32px);
+    flex-wrap: wrap;
+    justify-content: center;
+    transform: translateX(-50%);
   }
 }
 

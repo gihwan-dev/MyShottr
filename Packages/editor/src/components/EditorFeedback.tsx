@@ -5,12 +5,17 @@ import {
   useState,
 } from "react";
 
-import type { NativeToEditorEnvelope } from "../bridge/protocol";
+export type EditorFeedbackStatus =
+  | { operation: "save" | "export"; phase: "started" }
+  | { operation: "save"; phase: "completed" }
+  | { operation: "save"; phase: "superseded" }
+  | { operation: "export"; phase: "completed"; displayName: string }
+  | { operation: "save" | "export"; phase: "cancelled" | "failed" };
 
-type OperationStatusEnvelope = Extract<
-  NativeToEditorEnvelope,
-  { type: "operationStatus" }
->;
+export type EditorFeedbackEvent = {
+  requestId: string;
+  status: EditorFeedbackStatus;
+};
 
 export type FeedbackState =
   | { kind: "idle" }
@@ -30,7 +35,7 @@ const idleFeedback: FeedbackState = { kind: "idle" };
 
 export function useEditorFeedback(): {
   state: FeedbackState;
-  receive(message: OperationStatusEnvelope): void;
+  receive(event: EditorFeedbackEvent): void;
 } {
   const [state, setState] = useState<FeedbackState>(idleFeedback);
   const stateRef = useRef<FeedbackState>(idleFeedback);
@@ -59,14 +64,14 @@ export function useEditorFeedback(): {
     clearToastTimer();
   }, [clearProgressTimer, clearToastTimer]);
 
-  const receive = useCallback((message: OperationStatusEnvelope) => {
-    const { requestId, payload } = message;
-    if (payload.phase === "started") {
+  const receive = useCallback((event: EditorFeedbackEvent) => {
+    const { requestId, status } = event;
+    if (status.phase === "started") {
       clearTimers();
       commit({
         kind: "pending",
         requestId,
-        operation: payload.operation,
+        operation: status.operation,
         progressVisible: false,
       });
       progressTimerRef.current = window.setTimeout(() => {
@@ -84,12 +89,12 @@ export function useEditorFeedback(): {
 
     let messageText: string;
     let duration: number;
-    if (payload.phase === "completed") {
-      messageText = payload.operation === "save"
+    if (status.phase === "completed") {
+      messageText = status.operation === "save"
         ? "Saved"
-        : `Exported ${payload.displayName}`;
+        : `Exported ${status.displayName}`;
       duration = 1500;
-    } else if (payload.phase === "superseded") {
+    } else if (status.phase === "superseded") {
       messageText = "New changes still need saving";
       duration = 2000;
     } else {

@@ -767,7 +767,10 @@ export function App() {
     void bridge.send("editorReady", {});
     const unsubscribe = bridge.subscribe((message) => {
       if (message.type === "operationStatus") {
-        receiveOperationStatus(message);
+        receiveOperationStatus({
+          requestId: message.requestId,
+          status: message.payload,
+        });
         return;
       }
       if (message.type === "loadDocument") {

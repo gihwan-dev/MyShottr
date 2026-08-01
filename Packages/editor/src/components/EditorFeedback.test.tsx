@@ -11,19 +11,14 @@ import {
 } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { NativeToEditorEnvelope } from "../bridge/protocol";
 import {
   EditorFeedback,
+  type EditorFeedbackEvent,
   useEditorFeedback,
 } from "./EditorFeedback";
 
-type OperationStatusEnvelope = Extract<
-  NativeToEditorEnvelope,
-  { type: "operationStatus" }
->;
-
 type FeedbackHarnessHandle = {
-  receive(message: OperationStatusEnvelope): void;
+  receive(event: EditorFeedbackEvent): void;
 };
 
 const FeedbackHarness = forwardRef<FeedbackHarnessHandle>(function FeedbackHarness(_, ref) {
@@ -34,13 +29,11 @@ const FeedbackHarness = forwardRef<FeedbackHarnessHandle>(function FeedbackHarne
 
 function status(
   requestId: string,
-  payload: OperationStatusEnvelope["payload"],
-): OperationStatusEnvelope {
+  feedbackStatus: EditorFeedbackEvent["status"],
+): EditorFeedbackEvent {
   return {
-    protocolVersion: 1,
     requestId,
-    type: "operationStatus",
-    payload,
+    status: feedbackStatus,
   };
 }
 
@@ -49,10 +42,10 @@ function renderFeedback() {
   const view = render(<FeedbackHarness ref={ref} />);
   return {
     ...view,
-    receive(message: OperationStatusEnvelope) {
+    receive(event: EditorFeedbackEvent) {
       act(() => {
         if (!ref.current) throw new Error("Feedback harness is not mounted");
-        ref.current.receive(message);
+        ref.current.receive(event);
       });
     },
   };
@@ -119,6 +112,33 @@ describe("EditorFeedback", () => {
     advance(1);
     expect(screen.queryByText(operation === "save" ? "Saving…" : "Exporting…")).toBeNull();
   });
+
+  it.each([
+    ["save", "cancelled"],
+    ["save", "failed"],
+    ["export", "cancelled"],
+    ["export", "failed"],
+  ] as const)(
+    "never flashes %s progress or error copy after a fast %s terminal",
+    (operation, phase) => {
+      const view = renderFeedback();
+      const requestId = "23232323-2323-4323-8323-232323232323";
+      const progress = operation === "save" ? "Saving…" : "Exporting…";
+      view.receive(status(requestId, { operation, phase: "started" }));
+      advance(149);
+      view.receive(status(requestId, { operation, phase }));
+
+      const output = screen.getByRole("status");
+      expect(output.textContent).toBe("");
+      expect(vi.getTimerCount()).toBe(0);
+      advance(1);
+      expect(output.textContent).toBe("");
+      expect(screen.queryByText(progress)).toBeNull();
+      advance(2000);
+      expect(output.textContent).toBe("");
+      expect(output.textContent).not.toContain("error");
+    },
+  );
 
   it("shows a completed save for exactly 1500 ms", () => {
     const view = renderFeedback();
@@ -224,18 +244,26 @@ describe("EditorFeedback", () => {
     expect(screen.getByText("Exporting…")).toBeTruthy();
   });
 
-  it("clears owned timers on unmount without a late update", () => {
-    const view = renderFeedback();
-    view.receive(status("BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB", {
-      operation: "save",
-      phase: "started",
-    }));
-    expect(vi.getTimerCount()).toBe(1);
+  it.each(["pending", "toast"] as const)(
+    "clears every owned %s timer on unmount without a late update",
+    (timerState) => {
+      const view = renderFeedback();
+      const requestId = "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB";
+      view.receive(status(requestId, {
+        operation: "save",
+        phase: "started",
+      }));
+      if (timerState === "toast") {
+        view.receive(status(requestId, { operation: "save", phase: "completed" }));
+        expect(screen.getByText("Saved")).toBeTruthy();
+      }
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
 
-    view.unmount();
+      view.unmount();
 
-    expect(vi.getTimerCount()).toBe(0);
-    advance(2000);
-    expect(screen.queryByRole("status")).toBeNull();
-  });
+      expect(vi.getTimerCount()).toBe(0);
+      advance(2500);
+      expect(screen.queryByRole("status")).toBeNull();
+    },
+  );
 });
