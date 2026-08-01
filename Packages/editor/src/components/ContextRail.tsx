@@ -202,10 +202,11 @@ function OpacityField({
   const gesture = useRef<{
     active: boolean;
     identity?: string;
+    ignoreChangeUntilInput: boolean;
     isSelection?: boolean;
     suppressNextChange: boolean;
     value?: string;
-  }>({ active: false, suppressNextChange: false });
+  }>({ active: false, ignoreChangeUntilInput: false, suppressNextChange: false });
   const mixed = field.value.kind === "mixed";
   const percentages = field.allowedValues.map((value) => value * 100);
   const current = field.value.kind === "single"
@@ -222,6 +223,7 @@ function OpacityField({
   const resetGesture = () => {
     gesture.current.active = false;
     gesture.current.identity = undefined;
+    gesture.current.ignoreChangeUntilInput = true;
     gesture.current.isSelection = undefined;
     gesture.current.suppressNextChange = false;
     gesture.current.value = undefined;
@@ -287,6 +289,7 @@ function OpacityField({
           cancelIfStale();
           gesture.current.active = true;
           gesture.current.identity = gestureIdentity;
+          gesture.current.ignoreChangeUntilInput = false;
           gesture.current.isSelection = isSelection;
           gesture.current.suppressNextChange = false;
           gesture.current.value = event.currentTarget.value;
@@ -302,6 +305,7 @@ function OpacityField({
         }}
         onChange={(event) => {
           if (event.nativeEvent.type !== "change") return;
+          if (gesture.current.ignoreChangeUntilInput) return;
           if (cancelIfStale()) return;
           if (gesture.current.suppressNextChange) {
             gesture.current.suppressNextChange = false;

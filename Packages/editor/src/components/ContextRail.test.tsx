@@ -222,6 +222,58 @@ describe("ContextRail", () => {
     ]);
   });
 
+  it("ignores late native changes after a domain change until fresh input starts", () => {
+    const intents: ContextRailIntent[] = [];
+    const onIntent = (intent: ContextRailIntent) => intents.push(intent);
+    const initialModel = deriveContextRailModel({
+      tool: "selection",
+      document: fixtureDocument(),
+      selectedIds: ["rect-1"],
+    });
+    if (initialModel.kind !== "single" || !initialModel.fields.opacity) {
+      throw new Error("Expected a selected Rectangle opacity field");
+    }
+    const narrowedModel = {
+      ...initialModel,
+      fields: {
+        ...initialModel.fields,
+        opacity: {
+          ...initialModel.fields.opacity,
+          value: { kind: "single", value: 0.5 },
+          allowedValues: [0.25, 0.5],
+        },
+      },
+    } satisfies ContextRailModel;
+    const { rerender } = render(<ContextRail
+      model={initialModel}
+      onIntent={onIntent}
+    />);
+
+    fireEvent.input(screen.getByRole("slider", { name: "Opacity" }), {
+      target: { value: "75" },
+    });
+    rerender(<ContextRail model={narrowedModel} onIntent={onIntent} />);
+    const narrowedSlider = screen.getByRole("slider", { name: "Opacity" });
+
+    expect(() => {
+      fireEvent.change(narrowedSlider, { target: { value: "25" } });
+      fireEvent.change(narrowedSlider, { target: { value: "50" } });
+    }).not.toThrow();
+    expect(intents).toEqual([
+      { type: "previewSelectionOpacity", value: 0.75 },
+      { type: "cancelSelectionOpacity" },
+    ]);
+
+    fireEvent.input(narrowedSlider, { target: { value: "50" } });
+    fireEvent.change(narrowedSlider, { target: { value: "25" } });
+    expect(intents).toEqual([
+      { type: "previewSelectionOpacity", value: 0.75 },
+      { type: "cancelSelectionOpacity" },
+      { type: "previewSelectionOpacity", value: 0.5 },
+      { type: "commitSelectionOpacity", value: 0.5 },
+    ]);
+  });
+
   it("renders exact selection action names and their edge enablement", () => {
     render(<ContextRail
       model={deriveContextRailModel({

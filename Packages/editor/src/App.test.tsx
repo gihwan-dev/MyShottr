@@ -625,6 +625,59 @@ describe("EditorApp", () => {
     expect(changes).toHaveLength(0);
   });
 
+  it("ignores a late native opacity change after selection narrows the domain", () => {
+    const changes: EditorDocument[] = [];
+    const highlighter = {
+      id: "highlighter-1",
+      type: "highlighter" as const,
+      x: 80,
+      y: 140,
+      width: 120,
+      height: 30,
+      rotation: 0,
+      opacity: 0.25 as const,
+      zIndex: 1,
+      seed: 105,
+      points: [{ x: 80, y: 140 }, { x: 200, y: 170 }],
+      color: "#FADB14" as const,
+      strokeWidth: 8 as const,
+    };
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [fixtureRect(), highlighter] })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.input(screen.getByRole("slider", { name: "Opacity" }), {
+      target: { value: "75" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select highlighter-1" }));
+    const narrowedSlider = screen.getByRole("slider", { name: "Opacity" });
+
+    expect(() => {
+      fireEvent.change(narrowedSlider, { target: { value: "50" } });
+    }).not.toThrow();
+    expect(screen.getByTestId("canvas-opacities").textContent)
+      .toBe("rect-1:1,highlighter-1:0.25");
+    expect(changes).toHaveLength(0);
+
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    expect(screen.queryByLabelText("Context Rail")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shift-select highlighter-1" }));
+    const freshSlider = screen.getByRole("slider", { name: "Opacity" });
+    fireEvent.input(freshSlider, { target: { value: "50" } });
+    fireEvent.change(freshSlider, { target: { value: "25" } });
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].elements).toEqual([
+      expect.objectContaining({ id: "rect-1", opacity: 0.5 }),
+      expect.objectContaining({ id: "highlighter-1", opacity: 0.5 }),
+    ]);
+  });
+
   it("publishes the restored document when an active annotation transaction is cancelled", () => {
     const changes: EditorDocument[] = [];
     const initial = fixtureDocument();
