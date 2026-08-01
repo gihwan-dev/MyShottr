@@ -475,7 +475,11 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
           </>
         )}
       </EditorWorkspace>
-      <FloatingToolPalette tool={tool} onSelect={selectTool} />
+      <FloatingToolPalette
+        tool={tool}
+        interactionLocked={textLocked}
+        onSelect={selectTool}
+      />
       <ContextRail model={contextRailModel} onIntent={handleContextRailIntent} />
       {shortcutHelpOpen && (
         <ShortcutHelpDialog onClose={() => setShortcutHelpOpen(false)} />

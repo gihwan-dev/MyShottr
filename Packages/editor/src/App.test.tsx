@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render, screen, within } from "@testing-library/react";
 import { forwardRef, useImperativeHandle, useRef, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -513,22 +513,31 @@ describe("EditorApp", () => {
     fireEvent.pointerDown(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
     fireEvent.pointerUp(canvas, { clientX: 20, clientY: 30, pointerId: 1 });
 
-    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    fireEvent.change(editor, { target: { value: "Draft stays open" } });
+    const rectangle = screen.getByRole("button", { name: "Rectangle, shortcut R" });
+    const lockedMouseDown = createEvent.mouseDown(rectangle);
+    fireEvent(rectangle, lockedMouseDown);
+    fireEvent.click(rectangle);
 
     expect(screen.getByRole("button", { name: "Text, shortcut T" }).getAttribute("aria-pressed"))
       .toBe("true");
-    expect(screen.getByRole("button", { name: "Rectangle, shortcut R" }).getAttribute("aria-pressed"))
+    expect(rectangle.getAttribute("aria-pressed"))
       .toBe("false");
-    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    expect(lockedMouseDown.defaultPrevented).toBe(true);
+    expect(editor).toHaveValue("Draft stays open");
     expect(onPreferencesChange).not.toHaveBeenCalled();
 
     fireEvent.keyDown(editor, { code: "Escape", key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
+    const unlockedMouseDown = createEvent.mouseDown(rectangle);
+    fireEvent(rectangle, unlockedMouseDown);
+    fireEvent.click(rectangle);
 
     expect(screen.getByRole("button", { name: "Text, shortcut T" }).getAttribute("aria-pressed"))
       .toBe("false");
-    expect(screen.getByRole("button", { name: "Rectangle, shortcut R" }).getAttribute("aria-pressed"))
+    expect(rectangle.getAttribute("aria-pressed"))
       .toBe("true");
+    expect(unlockedMouseDown.defaultPrevented).toBe(false);
     expect(onPreferencesChange).toHaveBeenCalledOnce();
     expect(onPreferencesChange.mock.calls[0]?.[0]).toBe("rectangle");
   });
@@ -544,20 +553,29 @@ describe("EditorApp", () => {
     />);
 
     fireEvent.click(screen.getByRole("button", { name: "Edit text-1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
+    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    fireEvent.change(editor, { target: { value: "Existing stays open" } });
+    const rectangle = screen.getByRole("button", { name: "Rectangle, shortcut R" });
+    const lockedMouseDown = createEvent.mouseDown(rectangle);
+    fireEvent(rectangle, lockedMouseDown);
+    fireEvent.click(rectangle);
 
     expect(screen.getByRole("button", { name: "Selection, shortcut V" }).getAttribute("aria-pressed"))
       .toBe("true");
-    const editor = screen.getByRole("textbox", { name: "Edit annotation text" });
+    expect(lockedMouseDown.defaultPrevented).toBe(true);
+    expect(editor).toHaveValue("Existing stays open");
     expect(onPreferencesChange).not.toHaveBeenCalled();
 
     fireEvent.keyDown(editor, { code: "Escape", key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
+    const unlockedMouseDown = createEvent.mouseDown(rectangle);
+    fireEvent(rectangle, unlockedMouseDown);
+    fireEvent.click(rectangle);
 
     expect(screen.getByRole("button", { name: "Selection, shortcut V" }).getAttribute("aria-pressed"))
       .toBe("false");
-    expect(screen.getByRole("button", { name: "Rectangle, shortcut R" }).getAttribute("aria-pressed"))
+    expect(rectangle.getAttribute("aria-pressed"))
       .toBe("true");
+    expect(unlockedMouseDown.defaultPrevented).toBe(false);
     expect(onPreferencesChange).toHaveBeenCalledOnce();
     expect(onPreferencesChange.mock.calls[0]?.[0]).toBe("rectangle");
   });
