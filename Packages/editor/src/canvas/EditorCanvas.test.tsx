@@ -1,12 +1,13 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import Konva from "konva";
+import { createRef, type RefAttributes } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createHistoryStore } from "../model/history";
 import type { EditorTool } from "../model/elements";
 import { keyboardCommandFor } from "../input/ShortcutRouter";
 import { fixtureBlur, fixtureDocument, fixtureText } from "../test/fixtures";
-import { cancelAnnotationInteraction, EditorCanvas } from "./EditorCanvas";
+import { cancelAnnotationInteraction, EditorCanvas, type EditorCanvasHandle } from "./EditorCanvas";
 
 const konvaControl = vi.hoisted(() => ({
   stopDrag: vi.fn(),
@@ -17,6 +18,16 @@ const konvaControl = vi.hoisted(() => ({
   setPointerCapture: vi.fn(),
   releasePointerCapture: vi.fn(),
   capturedPointers: new Set<number>(),
+  annotationStartPointerId: 1,
+  annotationEndPointerId: 1,
+  stage: undefined as {
+    getPointerPosition: () => { x: number; y: number };
+    container: () => {
+      setPointerCapture: (pointerId: number) => void;
+      releasePointerCapture: (pointerId: number) => void;
+      hasPointerCapture: (pointerId: number) => boolean;
+    };
+  } | undefined,
   annotationValues: {
     x: 0,
     y: 0,
@@ -53,23 +64,30 @@ vi.mock("react-konva", async () => {
       rotation: (value?: number) => value === undefined ? values.current.rotation : (values.current.rotation = value),
       stopDrag: konvaControl.stopDrag,
       getLayer: () => ({ draw: konvaControl.draw }),
+      getStage: () => konvaControl.stage,
     }), []);
     React.useImperativeHandle(ref, () => node);
     const onDragStart = props.onDragStart as ((event: { currentTarget: typeof node }) => void) | undefined;
     const onDragMove = props.onDragMove as ((event: { currentTarget: typeof node }) => void) | undefined;
-    const onDragEnd = props.onDragEnd as (() => void) | undefined;
-    const onTransformStart = props.onTransformStart as ((event: { currentTarget: typeof node }) => void) | undefined;
-    const onTransformEnd = props.onTransformEnd as ((event: { currentTarget: typeof node }) => void) | undefined;
+    const onDragEnd = props.onDragEnd as ((event: { currentTarget: typeof node; evt: { pointerId: number } }) => void) | undefined;
+    const onTransformStart = props.onTransformStart as ((event: { currentTarget: typeof node; evt: { pointerId: number } }) => void) | undefined;
+    const onTransformEnd = props.onTransformEnd as ((event: { currentTarget: typeof node; evt: { pointerId: number } }) => void) | undefined;
     const onDblClick = props.onDblClick as (() => void) | undefined;
     const onClick = props.onClick as (() => void) | undefined;
     if (onDblClick || props["data-testid"] === "element-text-1") return React.createElement("div", {
       "data-testid": props["data-testid"],
       onDoubleClick: onDblClick,
       onClick,
-      onAuxClick: () => onTransformStart?.({ currentTarget: node }),
+      onAuxClick: () => onTransformStart?.({
+        currentTarget: node,
+        evt: { pointerId: konvaControl.annotationStartPointerId },
+      }),
       onContextMenu: (event: React.MouseEvent) => {
         event.preventDefault();
-        onTransformEnd?.({ currentTarget: node });
+        onTransformEnd?.({
+          currentTarget: node,
+          evt: { pointerId: konvaControl.annotationEndPointerId },
+        });
       },
     }, props.children);
     if (!onDragStart) return React.createElement("div", {
@@ -80,16 +98,25 @@ vi.mock("react-konva", async () => {
         ? props["data-testid"]
         : "annotation-node",
       draggable: true,
-      onDragStart: () => onDragStart({ currentTarget: node }),
+      onDragStart: () => onDragStart({
+        currentTarget: node,
+        evt: { pointerId: konvaControl.annotationStartPointerId },
+      } as never),
       onDrag: () => {
         values.current.x = konvaControl.dragTarget.x;
         values.current.y = konvaControl.dragTarget.y;
         onDragMove?.({ currentTarget: node });
       },
-      onDragEnd,
+      onDragEnd: () => onDragEnd?.({
+        currentTarget: node,
+        evt: { pointerId: konvaControl.annotationEndPointerId },
+      }),
       onClick,
       onDoubleClick: () => {
-        onTransformStart?.({ currentTarget: node });
+        onTransformStart?.({
+          currentTarget: node,
+          evt: { pointerId: konvaControl.annotationStartPointerId },
+        } as never);
         values.current.x = 40;
         values.current.y = 50;
         values.current.scaleX = 0.5;
@@ -98,7 +125,10 @@ vi.mock("react-konva", async () => {
       },
       onContextMenu: (event: React.MouseEvent) => {
         event.preventDefault();
-        onTransformEnd?.({ currentTarget: node });
+        onTransformEnd?.({
+          currentTarget: node,
+          evt: { pointerId: konvaControl.annotationEndPointerId },
+        } as never);
       },
     }, props.children);
   });
@@ -125,8 +155,8 @@ vi.mock("react-konva", async () => {
     onPointerCancel?: (event: unknown) => void;
     onWheel?: (event: unknown) => void;
   }) => {
-    const pointer = { x: 0, y: 0 };
-    const container = {
+    const pointer = React.useRef({ x: 0, y: 0 });
+    const container = React.useMemo(() => ({
       setPointerCapture: (pointerId: number) => {
         konvaControl.capturedPointers.add(pointerId);
         konvaControl.setPointerCapture(pointerId);
@@ -136,15 +166,19 @@ vi.mock("react-konva", async () => {
         konvaControl.releasePointerCapture(pointerId);
       },
       hasPointerCapture: (pointerId: number) => konvaControl.capturedPointers.has(pointerId),
-    };
-    const stage = {
-      getPointerPosition: () => ({ ...pointer }),
-      container: () => container,
-      getStage: () => stage,
-    };
+    }), []);
+    const stage = React.useMemo(() => {
+      const value = {
+        getPointerPosition: () => ({ ...pointer.current }),
+        container: () => container,
+        getStage: () => value,
+      };
+      return value;
+    }, [container]);
+    konvaControl.stage = stage;
     const eventFor = (event: React.PointerEvent | React.WheelEvent) => {
-      pointer.x = event.clientX;
-      pointer.y = event.clientY;
+      pointer.current.x = event.clientX;
+      pointer.current.y = event.clientY;
       return {
         evt: {
           pointerId: "pointerId" in event ? event.pointerId : 0,
@@ -234,6 +268,9 @@ afterEach(() => {
   konvaControl.transformerNodes = [];
   konvaControl.rotateEnabled = true;
   konvaControl.dragTarget = { x: 40, y: 50 };
+  konvaControl.annotationStartPointerId = 1;
+  konvaControl.annotationEndPointerId = 1;
+  konvaControl.stage = undefined;
   konvaControl.capturedPointers.clear();
   animationFrames.clear();
   vi.unstubAllGlobals();
@@ -725,6 +762,70 @@ describe("EditorCanvas gesture terminals", () => {
     expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true, false]);
   });
 
+  it.each([
+    ["creation", false],
+    ["Space-pan", true],
+  ] as const)("cancels an active %s through the handle and makes late terminals inert", (_label, spacePanReady) => {
+    const handle = createRef<EditorCanvasHandle>();
+    const onCommand = vi.fn();
+    const onViewportPanBy = vi.fn();
+    const onInteractionActiveChange = vi.fn();
+    renderCreationCanvas("rectangle", {
+      ref: handle,
+      spacePanReady,
+      onCommand,
+      onViewportPanBy,
+      onInteractionActiveChange,
+    });
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 20, pointerId: 7 });
+    fireEvent.pointerMove(stage, { clientX: 50, clientY: 60, pointerId: 7 });
+    act(() => {
+      expect(handle.current?.cancelInteraction()).toBe(true);
+      expect(handle.current?.cancelInteraction()).toBe(false);
+    });
+    flushAnimationFrame();
+    fireEvent.pointerUp(stage, { clientX: 50, clientY: 60, pointerId: 7 });
+    fireEvent.pointerCancel(stage, { pointerId: 7 });
+
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onViewportPanBy).not.toHaveBeenCalled();
+    expect(cancelAnimationFrame).toHaveBeenCalledOnce();
+    expect(konvaControl.releasePointerCapture).toHaveBeenCalledOnce();
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true, false]);
+  });
+
+  it.each([
+    ["creation", false],
+    ["Space-pan", true],
+  ] as const)("disposes a queued %s frame and capture without late callbacks on unmount", (_label, spacePanReady) => {
+    const onCommand = vi.fn();
+    const onViewportPanBy = vi.fn();
+    const onInteractionActiveChange = vi.fn();
+    const view = renderCreationCanvas("rectangle", {
+      spacePanReady,
+      onCommand,
+      onViewportPanBy,
+      onInteractionActiveChange,
+    });
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 20, pointerId: 9 });
+    fireEvent.pointerMove(stage, { clientX: 40, clientY: 55, pointerId: 9 });
+    const queuedFrame = animationFrames.values().next().value;
+    if (!queuedFrame) throw new Error("Expected one queued animation frame");
+
+    view.unmount();
+    act(() => queuedFrame(0));
+
+    expect(cancelAnimationFrame).toHaveBeenCalledOnce();
+    expect(konvaControl.releasePointerCapture).toHaveBeenCalledOnce();
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onViewportPanBy).not.toHaveBeenCalled();
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true]);
+  });
+
   it("does not begin text editing from a non-selection tool", () => {
     const document = fixtureDocument({ elements: [fixtureText()] });
     const history = createHistoryStore(document);
@@ -836,6 +937,87 @@ describe("EditorCanvas gesture terminals", () => {
 
     expect(() => history.undo()).not.toThrow();
     expect(history.document.elements).toEqual(initial.elements);
+  });
+
+  it("keeps annotation move ownership with pointer 1 across pointer 2 up and cancel", () => {
+    const initial = fixtureDocument();
+    const history = createHistoryStore(initial);
+    const onCancelTransaction = vi.fn(() => history.cancelTransaction());
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        selectedIds={["rect-1"]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={(command) => history.dispatch(command)}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={() => history.commitTransaction()}
+        onCancelTransaction={onCancelTransaction}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const stage = screen.getByTestId("stage");
+    const annotation = screen.getByTestId("annotation-node");
+
+    konvaControl.annotationStartPointerId = 1;
+    fireEvent.dragStart(annotation);
+    fireEvent.drag(annotation);
+    fireEvent.pointerUp(stage, { pointerId: 2 });
+    fireEvent.pointerCancel(stage, { pointerId: 2 });
+
+    expect(history.isTransactionActive).toBe(true);
+    expect(onCancelTransaction).not.toHaveBeenCalled();
+    expect(konvaControl.setPointerCapture).toHaveBeenCalledWith(1);
+    expect(konvaControl.releasePointerCapture).not.toHaveBeenCalled();
+
+    fireEvent.pointerCancel(stage, { pointerId: 1 });
+    fireEvent.pointerCancel(stage, { pointerId: 1 });
+    expect(history.isTransactionActive).toBe(false);
+    expect(history.document.elements).toEqual(initial.elements);
+    expect(onCancelTransaction).toHaveBeenCalledOnce();
+    expect(konvaControl.releasePointerCapture).toHaveBeenCalledOnce();
+  });
+
+  it("cancels an active annotation move through the same handle exactly once", () => {
+    const handle = createRef<EditorCanvasHandle>();
+    const initial = fixtureDocument();
+    const history = createHistoryStore(initial);
+    const onCancelTransaction = vi.fn(() => history.cancelTransaction());
+    render(
+      <EditorCanvas
+        ref={handle}
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        selectedIds={["rect-1"]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={(command) => history.dispatch(command)}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={() => history.commitTransaction()}
+        onCancelTransaction={onCancelTransaction}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const annotation = screen.getByTestId("annotation-node");
+
+    fireEvent.dragStart(annotation);
+    fireEvent.drag(annotation);
+    act(() => {
+      expect(handle.current?.cancelInteraction()).toBe(true);
+      expect(handle.current?.cancelInteraction()).toBe(false);
+    });
+    fireEvent.dragEnd(annotation);
+
+    expect(history.isTransactionActive).toBe(false);
+    expect(history.document.elements).toEqual(initial.elements);
+    expect(onCancelTransaction).toHaveBeenCalledOnce();
+    expect(konvaControl.stopDrag).toHaveBeenCalledOnce();
+    expect(konvaControl.releasePointerCapture).toHaveBeenCalledOnce();
   });
 
   it("cancels an active annotation move on blur once and permits shortcuts and the next move", () => {
@@ -1007,6 +1189,49 @@ describe("EditorCanvas gesture terminals", () => {
     expect(onCommitTransaction).toHaveBeenCalledOnce();
   });
 
+  it("keeps annotation transform ownership with pointer 1 until its matching end", () => {
+    const initial = fixtureDocument();
+    const history = createHistoryStore(initial);
+    const onCommitTransaction = vi.fn(() => history.commitTransaction());
+    const onCancelTransaction = vi.fn(() => history.cancelTransaction());
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        selectedIds={["rect-1"]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={(command) => history.dispatch(command)}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={onCommitTransaction}
+        onCancelTransaction={onCancelTransaction}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const annotation = screen.getByTestId("annotation-node");
+
+    konvaControl.annotationStartPointerId = 1;
+    fireEvent.doubleClick(annotation);
+    konvaControl.annotationEndPointerId = 2;
+    fireEvent.contextMenu(annotation);
+
+    expect(history.isTransactionActive).toBe(true);
+    expect(onCommitTransaction).not.toHaveBeenCalled();
+    expect(onCancelTransaction).not.toHaveBeenCalled();
+    expect(konvaControl.setPointerCapture).toHaveBeenCalledWith(1);
+    expect(konvaControl.releasePointerCapture).not.toHaveBeenCalled();
+
+    konvaControl.annotationEndPointerId = 1;
+    fireEvent.contextMenu(annotation);
+    fireEvent.contextMenu(annotation);
+    expect(history.isTransactionActive).toBe(false);
+    expect(onCommitTransaction).toHaveBeenCalledOnce();
+    expect(onCancelTransaction).not.toHaveBeenCalled();
+    expect(konvaControl.releasePointerCapture).toHaveBeenCalledOnce();
+  });
+
   it("deduplicates per-node transform events into one transaction and one undo entry", () => {
     const initial = fixtureDocument({ elements: [fixtureDocument().elements[0], fixtureText()] });
     const history = createHistoryStore(initial);
@@ -1156,7 +1381,8 @@ function renderSelectionCanvas(
 
 function renderCreationCanvas(
   tool: Exclude<EditorTool, "selection" | "text"> | "text",
-  overrides: Partial<Parameters<typeof EditorCanvas>[0]> = {},
+  overrides: Partial<Parameters<typeof EditorCanvas>[0]>
+    & Partial<RefAttributes<EditorCanvasHandle>> = {},
 ) {
   const document = fixtureDocument({ elements: [] });
   return render(

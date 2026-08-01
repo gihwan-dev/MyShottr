@@ -1,9 +1,10 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { useRef, type ReactNode } from "react";
+import { forwardRef, useImperativeHandle, useRef, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App, EditorApp } from "./App";
 import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
+import type { EditorCanvasHandle } from "./canvas/EditorCanvas";
 import { keyboardCommandFor } from "./input/ShortcutRouter";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorTool, Point } from "./model/elements";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "./test/fixtures";
@@ -12,10 +13,11 @@ import type { ViewportSnapshot } from "./viewport/ViewportController";
 vi.mock("./canvas/EditorCanvas", async () => {
   const { createElementFromDocument } = await import("./canvas/tools/createElement");
   return {
-    EditorCanvas: ({ document, tool, viewport, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onBeginNewText, onInteractionActiveChange, textEditorOverlay }: {
+    EditorCanvas: forwardRef<EditorCanvasHandle, {
     document: EditorDocument;
     tool: EditorTool;
     viewport: ViewportSnapshot;
+    spacePanReady: boolean;
     onCommand: (command: EditorCommand) => void;
     onSelect: (id: string | undefined, toggle?: boolean) => void;
     onBeginTransaction: (label: string) => void;
@@ -25,13 +27,21 @@ vi.mock("./canvas/EditorCanvas", async () => {
     onBeginNewText: (point: Point, defaults: EditorDefaults) => void;
     onInteractionActiveChange: (active: boolean) => void;
     textEditorOverlay: ReactNode;
-    }) => {
+    }>(function MockEditorCanvas({ document, tool, viewport, spacePanReady, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onBeginNewText, onInteractionActiveChange, textEditorOverlay }, ref) {
       const pointerGesture = useRef<{
         pointerId: number;
         tool: EditorTool;
         document: EditorDocument;
         start: Point;
       } | undefined>(undefined);
+      useImperativeHandle(ref, () => ({
+        cancelInteraction: () => {
+          if (!pointerGesture.current) return false;
+          pointerGesture.current = undefined;
+          onInteractionActiveChange(false);
+          return true;
+        },
+      }), [onInteractionActiveChange]);
       return (
       <>
       <output data-testid="canvas-opacities">
@@ -53,7 +63,7 @@ vi.mock("./canvas/EditorCanvas", async () => {
       <div
         data-testid="mock-canvas-pointer-surface"
         onPointerDown={(event) => {
-          if (tool === "selection" || pointerGesture.current) return;
+          if ((!spacePanReady && tool === "selection") || pointerGesture.current) return;
           pointerGesture.current = {
             pointerId: event.pointerId,
             tool,
@@ -143,7 +153,7 @@ vi.mock("./canvas/EditorCanvas", async () => {
       {textEditorOverlay}
       </>
       );
-    },
+    }),
   };
 });
 
@@ -388,6 +398,61 @@ describe("EditorApp", () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Text, shortcut T" }).getAttribute("aria-pressed"))
       .toBe("true");
+  });
+
+  it("cancels an active creation on the first Escape and changes tool only on the second idle Escape", () => {
+    const onChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [] })}
+      initialTool="rectangle"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={() => {}}
+    />);
+    const canvas = screen.getByTestId("mock-canvas-pointer-surface");
+    const rectangle = screen.getByRole("button", { name: "Rectangle, shortcut R" });
+    const selection = screen.getByRole("button", { name: "Selection, shortcut V" });
+
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 50, clientY: 60, pointerId: 1 });
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    fireEvent.pointerUp(canvas, { clientX: 50, clientY: 60, pointerId: 1 });
+
+    expect(rectangle.getAttribute("aria-pressed")).toBe("true");
+    expect(selection.getAttribute("aria-pressed")).toBe("false");
+    expect(onChange).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    expect(selection.getAttribute("aria-pressed")).toBe("true");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("cancels an active Space-pan on the first Escape and changes tool only after it is idle", () => {
+    const onChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [] })}
+      initialTool="rectangle"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={() => {}}
+    />);
+    const canvas = screen.getByTestId("mock-canvas-pointer-surface");
+    const rectangle = screen.getByRole("button", { name: "Rectangle, shortcut R" });
+    const selection = screen.getByRole("button", { name: "Selection, shortcut V" });
+
+    fireEvent.keyDown(window, { code: "Space", key: " " });
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 20, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 30, clientY: 45, pointerId: 2 });
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    fireEvent.pointerUp(canvas, { clientX: 30, clientY: 45, pointerId: 2 });
+
+    expect(rectangle.getAttribute("aria-pressed")).toBe("true");
+    expect(selection.getAttribute("aria-pressed")).toBe("false");
+    expect(onChange).not.toHaveBeenCalled();
+
+    fireEvent.keyUp(window, { code: "Space", key: " " });
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    expect(selection.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("edits existing text and commits one history command", () => {

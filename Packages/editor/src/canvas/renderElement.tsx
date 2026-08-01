@@ -11,12 +11,17 @@ export type ElementInteractionHandlers = {
   textEditingEnabled: boolean;
   onSelect: (id: string) => void;
   onEditText: (id: string) => void;
-  onDragStart: (node: Konva.Group) => void;
+  onDragStart: (node: Konva.Group, owner: ElementPointerOwner) => void;
   onDragMove: (id: string, x: number, y: number) => void;
-  onDragEnd: () => void;
-  onTransformStart: (id: string, node: Konva.Group) => void;
-  onTransformEnd: (id: string, node: Konva.Group) => void;
+  onDragEnd: (owner: ElementPointerOwner) => void;
+  onTransformStart: (id: string, node: Konva.Group, owner: ElementPointerOwner) => void;
+  onTransformEnd: (id: string, node: Konva.Group, owner: ElementPointerOwner) => void;
   registerNode: (id: string, node: Konva.Group | null) => void;
+};
+
+export type ElementPointerOwner = {
+  pointerId: number;
+  container: HTMLDivElement;
 };
 
 export function renderElement(
@@ -36,14 +41,26 @@ export function renderElement(
     onClick: () => handlers.onSelect(element.id),
     onTap: () => handlers.onSelect(element.id),
     "data-testid": `element-${element.id}`,
-    onDragStart: (event) => handlers.onDragStart(event.currentTarget as Konva.Group),
+    onDragStart: (event) => {
+      const node = event.currentTarget as Konva.Group;
+      handlers.onDragStart(node, pointerOwnerFor(node, event.evt));
+    },
     onDragMove: (event) => {
       const group = event.currentTarget as Konva.Group;
       handlers.onDragMove(element.id, group.x(), group.y());
     },
-    onDragEnd: handlers.onDragEnd,
-    onTransformStart: (event) => handlers.onTransformStart(element.id, event.currentTarget as Konva.Group),
-    onTransformEnd: (event) => handlers.onTransformEnd(element.id, event.currentTarget as Konva.Group),
+    onDragEnd: (event) => {
+      const node = event.currentTarget as Konva.Group;
+      handlers.onDragEnd(pointerOwnerFor(node, event.evt));
+    },
+    onTransformStart: (event) => {
+      const node = event.currentTarget as Konva.Group;
+      handlers.onTransformStart(element.id, node, pointerOwnerFor(node, event.evt));
+    },
+    onTransformEnd: (event) => {
+      const node = event.currentTarget as Konva.Group;
+      handlers.onTransformEnd(element.id, node, pointerOwnerFor(node, event.evt));
+    },
   };
 
   if (element.type === "text" && handlers.textEditingEnabled) {
@@ -88,4 +105,20 @@ export function renderElement(
 
 function relativePoints(points: Array<{ x: number; y: number }>, originX: number, originY: number): number[] {
   return points.flatMap((point) => [point.x - originX, point.y - originY]);
+}
+
+function pointerOwnerFor(
+  node: Konva.Group,
+  event: Event,
+): ElementPointerOwner {
+  const pointerId = "pointerId" in event ? event.pointerId : undefined;
+  if (!Number.isInteger(pointerId)) {
+    throw new Error("Annotation interaction requires a pointer owner");
+  }
+  const stage = node.getStage();
+  if (!stage) throw new Error("Annotation interaction stage is unavailable");
+  return {
+    pointerId: pointerId as number,
+    container: stage.container(),
+  };
 }

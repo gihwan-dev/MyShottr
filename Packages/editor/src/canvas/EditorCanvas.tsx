@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import type Konva from "konva";
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Transformer } from "react-konva";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, Point } from "../model/elements";
@@ -17,11 +17,16 @@ import { createElementFromDocument } from "./tools/createElement";
 import {
   renderElement,
   type ElementInteractionHandlers,
+  type ElementPointerOwner,
 } from "./renderElement";
 import { BLUR_RADIUS_PX, createBlurredSourceCanvas } from "./blurSource";
 import { cursorForTool } from "./tools/ToolController";
 
-export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePanReady, selectedIds, onSelect, onEditText, onBeginNewText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onViewportWheel, onViewportPanBy, onInteractionActiveChange, toSourcePoint, textEditorOverlay }: {
+export type EditorCanvasHandle = {
+  cancelInteraction(): boolean;
+};
+
+export type EditorCanvasProps = {
   document: EditorDocument;
   sourceImageURL: string;
   tool: EditorTool;
@@ -46,7 +51,9 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
   onInteractionActiveChange: (active: boolean) => void;
   toSourcePoint: (workspacePoint: Point) => Point;
   textEditorOverlay: ReactNode;
-}) {
+};
+
+export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePanReady, selectedIds, onSelect, onEditText, onBeginNewText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onViewportWheel, onViewportPanBy, onInteractionActiveChange, toSourcePoint, textEditorOverlay }, ref) {
   const image = useSourceImage(sourceImageURL);
   const blurredSource = useMemo(
     () => image
@@ -75,6 +82,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
     modifiers: InteractionModifiers;
   } | undefined>(undefined);
   const frame = useRef<number | null>(null);
+  const disposed = useRef(false);
   const selectionToggle = useRef(false);
   const activeAnnotationInteraction = useRef<ActiveAnnotationInteraction | undefined>(undefined);
   const [isTransforming, setIsTransforming] = useState(false);
@@ -178,17 +186,24 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
       cancelAnnotationInteraction(activeInteraction, transformer.current);
     } finally {
       try {
-        onCancelTransaction();
+        releaseAnnotationPointerCapture(activeInteraction);
       } finally {
-        setIsTransforming(false);
+        try {
+          onCancelTransaction();
+        } finally {
+          setIsTransforming(false);
+        }
       }
     }
   };
   const cancelPointerInteraction = () => {
+    const pointerWasActive = interactionController.active;
+    const wasActive = pointerWasActive
+      || activeAnnotationInteraction.current !== undefined;
+    if (!wasActive) return false;
     try {
       cancelAnnotationTransaction();
     } finally {
-      const wasActive = interactionController.active;
       interactionController.cancel();
       clearScheduledMove();
       setCreationPreview(undefined);
@@ -196,15 +211,33 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
       appliedViewportPan.current = { x: 0, y: 0 };
       spacePanActive.current = false;
       setIsSpacePanning(false);
-      if (wasActive) onInteractionActiveChange(false);
+      if (pointerWasActive) onInteractionActiveChange(false);
     }
+    return true;
   };
+  useImperativeHandle(ref, () => ({
+    cancelInteraction: cancelPointerInteraction,
+  }));
   useEffect(() => {
     window.addEventListener("blur", cancelPointerInteraction);
     return () => {
       window.removeEventListener("blur", cancelPointerInteraction);
     };
   });
+  useEffect(() => {
+    disposed.current = false;
+    return () => {
+      disposed.current = true;
+      interactionController.cancel();
+      clearScheduledMove();
+      releasePointerCapture();
+      const annotationInteraction = activeAnnotationInteraction.current;
+      activeAnnotationInteraction.current = undefined;
+      if (annotationInteraction) {
+        releaseAnnotationPointerCapture(annotationInteraction);
+      }
+    };
+  }, []);
   const orderedElements = [...document.elements].sort(byZIndex);
   const selectedElements = selectedIds.map((id) => {
     const element = document.elements.find((candidate) => candidate.id === id);
@@ -286,6 +319,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
           if (frame.current === null) {
             frame.current = requestAnimationFrame(() => {
               frame.current = null;
+              if (disposed.current) return;
               const latest = latestMove.current;
               latestMove.current = undefined;
               if (latest) {
@@ -316,6 +350,11 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
             capturedPointerId.current !== undefined
             && event.evt.pointerId !== capturedPointerId.current
           ) return;
+          const annotationInteraction = activeAnnotationInteraction.current;
+          if (
+            annotationInteraction
+            && event.evt.pointerId !== annotationInteraction.owner.pointerId
+          ) return;
           cancelPointerInteraction();
         }}
       >
@@ -338,7 +377,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
                 selectionToggle.current = false;
               },
               onEditText: (id) => onEditText(id),
-              onDragStart: (node) => {
+              onDragStart: (node, owner) => {
                 const elementToMove = selectedElements.find(
                   (candidate) => candidate.id === element.id,
                 );
@@ -346,12 +385,14 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
                   throw new Error(`Cannot move missing element: ${element.id}`);
                 }
                 onBeginTransaction("move");
+                owner.container.setPointerCapture(owner.pointerId);
                 activeAnnotationInteraction.current = {
                   kind: "move",
                   node,
                   element: elementToMove,
                   elements: selectedElements,
                   nodes: selectedNodeMap(selectedElements, nodes.current),
+                  owner,
                 };
               },
               onDragMove: (id, x, y) => {
@@ -378,17 +419,22 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
                   throw error;
                 }
               },
-              onDragEnd: () => {
-                if (activeAnnotationInteraction.current?.kind !== "move") return;
+              onDragEnd: (owner) => {
+                const activeInteraction = activeAnnotationInteraction.current;
+                if (
+                  activeInteraction?.kind !== "move"
+                  || !samePointerOwner(activeInteraction.owner, owner)
+                ) return;
                 try {
                   onCommitTransaction();
+                  releaseAnnotationPointerCapture(activeInteraction);
                   activeAnnotationInteraction.current = undefined;
                 } catch (error) {
                   cancelAnnotationTransaction();
                   throw error;
                 }
               },
-              onTransformStart: (id, node) => {
+              onTransformStart: (id, node, owner) => {
                 const activeInteraction = activeAnnotationInteraction.current;
                 if (activeInteraction?.kind === "transform") return;
                 if (activeInteraction) {
@@ -397,19 +443,25 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
                 const elementToTransform = selectedElements.find((candidate) => candidate.id === id);
                 if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
                 onBeginTransaction("transform");
+                owner.container.setPointerCapture(owner.pointerId);
                 activeAnnotationInteraction.current = {
                   kind: "transform",
                   node,
                   element: elementToTransform,
                   elements: selectedElements,
                   nodes: selectedNodeMap(selectedElements, nodes.current),
+                  owner,
                 };
                 setIsTransforming(true);
               },
-              onTransformEnd: (id, node) => {
-                if (activeAnnotationInteraction.current?.kind !== "transform") return;
+              onTransformEnd: (id, node, owner) => {
+                const currentInteraction = activeAnnotationInteraction.current;
+                if (
+                  currentInteraction?.kind !== "transform"
+                  || !samePointerOwner(currentInteraction.owner, owner)
+                ) return;
                 try {
-                  const active = activeAnnotationInteraction.current;
+                  const active = currentInteraction;
                   const transformedElements = active.elements.map((elementToTransform) => {
                     const selectedNode = active.nodes.get(elementToTransform.id);
                     if (!selectedNode) {
@@ -435,6 +487,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
                     elements: transformedElements,
                   });
                   onCommitTransaction();
+                  releaseAnnotationPointerCapture(active);
                   activeAnnotationInteraction.current = undefined;
                 } catch (error) {
                   cancelAnnotationTransaction();
@@ -480,7 +533,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePa
       {textEditorOverlay}
     </div>
   );
-}
+});
 
 const previewInteractionHandlers = {
   selected: false,
@@ -505,7 +558,7 @@ type TransformerControl = {
   forceUpdate(): void;
 };
 
-type ActiveAnnotationInteraction = {
+type AnnotationInteractionState = {
   kind: "move" | "transform";
   node: Konva.Group;
   element: EditorElement;
@@ -513,8 +566,12 @@ type ActiveAnnotationInteraction = {
   nodes: Map<string, Konva.Group>;
 };
 
+type ActiveAnnotationInteraction = AnnotationInteractionState & {
+  owner: ElementPointerOwner;
+};
+
 export function cancelAnnotationInteraction(
-  interaction: ActiveAnnotationInteraction,
+  interaction: AnnotationInteractionState,
   transformer: TransformerControl | null,
 ): void {
   if (interaction.kind === "move") {
@@ -549,6 +606,22 @@ function selectedNodeMap(
     }
     return [element.id, node];
   }));
+}
+
+function samePointerOwner(
+  left: ElementPointerOwner,
+  right: ElementPointerOwner,
+): boolean {
+  return left.pointerId === right.pointerId && left.container === right.container;
+}
+
+function releaseAnnotationPointerCapture(
+  interaction: ActiveAnnotationInteraction,
+): void {
+  const { container, pointerId } = interaction.owner;
+  if (container.hasPointerCapture(pointerId)) {
+    container.releasePointerCapture(pointerId);
+  }
 }
 
 export function createCanvasElement(

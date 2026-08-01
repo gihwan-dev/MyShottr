@@ -5,7 +5,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { EditorCanvas } from "./canvas/EditorCanvas";
+import { EditorCanvas, type EditorCanvasHandle } from "./canvas/EditorCanvas";
 import { createDuplicateElements } from "./canvas/tools/createElement";
 import { cursorForTool } from "./canvas/tools/ToolController";
 import { ContextRail, type ContextRailIntent } from "./components/ContextRail";
@@ -47,6 +47,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   if (!historyRef.current) historyRef.current = createHistoryStore(initialDocument);
   const history = historyRef.current;
   const viewportRef = useRef<EditorWorkspaceHandle>(null);
+  const canvasRef = useRef<EditorCanvasHandle>(null);
   const copiedElements = useRef<EditorElement[]>([]);
   const document = useSyncExternalStore(
     history.subscribe,
@@ -169,7 +170,9 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       if (!command) return;
       event.preventDefault();
       if (command.type === "escape") {
-        if (shortcutHelpOpen) {
+        if (canvasRef.current?.cancelInteraction()) {
+          return;
+        } else if (shortcutHelpOpen) {
           setShortcutHelpOpen(false);
         } else if (editingTextId) {
           setEditingTextId(undefined);
@@ -300,6 +303,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         {({ viewport, spacePanReady, onWheel, panBy, toSourcePoint }) => (
           <>
             <EditorCanvas
+              ref={canvasRef}
               document={renderedDocument}
               sourceImageURL={sourceImageURL}
               tool={tool}
