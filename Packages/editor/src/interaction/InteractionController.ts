@@ -14,6 +14,12 @@ import {
   constrainSquare,
   constrainToNearest45Degrees,
 } from "./geometry";
+import {
+  intersectingElementIds,
+  isMarqueeGesture,
+  marqueeBounds,
+} from "./selectionGeometry";
+import type { Rect } from "../viewport/ViewportController";
 
 export type InteractionModifiers = {
   shift: boolean;
@@ -29,6 +35,7 @@ export type InteractionBeginInput = {
   document: EditorDocument;
   selectedIds: readonly string[];
   spaceHeld: boolean;
+  zoom: number;
 };
 
 export type InteractionSnapshot = {
@@ -38,11 +45,13 @@ export type InteractionSnapshot = {
   selectedElements: readonly EditorElement[];
   start: Point;
   modifiers: InteractionModifiers;
+  zoom: number;
 };
 
 export type InteractionPreview =
   | { type: "none" }
   | { type: "creation"; element: EditorElement }
+  | { type: "marquee"; rect: Rect }
   | { type: "viewport"; pan: Point };
 
 export type InteractionCommit =
@@ -90,6 +99,7 @@ export class InteractionController {
         selectedElements,
         start: { ...input.point },
         modifiers: { ...input.modifiers },
+        zoom: input.zoom,
       },
       document,
       selectedIds: [...input.selectedIds],
@@ -122,7 +132,19 @@ export class InteractionController {
       return { type: "viewport", pan: delta(interaction.snapshot.start, point) };
     }
     if (interaction.snapshot.tool === "selection") {
-      return { type: "selection", selectedIds: interaction.selectedIds };
+      return {
+        type: "selection",
+        selectedIds: isMarqueeGesture(
+          interaction.snapshot.start,
+          point,
+          interaction.snapshot.zoom,
+        )
+          ? intersectingElementIds(
+              interaction.document.elements,
+              marqueeBounds(interaction.snapshot.start, point),
+            )
+          : [],
+      };
     }
     if (interaction.snapshot.tool === "text") {
       return {
@@ -160,7 +182,19 @@ export class InteractionController {
       return { type: "viewport", pan: delta(interaction.snapshot.start, point) };
     }
     const tool = interaction.snapshot.tool;
-    if (tool === "selection" || tool === "text") return { type: "none" };
+    if (tool === "selection") {
+      return isMarqueeGesture(
+        interaction.snapshot.start,
+        point,
+        interaction.snapshot.zoom,
+      )
+        ? {
+            type: "marquee",
+            rect: marqueeBounds(interaction.snapshot.start, point),
+          }
+        : { type: "none" };
+    }
+    if (tool === "text") return { type: "none" };
     return {
       type: "creation",
       element: createElementFromDocument(

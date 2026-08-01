@@ -9,7 +9,7 @@ export type ElementInteractionHandlers = {
   selected: boolean;
   draggable: boolean;
   textEditingEnabled: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, toggle: boolean) => void;
   onEditText: (id: string) => void;
   onPointerDown: (id: string, node: Konva.Group, owner: ElementPointerOwner) => void;
   onDragStart: (id: string, node: Konva.Group) => void;
@@ -39,8 +39,8 @@ export function renderElement(
     scaleX: 1,
     scaleY: 1,
     draggable: handlers.draggable,
-    onClick: () => handlers.onSelect(element.id),
-    onTap: () => handlers.onSelect(element.id),
+    onClick: (event) => handlers.onSelect(element.id, event.evt.shiftKey),
+    onTap: (event) => handlers.onSelect(element.id, event.evt.shiftKey),
     "data-testid": `element-${element.id}`,
     onPointerDown: (event) => {
       const node = event.currentTarget as Konva.Group;

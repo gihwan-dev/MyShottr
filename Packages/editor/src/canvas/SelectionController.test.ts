@@ -4,10 +4,13 @@ import {
   duplicateElementWithinBounds,
   moveElementsWithinBounds,
   resizeElementWithinBounds,
-  SelectionController,
+  clearSelection,
+  replaceSelection,
+  toggleSelection,
 } from "./SelectionController";
 import { createHistoryStore } from "../model/history";
 import { findElement } from "../model/reducer";
+import { rotatedElementBounds } from "../interaction/selectionGeometry";
 
 describe("canvas element bounds", () => {
   it("offsets every path point when duplicating an arrow", () => {
@@ -93,23 +96,20 @@ describe("canvas element bounds", () => {
   });
 });
 
-describe("SelectionController", () => {
+describe("selection helpers", () => {
   it("shift-click toggles membership without losing the first selection", () => {
-    const selection = new SelectionController();
+    const selected = toggleSelection(replaceSelection("rect-1"), "text-1");
 
-    selection.replace("rect-1");
-    selection.toggle("text-1");
-
-    expect(selection.selectedIds).toEqual(["rect-1", "text-1"]);
-    selection.toggle("rect-1");
-    expect(selection.selectedIds).toEqual(["text-1"]);
+    expect(selected).toEqual(["rect-1", "text-1"]);
+    expect(toggleSelection(selected, "rect-1")).toEqual(["text-1"]);
   });
 
-  it("rejects empty ids for replacement and toggling", () => {
-    const selection = new SelectionController();
+  it("returns new replacement and empty selections without retaining mutable state", () => {
+    const selected = replaceSelection("rect-1");
 
-    expect(() => selection.replace("")).toThrow("Cannot select an empty element id");
-    expect(() => selection.toggle("")).toThrow("Cannot select an empty element id");
+    expect(selected).toEqual(["rect-1"]);
+    expect(clearSelection()).toEqual([]);
+    expect(selected).toEqual(["rect-1"]);
   });
 });
 
@@ -146,5 +146,49 @@ describe("moveElementsWithinBounds", () => {
       points: [{ x: 20, y: 32 }, { x: 60, y: 62 }],
     });
     expect(moved[1]).toMatchObject({ x: 60, y: 52 });
+  });
+
+  it("clamps a rotated rectangle by its rendered AABB at the source edge", () => {
+    const rectangle = {
+      ...fixtureRect(),
+      x: 50,
+      y: 50,
+      width: 40,
+      height: 20,
+      rotation: 45,
+    };
+
+    const [moved] = moveElementsWithinBounds(
+      [rectangle],
+      { x: 100, y: 100 },
+      { sourceWidth: 100, sourceHeight: 100 },
+    );
+
+    const renderedBounds = rotatedElementBounds(moved);
+    expect(renderedBounds.x + renderedBounds.width).toBeCloseTo(100);
+    expect(renderedBounds.y + renderedBounds.height).toBeCloseTo(100);
+  });
+
+  it("clamps a rotated stroked line by its endpoint AABB at the source edge", () => {
+    const line = {
+      ...fixtureLine(),
+      x: 60,
+      y: 20,
+      rotation: 90,
+      points: [
+        { x: 60, y: 20 },
+        { x: 150, y: 65 },
+      ] as [{ x: number; y: number }, { x: number; y: number }],
+    };
+
+    const [moved] = moveElementsWithinBounds(
+      [line],
+      { x: -100, y: 100 },
+      { sourceWidth: 200, sourceHeight: 200 },
+    );
+
+    const renderedBounds = rotatedElementBounds(moved);
+    expect(renderedBounds.x).toBeCloseTo(0);
+    expect(renderedBounds.y + renderedBounds.height).toBeCloseTo(200);
   });
 });

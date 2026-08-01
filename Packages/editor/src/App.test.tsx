@@ -18,6 +18,8 @@ vi.mock("./canvas/EditorCanvas", async () => {
     tool: EditorTool;
     viewport: ViewportSnapshot;
     spacePanReady: boolean;
+    interactionLocked: boolean;
+    selectedIds: readonly string[];
     onCommand: (command: EditorCommand) => void;
     onSelect: (id: string | undefined, toggle?: boolean) => void;
     onBeginTransaction: (label: string) => void;
@@ -27,7 +29,7 @@ vi.mock("./canvas/EditorCanvas", async () => {
     onBeginNewText: (point: Point, defaults: EditorDefaults) => void;
     onInteractionActiveChange: (active: boolean) => void;
     textEditorOverlay: ReactNode;
-    }>(function MockEditorCanvas({ document, tool, viewport, spacePanReady, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onBeginNewText, onInteractionActiveChange, textEditorOverlay }, ref) {
+    }>(function MockEditorCanvas({ document, tool, viewport, spacePanReady, interactionLocked, selectedIds, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onBeginNewText, onInteractionActiveChange, textEditorOverlay }, ref) {
       const pointerGesture = useRef<{
         pointerId: number;
         tool: EditorTool;
@@ -47,6 +49,11 @@ vi.mock("./canvas/EditorCanvas", async () => {
       <output data-testid="canvas-opacities">
         {document.elements.map((element) => `${element.id}:${element.opacity}`).join(",")}
       </output>
+      <output data-testid="canvas-positions">
+        {document.elements.map((element) => `${element.id}:${element.x},${element.y}`).join(";")}
+      </output>
+      <output data-testid="canvas-selection">{selectedIds.join(",")}</output>
+      <output data-testid="canvas-interaction-lock">{String(interactionLocked === true)}</output>
       <output
         data-testid="canvas-viewport"
         data-available={`${viewport.availableRect.x},${viewport.availableRect.y},${viewport.availableRect.width},${viewport.availableRect.height}`}
@@ -251,10 +258,10 @@ describe("EditorApp", () => {
       },
       selectName: "Select line-1",
       bounds: {
-        x: 477.5,
-        y: 300,
-        width: 100.44228634059948,
-        height: 83.97114317029974,
+        x: 498,
+        y: 298,
+        width: 59.44228634059948,
+        height: 87.97114317029974,
       },
     },
   ])("fits and centers $label with at least 24px padding", ({ element, selectName, bounds }) => {
@@ -571,6 +578,9 @@ describe("EditorApp", () => {
       { x: 12, y: 12 },
       { x: 52, y: 62 },
     ]);
+    expect(screen.getByTestId("canvas-selection").textContent).toBe(
+      duplicated.elements.slice(2).map((element) => element.id).join(","),
+    );
     fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
     expect(changes.at(-1)?.elements).toHaveLength(2);
   });
@@ -590,6 +600,9 @@ describe("EditorApp", () => {
     fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
     expect(changes).toHaveLength(1);
     expect(changes[0].elements).toHaveLength(4);
+    expect(screen.getByTestId("canvas-selection").textContent).toBe(
+      changes[0].elements.slice(2).map((element) => element.id).join(","),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
@@ -653,6 +666,152 @@ describe("EditorApp", () => {
       { x: 0, y: 0 },
       { x: 70, y: 70 },
     ]);
+  });
+
+  it("previews repeated held-key nudges and commits one updateMany on final keyup", () => {
+    const rectangle = { ...fixtureRect(), x: 20, y: 20, width: 20, height: 20 };
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({
+        sourcePixelWidth: 100,
+        sourcePixelHeight: 100,
+        elements: [rectangle],
+      })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+
+    fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
+    fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight", repeat: true });
+    fireEvent.keyDown(window, {
+      code: "ArrowDown",
+      key: "ArrowDown",
+      repeat: true,
+      shiftKey: true,
+    });
+
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:22,30");
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("true");
+    expect(changes).toHaveLength(0);
+
+    fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
+    expect(changes).toHaveLength(0);
+    fireEvent.keyUp(window, { code: "ArrowDown", key: "ArrowDown" });
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].elements[0]).toMatchObject({ x: 22, y: 30 });
+    expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("false");
+
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(2);
+    expect(changes[1].elements[0]).toMatchObject({ x: 20, y: 20 });
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    expect(changes).toHaveLength(2);
+  });
+
+  it("clamps held Shift-nudge to source bounds before one release commit", () => {
+    const rectangle = { ...fixtureRect(), x: 79, y: 20, width: 20, height: 20 };
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({
+        sourcePixelWidth: 100,
+        sourcePixelHeight: 100,
+        elements: [rectangle],
+      })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+
+    fireEvent.keyDown(window, {
+      code: "ArrowRight",
+      key: "ArrowRight",
+      shiftKey: true,
+    });
+    fireEvent.keyDown(window, {
+      code: "ArrowRight",
+      key: "ArrowRight",
+      shiftKey: true,
+      repeat: true,
+    });
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:80,20");
+    expect(changes).toHaveLength(0);
+
+    fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
+    expect(changes).toHaveLength(1);
+    expect(changes[0].elements[0]).toMatchObject({ x: 80, y: 20 });
+  });
+
+  it.each(["Escape", "blur"] as const)(
+    "restores a nudge preview on %s without a command or Undo entry",
+    (terminal) => {
+      const rectangle = { ...fixtureRect(), x: 20, y: 20, width: 20, height: 20 };
+      const changes: EditorDocument[] = [];
+      render(<EditorApp
+        initialDocument={fixtureDocument({
+          sourcePixelWidth: 100,
+          sourcePixelHeight: 100,
+          elements: [rectangle],
+        })}
+        initialTool="selection"
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        onChange={(document) => changes.push(document)}
+        onPreferencesChange={() => {}}
+      />);
+      fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+      fireEvent.keyDown(window, { code: "ArrowLeft", key: "ArrowLeft" });
+      expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:19,20");
+
+      if (terminal === "Escape") {
+        fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+      } else {
+        fireEvent(window, new Event("blur"));
+      }
+      fireEvent.keyUp(window, { code: "ArrowLeft", key: "ArrowLeft" });
+
+      expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:20,20");
+      expect(changes).toHaveLength(0);
+      fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+      expect(changes).toHaveLength(0);
+    },
+  );
+
+  it("locks other shortcuts and cancels a held nudge when selection identity changes", () => {
+    const rectangle = { ...fixtureRect(), x: 20, y: 20, width: 20, height: 20 };
+    const line = { ...fixtureLine(), x: 50, y: 50, width: 20, height: 20 };
+    const changes: EditorDocument[] = [];
+    render(<EditorApp
+      initialDocument={fixtureDocument({
+        sourcePixelWidth: 100,
+        sourcePixelHeight: 100,
+        elements: [rectangle, line],
+      })}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={(document) => changes.push(document)}
+      onPreferencesChange={() => {}}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
+
+    fireEvent.keyDown(window, { code: "KeyD", key: "d", metaKey: true });
+    fireEvent.keyDown(window, { code: "KeyR", key: "r" });
+    expect(changes).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Selection, shortcut V" }).getAttribute("aria-pressed"))
+      .toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select line-1" }));
+    fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
+
+    expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("rect-1:20,20;line-1:50,50");
+    expect(screen.getByTestId("canvas-selection").textContent).toBe("line-1");
+    expect(changes).toHaveLength(0);
   });
 
   it("reorders every selected element from shortcuts and palette controls", () => {

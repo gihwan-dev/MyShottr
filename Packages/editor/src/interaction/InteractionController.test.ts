@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_EDITOR_DEFAULTS } from "../model/defaults";
 import type { EditorDefaults, EditorDocument } from "../model/elements";
-import { fixtureDocument } from "../test/fixtures";
+import { fixtureDocument, fixtureRect } from "../test/fixtures";
 import {
   InteractionController,
   type InteractionBeginInput,
@@ -200,6 +200,52 @@ describe("InteractionController", () => {
       pan: { x: 30, y: 40 },
     });
   });
+
+  it("previews a marquee and replaces selection with rotated AABB intersections", () => {
+    const controller = new InteractionController();
+    const rectangle = {
+      ...fixtureRect(),
+      x: 100,
+      y: 100,
+      width: 80,
+      height: 20,
+      rotation: 45,
+    };
+    controller.begin(beginInput({
+      tool: "selection",
+      point: { x: 150, y: 150 },
+      document: fixtureDocument({ elements: [rectangle] }),
+      selectedIds: [rectangle.id],
+    }));
+
+    expect(controller.update({ x: 160, y: 160 }, NO_MODIFIERS)).toEqual({
+      type: "marquee",
+      rect: { x: 150, y: 150, width: 10, height: 10 },
+    });
+    expect(controller.commit({ x: 160, y: 160 }, NO_MODIFIERS)).toEqual({
+      type: "selection",
+      selectedIds: [rectangle.id],
+    });
+  });
+
+  it("clears selection when an empty-source gesture stays below 3 CSS pixels", () => {
+    const controller = new InteractionController();
+    const document = fixtureDocument();
+    controller.begin(beginInput({
+      tool: "selection",
+      point: { x: 10, y: 10 },
+      document,
+      selectedIds: [document.elements[0].id],
+      zoom: 2,
+    }));
+
+    expect(controller.update({ x: 11.49, y: 11.49 }, NO_MODIFIERS))
+      .toEqual({ type: "none" });
+    expect(controller.commit({ x: 11.49, y: 11.49 }, NO_MODIFIERS)).toEqual({
+      type: "selection",
+      selectedIds: [],
+    });
+  });
 });
 
 function beginInput(overrides: Partial<InteractionBeginInput> = {}): InteractionBeginInput {
@@ -213,6 +259,7 @@ function beginInput(overrides: Partial<InteractionBeginInput> = {}): Interaction
     document,
     selectedIds: [],
     spaceHeld: false,
+    zoom: 1,
     ...overrides,
   };
 }

@@ -8,11 +8,13 @@ import {
   type InteractionModifiers,
   type InteractionPreview,
 } from "../interaction/InteractionController";
-import type { ViewportSnapshot } from "../viewport/ViewportController";
+import type { Rect as SourceRect, ViewportSnapshot } from "../viewport/ViewportController";
 import {
   moveElementsWithinBounds,
   resizeElementWithinBounds,
 } from "./SelectionController";
+import { createDuplicateElements } from "../interaction/duplication";
+import { rotatedElementBounds } from "../interaction/selectionGeometry";
 import { createElementFromDocument } from "./tools/createElement";
 import {
   pointerOwnerFor,
@@ -33,6 +35,7 @@ export type EditorCanvasProps = {
   tool: EditorTool;
   viewport: ViewportSnapshot;
   spacePanReady: boolean;
+  interactionLocked: boolean;
   selectedIds: readonly string[];
   onSelect: (id: string | undefined, toggle?: boolean) => void;
   onEditText: (id: string) => void;
@@ -54,7 +57,7 @@ export type EditorCanvasProps = {
   textEditorOverlay: ReactNode;
 };
 
-export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePanReady, selectedIds, onSelect, onEditText, onBeginNewText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onViewportWheel, onViewportPanBy, onInteractionActiveChange, toSourcePoint, textEditorOverlay }, ref) {
+export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePanReady, interactionLocked, selectedIds, onSelect, onEditText, onBeginNewText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onViewportWheel, onViewportPanBy, onInteractionActiveChange, toSourcePoint, textEditorOverlay }, ref) {
   const image = useSourceImage(sourceImageURL);
   const blurredSource = useMemo(
     () => image
@@ -84,12 +87,13 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   } | undefined>(undefined);
   const frame = useRef<number | null>(null);
   const disposed = useRef(false);
-  const selectionToggle = useRef(false);
   const pendingAnnotationPointer = useRef<AnnotationPointerSnapshot | undefined>(undefined);
   const activeAnnotationInteraction = useRef<ActiveAnnotationInteraction | undefined>(undefined);
   const [isTransforming, setIsTransforming] = useState(false);
   const [isSpacePanning, setIsSpacePanning] = useState(false);
   const [creationPreview, setCreationPreview] = useState<EditorElement | undefined>(undefined);
+  const [marqueePreview, setMarqueePreview] = useState<SourceRect | undefined>(undefined);
+  const [duplicationPreview, setDuplicationPreview] = useState<readonly EditorElement[]>([]);
 
   useEffect(() => {
     const selectedNodes = selectedIds.flatMap((id) => {
@@ -137,6 +141,12 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   const applyPreview = (preview: InteractionPreview) => {
     if (preview.type === "creation") {
       setCreationPreview(preview.element);
+      setMarqueePreview(undefined);
+      return;
+    }
+    if (preview.type === "marquee") {
+      setCreationPreview(undefined);
+      setMarqueePreview(preview.rect);
       return;
     }
     if (preview.type === "viewport") {
@@ -146,7 +156,10 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       };
       appliedViewportPan.current = preview.pan;
       if (delta.x !== 0 || delta.y !== 0) onViewportPanBy(delta);
+      return;
     }
+    setCreationPreview(undefined);
+    setMarqueePreview(undefined);
   };
   const clearScheduledMove = () => {
     if (frame.current !== null) {
@@ -179,11 +192,20 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   const finishPointerInteraction = () => {
     clearScheduledMove();
     setCreationPreview(undefined);
+    setMarqueePreview(undefined);
+    setDuplicationPreview([]);
     releasePointerCapture();
     appliedViewportPan.current = { x: 0, y: 0 };
     spacePanActive.current = false;
     setIsSpacePanning(false);
     onInteractionActiveChange(false);
+  };
+  const routeSelection = (nextSelectedIds: readonly string[]) => {
+    if (nextSelectedIds.length === 0) {
+      onSelect(undefined);
+      return;
+    }
+    nextSelectedIds.forEach((id, index) => onSelect(id, index > 0));
   };
   const routeCommit = (result: InteractionCommit) => {
     switch (result.type) {
@@ -191,10 +213,10 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
         return;
       case "command":
         onCommand(result.command);
+        if (result.selectedIds) routeSelection(result.selectedIds);
         return;
       case "selection":
-        if (result.selectedIds.length === 0) onSelect(undefined);
-        else result.selectedIds.forEach((id, index) => onSelect(id, index > 0));
+        routeSelection(result.selectedIds);
         return;
       case "beginNewText":
         onBeginNewText(result.point, result.defaults);
@@ -233,6 +255,8 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       interactionController.cancel();
       clearScheduledMove();
       setCreationPreview(undefined);
+      setMarqueePreview(undefined);
+      setDuplicationPreview([]);
       releasePointerCapture();
       appliedViewportPan.current = { x: 0, y: 0 };
       spacePanActive.current = false;
@@ -250,6 +274,33 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       window.removeEventListener("blur", cancelPointerInteraction);
     };
   });
+  useEffect(() => {
+    const activeInteraction = activeAnnotationInteraction.current;
+    if (
+      activeInteraction
+      && (
+        interactionLocked
+        || activeInteraction.tool !== tool
+        || activeInteraction.documentIdentity !== document
+        || !sameOrderedIds(activeInteraction.selectedIds, selectedIds)
+      )
+    ) {
+      cancelPointerInteraction();
+      return;
+    }
+    const pendingPointer = pendingAnnotationPointer.current;
+    if (
+      pendingPointer
+      && (
+        interactionLocked
+        || pendingPointer.tool !== tool
+        || pendingPointer.documentIdentity !== document
+        || !sameOrderedIds(pendingPointer.selectedIds, selectedIds)
+      )
+    ) {
+      pendingAnnotationPointer.current = undefined;
+    }
+  }, [document, interactionLocked, selectedIds, tool]);
   useEffect(() => {
     disposed.current = false;
     return () => {
@@ -301,9 +352,17 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
         onPointerDown={(event) => {
           const stage = event.target.getStage();
           if (!stage) throw new Error("Canvas stage is unavailable");
-          selectionToggle.current = event.evt.shiftKey;
-          if (!spacePanReady && (tool === "selection" || isTransforming)) {
-            if (event.target === event.target.getStage()) onSelect(undefined);
+          if (interactionLocked) return;
+          if (!spacePanReady && tool === "selection") {
+            const pendingPointer = pendingAnnotationPointer.current;
+            if (pendingPointer) {
+              if (pendingPointer.owner.pointerId === event.evt.pointerId) {
+                pendingPointer.modifiers = modifiersFor(event.evt);
+              }
+              return;
+            }
+            if (event.target !== stage || isTransforming) return;
+          } else if (!spacePanReady && isTransforming) {
             return;
           }
           if (interactionController.active) return;
@@ -319,6 +378,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
             document,
             selectedIds,
             spaceHeld: spacePanReady,
+            zoom: viewport.zoom,
           });
           const container = stage.container();
           container.setPointerCapture(event.evt.pointerId);
@@ -406,16 +466,15 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
             )}
             {orderedElements.map((element) => renderElement(element, {
               selected: selectedIdSet.has(element.id),
-              draggable: tool === "selection" && selectedIdSet.has(element.id),
-              textEditingEnabled: tool === "selection",
-              onSelect: (id) => {
-                onSelect(id, selectionToggle.current);
-                selectionToggle.current = false;
-              },
+              draggable: !interactionLocked && tool === "selection" && selectedIdSet.has(element.id),
+              textEditingEnabled: !interactionLocked && tool === "selection",
+              onSelect: (id, toggle) => onSelect(id, toggle),
               onEditText: (id) => onEditText(id),
               onPointerDown: (id, node, owner) => {
                 if (
-                  activeAnnotationInteraction.current
+                  interactionLocked
+                  || tool !== "selection"
+                  || activeAnnotationInteraction.current
                   || pendingAnnotationPointer.current
                 ) return;
                 pendingAnnotationPointer.current = {
@@ -424,11 +483,19 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                   node,
                   owner,
                   cancelTransformer: transformer.current,
+                  modifiers: undefined,
+                  selectedIds: [...selectedIds],
+                  tool,
+                  documentIdentity: document,
                 };
               },
               onDragStart: (id, node) => {
                 const pointer = consumeMovePointer(id, node);
-                const elementToMove = selectedElements.find(
+                if (!pointer.modifiers) {
+                  throw new Error("Annotation move modifiers are unavailable");
+                }
+                const snapshotElements = structuredClone(selectedElements);
+                const elementToMove = snapshotElements.find(
                   (candidate) => candidate.id === id,
                 );
                 if (!elementToMove) {
@@ -440,10 +507,17 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                   kind: "move",
                   node,
                   element: elementToMove,
-                  elements: selectedElements,
-                  nodes: selectedNodeMap(selectedElements, nodes.current),
+                  elements: snapshotElements,
+                  nodes: selectedNodeMap(snapshotElements, nodes.current),
                   owner: pointer.owner,
                   cancelTransformer: pointer.cancelTransformer,
+                  optionDuplicate: pointer.modifiers.option,
+                  previewElements: undefined,
+                  previewDelta: undefined,
+                  selectedIds: pointer.selectedIds,
+                  tool: pointer.tool,
+                  document: structuredClone(document),
+                  documentIdentity: pointer.documentIdentity,
                 };
               },
               onDragMove: (id, x, y) => {
@@ -454,17 +528,35 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                   }
                   const elementToMove = active.elements.find((candidate) => candidate.id === id);
                   if (!elementToMove) throw new Error(`Cannot move missing element: ${id}`);
-                  onCommand({
-                    type: "updateMany",
-                    elements: moveElementsWithinBounds(
-                      active.elements,
-                      { x: x - elementToMove.x, y: y - elementToMove.y },
-                      {
-                        sourceWidth: document.sourcePixelWidth,
-                        sourceHeight: document.sourcePixelHeight,
-                      },
-                    ),
-                  });
+                  const delta = {
+                    x: x - elementToMove.x,
+                    y: y - elementToMove.y,
+                  };
+                  if (active.optionDuplicate) {
+                    const copies = active.previewElements
+                      ? moveElementsWithinBounds(
+                          active.previewElements,
+                          deltaFromPreviousPreview(active, delta),
+                          sourceBoundsFor(active.document),
+                        )
+                      : createDuplicateElements(
+                          active.document,
+                          active.elements,
+                          delta,
+                        );
+                    active.previewDelta = previewDeltaFromStart(active.elements, copies);
+                    active.previewElements = copies;
+                    applyElementGeometryToNodes(active.elements, active.nodes);
+                    setDuplicationPreview(copies);
+                    return;
+                  }
+                  const moved = moveElementsWithinBounds(
+                    active.elements,
+                    delta,
+                    sourceBoundsFor(active.document),
+                  );
+                  active.previewElements = moved;
+                  applyElementGeometryToNodes(moved, active.nodes);
                 } catch (error) {
                   cancelAnnotationTransaction();
                   throw error;
@@ -477,14 +569,27 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                   || activeInteraction.element.id !== id
                   || activeInteraction.node !== node
                 ) return;
+                let duplicatedIds: readonly string[] | undefined;
                 try {
+                  const previewElements = activeInteraction.previewElements;
+                  if (previewElements) {
+                    onCommand(activeInteraction.optionDuplicate
+                      ? { type: "createMany", elements: [...previewElements] }
+                      : { type: "updateMany", elements: [...previewElements] });
+                    if (activeInteraction.optionDuplicate) {
+                      duplicatedIds = previewElements.map((element) => element.id);
+                    }
+                  }
                   onCommitTransaction();
                   releaseAnnotationPointerCapture(activeInteraction);
                   activeAnnotationInteraction.current = undefined;
                 } catch (error) {
                   cancelAnnotationTransaction();
                   throw error;
+                } finally {
+                  setDuplicationPreview([]);
                 }
+                if (duplicatedIds) routeSelection(duplicatedIds);
               },
               onTransformStart: (id, node) => {
                 const activeInteraction = activeAnnotationInteraction.current;
@@ -493,7 +598,11 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                   throw new Error("Cannot transform during an active move");
                 }
                 const pointer = consumeTransformPointer(node);
-                const elementToTransform = selectedElements.find((candidate) => candidate.id === id);
+                if (!pointer.modifiers) {
+                  throw new Error("Annotation transform modifiers are unavailable");
+                }
+                const snapshotElements = structuredClone(selectedElements);
+                const elementToTransform = snapshotElements.find((candidate) => candidate.id === id);
                 if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
                 onBeginTransaction("transform");
                 pointer.owner.container.setPointerCapture(pointer.owner.pointerId);
@@ -501,10 +610,17 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                   kind: "transform",
                   node,
                   element: elementToTransform,
-                  elements: selectedElements,
-                  nodes: selectedNodeMap(selectedElements, nodes.current),
+                  elements: snapshotElements,
+                  nodes: selectedNodeMap(snapshotElements, nodes.current),
                   owner: pointer.owner,
                   cancelTransformer: pointer.cancelTransformer,
+                  optionDuplicate: false,
+                  previewElements: undefined,
+                  previewDelta: undefined,
+                  selectedIds: pointer.selectedIds,
+                  tool: pointer.tool,
+                  document: structuredClone(document),
+                  documentIdentity: pointer.documentIdentity,
                 };
                 setIsTransforming(true);
               },
@@ -564,17 +680,30 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                 )}
               </Group>
             )}
+            {duplicationPreview.length > 0 && (
+              <Group listening={false} data-testid="duplication-preview">
+                {duplicationPreview.map((element) => renderElement(
+                  element,
+                  previewInteractionHandlers,
+                  blurredSource,
+                ))}
+              </Group>
+            )}
+            {marqueePreview && (
+              <Group listening={false} data-testid="marquee-preview">
+                <Rect
+                  x={marqueePreview.x}
+                  y={marqueePreview.y}
+                  width={marqueePreview.width}
+                  height={marqueePreview.height}
+                  fill="rgba(22, 119, 255, 0.08)"
+                  stroke="#1677FF"
+                  dash={[4, 4]}
+                />
+              </Group>
+            )}
             {selectedElements.map((selected) => (
-              <Rect
-                key={`selection-outline-${selected.id}`}
-                x={selected.x}
-                y={selected.y}
-                width={selected.width}
-                height={selected.height}
-                stroke="#1677FF"
-                dash={[4, 4]}
-                listening={false}
-              />
+              <SelectionOutline key={`selection-outline-${selected.id}`} element={selected} />
             ))}
             <Transformer
               ref={transformer}
@@ -582,7 +711,9 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
               flipEnabled={false}
               onPointerDown={(event) => {
                 if (
-                  activeAnnotationInteraction.current
+                  interactionLocked
+                  || tool !== "selection"
+                  || activeAnnotationInteraction.current
                   || pendingAnnotationPointer.current
                 ) return;
                 const transformerNode = event.currentTarget as Konva.Transformer;
@@ -595,6 +726,10 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                   nodes: new Set(transformNodes),
                   owner: pointerOwnerFor(transformerNode, event.evt),
                   cancelTransformer: transformerNode,
+                  modifiers: undefined,
+                  selectedIds: [...selectedIds],
+                  tool,
+                  documentIdentity: document,
                 };
               }}
             />
@@ -605,6 +740,21 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     </div>
   );
 });
+
+function SelectionOutline({ element }: { element: EditorElement }) {
+  const bounds = rotatedElementBounds(element);
+  return (
+    <Rect
+      x={bounds.x}
+      y={bounds.y}
+      width={bounds.width}
+      height={bounds.height}
+      stroke="#1677FF"
+      dash={[4, 4]}
+      listening={false}
+    />
+  );
+}
 
 const previewInteractionHandlers = {
   selected: false,
@@ -636,6 +786,10 @@ type MovePointerSnapshot = {
   node: Konva.Group;
   owner: ElementPointerOwner;
   cancelTransformer: TransformerControl | null;
+  modifiers: InteractionModifiers | undefined;
+  selectedIds: readonly string[];
+  tool: EditorTool;
+  documentIdentity: EditorDocument;
 };
 
 type TransformPointerSnapshot = {
@@ -643,6 +797,10 @@ type TransformPointerSnapshot = {
   nodes: ReadonlySet<Konva.Group>;
   owner: ElementPointerOwner;
   cancelTransformer: TransformerControl;
+  modifiers: InteractionModifiers | undefined;
+  selectedIds: readonly string[];
+  tool: EditorTool;
+  documentIdentity: EditorDocument;
 };
 
 type AnnotationPointerSnapshot = MovePointerSnapshot | TransformPointerSnapshot;
@@ -658,6 +816,13 @@ type AnnotationInteractionState = {
 type ActiveAnnotationInteraction = AnnotationInteractionState & {
   owner: ElementPointerOwner;
   cancelTransformer: TransformerControl | null;
+  optionDuplicate: boolean;
+  previewElements: readonly EditorElement[] | undefined;
+  previewDelta: Point | undefined;
+  selectedIds: readonly string[];
+  tool: EditorTool;
+  document: EditorDocument;
+  documentIdentity: EditorDocument;
 };
 
 export function cancelAnnotationInteraction(
@@ -686,7 +851,7 @@ export function cancelAnnotationInteraction(
 }
 
 function selectedNodeMap(
-  elements: EditorElement[],
+  elements: readonly EditorElement[],
   registeredNodes: Map<string, Konva.Group>,
 ): Map<string, Konva.Group> {
   return new Map(elements.map((element) => {
@@ -698,6 +863,59 @@ function selectedNodeMap(
   }));
 }
 
+function applyElementGeometryToNodes(
+  elements: readonly EditorElement[],
+  registeredNodes: Map<string, Konva.Group>,
+): void {
+  elements.forEach((element) => {
+    const node = registeredNodes.get(element.id);
+    if (!node) {
+      throw new Error(`Cannot preview unregistered element: ${element.id}`);
+    }
+    node.x(element.x);
+    node.y(element.y);
+    node.scaleX(1);
+    node.scaleY(1);
+    node.rotation(element.rotation);
+  });
+}
+
+function deltaFromPreviousPreview(
+  interaction: ActiveAnnotationInteraction,
+  requestedDelta: Point,
+): Point {
+  const previewDelta = interaction.previewDelta;
+  if (!previewDelta) {
+    throw new Error("Option-drag preview delta is unavailable");
+  }
+  return {
+    x: requestedDelta.x - previewDelta.x,
+    y: requestedDelta.y - previewDelta.y,
+  };
+}
+
+function previewDeltaFromStart(
+  startingElements: readonly EditorElement[],
+  previewElements: readonly EditorElement[],
+): Point {
+  const startingElement = startingElements[0];
+  const previewElement = previewElements[0];
+  if (!startingElement || !previewElement) {
+    throw new Error("Option-drag requires a non-empty selection preview");
+  }
+  return {
+    x: previewElement.x - startingElement.x,
+    y: previewElement.y - startingElement.y,
+  };
+}
+
+function sourceBoundsFor(document: EditorDocument) {
+  return {
+    sourceWidth: document.sourcePixelWidth,
+    sourceHeight: document.sourcePixelHeight,
+  };
+}
+
 function releaseAnnotationPointerCapture(
   interaction: ActiveAnnotationInteraction,
 ): void {
@@ -705,6 +923,14 @@ function releaseAnnotationPointerCapture(
   if (container.hasPointerCapture(pointerId)) {
     container.releasePointerCapture(pointerId);
   }
+}
+
+function sameOrderedIds(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return left.length === right.length
+    && left.every((id, index) => id === right[index]);
 }
 
 export function createCanvasElement(

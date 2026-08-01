@@ -6,7 +6,13 @@ import {
   useSyncExternalStore,
 } from "react";
 import { EditorCanvas, type EditorCanvasHandle } from "./canvas/EditorCanvas";
-import { createDuplicateElements } from "./canvas/tools/createElement";
+import {
+  clearSelection,
+  moveElementsWithinBounds,
+  replaceSelection,
+  toggleSelection,
+} from "./canvas/SelectionController";
+import { createDuplicateElements } from "./interaction/duplication";
 import { cursorForTool } from "./canvas/tools/ToolController";
 import { ContextRail, type ContextRailIntent } from "./components/ContextRail";
 import {
@@ -29,9 +35,9 @@ import { sendComposite } from "./export/sendComposite";
 import { createHistoryStore, type HistoryStore } from "./model/history";
 import { applyRailProperty, findElement } from "./model/reducer";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, TextElement } from "./model/elements";
-import type { Rect } from "./viewport/ViewportController";
 import { KONVA_DEFAULT_FONT_FAMILY, TEXT_LINE_HEIGHT } from "./canvas/renderingConstants";
-import { keyboardCommandFor } from "./input/ShortcutRouter";
+import { isTextEntryTarget, keyboardCommandFor } from "./input/ShortcutRouter";
+import { unionBounds } from "./interaction/selectionGeometry";
 import "./styles.css";
 
 export type EditorAppProps = {
@@ -63,31 +69,35 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     value: RailPropertyValueByKey["opacity"];
   }>();
   const [locks, setLocks] = useState({ slider: false });
+  const [nudgeSession, setNudgeSession] = useState<NudgeSession>();
 
   const publishSceneChange = useCallback(() => {
     onChange(history.getSnapshot());
   }, [history, onChange]);
 
   const dispatch = useCallback((command: EditorCommand) => {
+    setNudgeSession(undefined);
     history.dispatch(command);
     publishSceneChange();
   }, [history, publishSceneChange]);
   const updateDefaults = useCallback((nextDefaults: EditorDefaults) => {
+    setNudgeSession(undefined);
     history.setDefaults(nextDefaults);
     onPreferencesChange(tool, history.getSnapshot().defaults);
   }, [history, onPreferencesChange, tool]);
   const select = useCallback((id: string | undefined, toggle = false) => {
+    setNudgeSession(undefined);
     setSelectionOpacityPreview(undefined);
     setLocks({ slider: false });
     setSelectedIds((current) => {
-      if (!id) return [];
-      if (!toggle) return [id];
-      return current.includes(id)
-        ? current.filter((candidate) => candidate !== id)
-        : [...current, id];
+      if (!id) return [...clearSelection()];
+      return [...(toggle
+        ? toggleSelection(current, id)
+        : replaceSelection(id))];
     });
   }, []);
   const selectTool = useCallback((nextTool: EditorTool) => {
+    setNudgeSession(undefined);
     setTool(nextTool);
     if (nextTool !== "selection") select(undefined);
     onPreferencesChange(nextTool, history.getSnapshot().defaults);
@@ -141,11 +151,15 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     setEditingTextId(undefined);
   }, [dispatch, editingTextId, history, select]);
   const selectedElements = selectedIds.map((id) => findElement(document, id));
-  const previewElements = selectionOpacityPreview
-    ? applyRailProperty(selectedElements, "opacity", selectionOpacityPreview.value)
-    : selectedElements;
-  const previewById = new Map(previewElements.map((element) => [element.id, element]));
-  const renderedDocument = selectionOpacityPreview
+  const scenePreviewElements = nudgeSession
+    ? nudgeSession.previewElements
+    : selectionOpacityPreview
+      ? applyRailProperty(selectedElements, "opacity", selectionOpacityPreview.value)
+      : undefined;
+  const previewById = scenePreviewElements
+    ? new Map(scenePreviewElements.map((element) => [element.id, element]))
+    : new Map<string, EditorElement>();
+  const renderedDocument = scenePreviewElements
     ? {
         ...document,
         elements: document.elements.map((element) => previewById.get(element.id) ?? element),
@@ -162,8 +176,46 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isNudgeCode(event.code)) {
+        if (
+          event.isComposing
+          || isTextEntryTarget(event.target)
+          || event.metaKey
+          || event.ctrlKey
+          || event.altKey
+        ) return;
+        const canStartNudge = tool === "selection"
+          && selectedIds.length > 0
+          && !history.isTransactionActive
+          && !locks.slider
+          && !canvasInteractionActive
+          && !shortcutHelpOpen
+          && editingTextId === undefined;
+        if (!nudgeSession && !canStartNudge) return;
+        event.preventDefault();
+        const startingElements = nudgeSession
+          ? nudgeSession.startingElements
+          : selectedIds.map((id) => structuredClone(findElement(history.document, id)));
+        const previewElements = moveElementsWithinBounds(
+          nudgeSession ? nudgeSession.previewElements : startingElements,
+          nudgeDelta(event.code, event.shiftKey),
+          {
+            sourceWidth: history.document.sourcePixelWidth,
+            sourceHeight: history.document.sourcePixelHeight,
+          },
+        );
+        const heldCodes = nudgeSession
+          ? new Set(nudgeSession.heldCodes)
+          : new Set<string>();
+        heldCodes.add(event.code);
+        setNudgeSession({ startingElements, previewElements, heldCodes });
+        return;
+      }
       const command = keyboardCommandFor(event, {
-        interactionActive: history.isTransactionActive || locks.slider || canvasInteractionActive,
+        interactionActive: history.isTransactionActive
+          || locks.slider
+          || nudgeSession !== undefined
+          || canvasInteractionActive,
         shortcutHelpOpen,
         textEditing: editingTextId !== undefined,
       });
@@ -172,6 +224,8 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       if (command.type === "escape") {
         if (canvasRef.current?.cancelInteraction()) {
           return;
+        } else if (nudgeSession) {
+          setNudgeSession(undefined);
         } else if (shortcutHelpOpen) {
           setShortcutHelpOpen(false);
         } else if (editingTextId) {
@@ -232,11 +286,43 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       }
       selectTool(command.tool);
     };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (!isNudgeCode(event.code) || !nudgeSession?.heldCodes.has(event.code)) {
+        return;
+      }
+      event.preventDefault();
+      const heldCodes = new Set(nudgeSession.heldCodes);
+      heldCodes.delete(event.code);
+      if (heldCodes.size > 0) {
+        setNudgeSession({ ...nudgeSession, heldCodes });
+        return;
+      }
+      const finalElements = nudgeSession.previewElements;
+      const changed = finalElements.some((element, index) => {
+        const starting = nudgeSession.startingElements[index];
+        return !starting || element.x !== starting.x || element.y !== starting.y;
+      });
+      setNudgeSession(undefined);
+      if (changed) {
+        dispatch({ type: "updateMany", elements: [...finalElements] });
+      }
+    };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [canvasInteractionActive, copySelection, dispatch, duplicateSelection, editingTextId, history, locks.slider, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, tool]);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [canvasInteractionActive, copySelection, dispatch, duplicateSelection, editingTextId, history, locks.slider, nudgeSession, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, tool]);
+
+  useEffect(() => {
+    const cancelNudge = () => setNudgeSession(undefined);
+    window.addEventListener("blur", cancelNudge);
+    return () => window.removeEventListener("blur", cancelNudge);
+  }, []);
 
   const handleContextRailIntent = useCallback((intent: ContextRailIntent) => {
+    if (nudgeSession) return;
     switch (intent.type) {
       case "setDefaultProperty":
         updateDefaults(applyRailDefault(document.defaults, tool, intent.property, intent.value));
@@ -283,7 +369,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         select(undefined);
         return;
     }
-  }, [dispatch, document.defaults, duplicateSelection, history, reorderSelection, select, selectedIds, tool, updateDefaults]);
+  }, [dispatch, document.defaults, duplicateSelection, history, nudgeSession, reorderSelection, select, selectedIds, tool, updateDefaults]);
 
   return (
     <main
@@ -298,7 +384,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
           height: document.sourcePixelHeight,
         }}
         railVisible={contextRailModel.kind !== "hidden"}
-        selectionBounds={selectionBoundsFor(selectedElements)}
+        selectionBounds={unionBounds(selectedElements)}
       >
         {({ viewport, spacePanReady, onWheel, panBy, toSourcePoint }) => (
           <>
@@ -309,6 +395,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
               tool={tool}
               viewport={viewport}
               spacePanReady={spacePanReady}
+              interactionLocked={nudgeSession !== undefined}
               selectedIds={selectedIds}
               onSelect={select}
               onEditText={beginTextEdit}
@@ -351,34 +438,33 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   );
 }
 
-function selectionBoundsFor(elements: readonly EditorElement[]): Rect | undefined {
-  if (elements.length === 0) return undefined;
-  const points = elements.flatMap((element) => {
-    const radians = element.rotation * Math.PI / 180;
-    const cosine = Math.cos(radians);
-    const sine = Math.sin(radians);
-    return [
-      { x: 0, y: 0 },
-      { x: element.width, y: 0 },
-      { x: element.width, y: element.height },
-      { x: 0, y: element.height },
-    ].map((point) => {
-      return {
-        x: element.x + point.x * cosine - point.y * sine,
-        y: element.y + point.x * sine + point.y * cosine,
-      };
-    });
-  });
-  const minimumX = Math.min(...points.map((point) => point.x));
-  const maximumX = Math.max(...points.map((point) => point.x));
-  const minimumY = Math.min(...points.map((point) => point.y));
-  const maximumY = Math.max(...points.map((point) => point.y));
-  return {
-    x: minimumX,
-    y: minimumY,
-    width: maximumX - minimumX,
-    height: maximumY - minimumY,
-  };
+type NudgeSession = {
+  startingElements: readonly EditorElement[];
+  previewElements: readonly EditorElement[];
+  heldCodes: Set<string>;
+};
+
+type NudgeCode = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
+
+function isNudgeCode(code: string): code is NudgeCode {
+  return code === "ArrowLeft"
+    || code === "ArrowRight"
+    || code === "ArrowUp"
+    || code === "ArrowDown";
+}
+
+function nudgeDelta(code: NudgeCode, shiftKey: boolean) {
+  const step = shiftKey ? 10 : 1;
+  switch (code) {
+    case "ArrowLeft":
+      return { x: -step, y: 0 };
+    case "ArrowRight":
+      return { x: step, y: 0 };
+    case "ArrowUp":
+      return { x: 0, y: -step };
+    case "ArrowDown":
+      return { x: 0, y: step };
+  }
 }
 
 function applyRailDefault<K extends RailPropertyKey>(

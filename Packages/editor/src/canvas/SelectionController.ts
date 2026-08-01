@@ -1,29 +1,18 @@
 import type { EditorElement, Point } from "../model/elements";
+import { rotatedElementBounds } from "../interaction/selectionGeometry";
 import type { SourceBounds } from "../viewport/ViewportController";
 
-export class SelectionController {
-  #selectedIds: string[] = [];
+export const replaceSelection = (id: string): readonly string[] => [id];
 
-  public get selectedIds(): readonly string[] {
-    return this.#selectedIds;
-  }
+export const toggleSelection = (
+  selectedIds: readonly string[],
+  id: string,
+): readonly string[] =>
+  selectedIds.includes(id)
+    ? selectedIds.filter((selectedId) => selectedId !== id)
+    : [...selectedIds, id];
 
-  public replace(id: string): void {
-    assertElementId(id);
-    this.#selectedIds = [id];
-  }
-
-  public toggle(id: string): void {
-    assertElementId(id);
-    this.#selectedIds = this.#selectedIds.includes(id)
-      ? this.#selectedIds.filter((candidate) => candidate !== id)
-      : [...this.#selectedIds, id];
-  }
-
-  public clear(): void {
-    this.#selectedIds = [];
-  }
-}
+export const clearSelection = (): readonly string[] => [];
 
 export function moveElementWithinBounds(
   element: EditorElement,
@@ -53,7 +42,7 @@ export function moveElementWithinBounds(
 }
 
 export function moveElementsWithinBounds(
-  elements: EditorElement[],
+  elements: readonly EditorElement[],
   delta: Point,
   bounds: SourceBounds,
 ): EditorElement[] {
@@ -64,13 +53,18 @@ export function moveElementsWithinBounds(
     throw new Error("Cannot move an empty element selection");
   }
 
-  const minimumDeltaX = Math.max(...elements.map((element) => -element.x));
+  const renderedBounds = elements.map(rotatedElementBounds);
+  const minimumDeltaX = Math.max(...renderedBounds.map((elementBounds) => -elementBounds.x));
   const maximumDeltaX = Math.min(
-    ...elements.map((element) => bounds.sourceWidth - element.x - element.width),
+    ...renderedBounds.map(
+      (elementBounds) => bounds.sourceWidth - elementBounds.x - elementBounds.width,
+    ),
   );
-  const minimumDeltaY = Math.max(...elements.map((element) => -element.y));
+  const minimumDeltaY = Math.max(...renderedBounds.map((elementBounds) => -elementBounds.y));
   const maximumDeltaY = Math.min(
-    ...elements.map((element) => bounds.sourceHeight - element.y - element.height),
+    ...renderedBounds.map(
+      (elementBounds) => bounds.sourceHeight - elementBounds.y - elementBounds.height,
+    ),
   );
   if (minimumDeltaX > maximumDeltaX || minimumDeltaY > maximumDeltaY) {
     throw new Error("Selected elements cannot fit inside the source bounds");
@@ -80,10 +74,9 @@ export function moveElementsWithinBounds(
     x: Math.min(Math.max(delta.x, minimumDeltaX), maximumDeltaX),
     y: Math.min(Math.max(delta.y, minimumDeltaY), maximumDeltaY),
   };
-  return elements.map((element) => moveElementWithinBounds(
+  return elements.map((element) => translateElement(
     element,
     { x: element.x + boundedDelta.x, y: element.y + boundedDelta.y },
-    bounds,
   ));
 }
 
@@ -169,12 +162,6 @@ function assertSourceBounds(bounds: SourceBounds): void {
 function assertFinite(value: number, name: string): void {
   if (!Number.isFinite(value)) {
     throw new Error(`${name} must be finite`);
-  }
-}
-
-function assertElementId(id: string): void {
-  if (id.length === 0) {
-    throw new Error("Cannot select an empty element id");
   }
 }
 
