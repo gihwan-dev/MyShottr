@@ -349,6 +349,42 @@ input:focus-visible {
   text-align: center;
 }
 
+.editor-feedback {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 11;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 552px));
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  text-align: center;
+  transform: translateX(-50%);
+}
+
+.editor-feedback:empty {
+  opacity: 0;
+}
+
+@media (max-width: 700px) {
+  .editor-feedback {
+    right: 184px;
+    left: 16px;
+    width: auto;
+    max-width: none;
+    transform: none;
+  }
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;

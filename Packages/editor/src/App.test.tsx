@@ -238,6 +238,7 @@ type SentBridgeMessage = {
 function createNativeBridgeHarness() {
   let receiveNative: ((message: NativeMessage) => void) | undefined;
   let onMessageSent: ((message: SentBridgeMessage) => void) | undefined;
+  let subscribeCalls = 0;
   const sent: SentBridgeMessage[] = [];
   const record = (message: SentBridgeMessage) => {
     sent.push(message);
@@ -249,6 +250,7 @@ function createNativeBridgeHarness() {
       record({ requestId, type, payload });
     },
     subscribe: (handler) => {
+      subscribeCalls += 1;
       receiveNative = handler;
       return () => { receiveNative = undefined; };
     },
@@ -256,6 +258,9 @@ function createNativeBridgeHarness() {
   return {
     bridge,
     sent,
+    get subscribeCalls() {
+      return subscribeCalls;
+    },
     receive(message: NativeMessage) {
       if (!receiveNative) throw new Error("Native bridge is not subscribed");
       receiveNative(message);
@@ -306,6 +311,22 @@ function nativeHistoryMessage(action: "undo" | "redo"): Extract<NativeMessage, {
     type: "performHistoryAction",
     payload: { action },
   };
+}
+
+function nativeOperationStatusMessage(
+  requestId: string,
+  payload: Extract<NativeMessage, { type: "operationStatus" }>["payload"],
+): Extract<NativeMessage, { type: "operationStatus" }> {
+  return {
+    protocolVersion: 1,
+    requestId,
+    type: "operationStatus",
+    payload,
+  };
+}
+
+function editorFeedbackStatus(): HTMLOutputElement | null {
+  return document.querySelector<HTMLOutputElement>("output.editor-feedback[role='status']");
 }
 
 function historyStatePayloads(harness: ReturnType<typeof createNativeBridgeHarness>) {
@@ -2205,6 +2226,57 @@ describe("EditorApp", () => {
       { canUndo: false, canRedo: false },
       { canUndo: true, canRedo: false },
     ]);
+  });
+
+  it("routes strict output feedback above document remounts through one bridge subscription", async () => {
+    const harness = await renderAcceptedNativeEditor();
+    const feedback = editorFeedbackStatus();
+    expect(feedback).not.toBeNull();
+    expect(feedback?.textContent).toBe("");
+    expect(harness.subscribeCalls).toBe(1);
+
+    act(() => {
+      harness.receive({
+        protocolVersion: 1,
+        requestId: "11111111-2222-4333-8444-555555555555",
+        type: "saveCompleted",
+        payload: { requestId: "11111111-2222-4333-8444-555555555555" },
+      });
+      harness.receive({
+        protocolVersion: 1,
+        requestId: "66666666-7777-4888-8999-AAAAAAAAAAAA",
+        type: "saveFailed",
+        payload: {
+          requestId: "66666666-7777-4888-8999-AAAAAAAAAAAA",
+          message: "Native owns this alert",
+        },
+      });
+    });
+    expect(feedback?.textContent).toBe("");
+
+    const saveRequestId = "BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF";
+    act(() => {
+      harness.receive(nativeOperationStatusMessage(saveRequestId, {
+        operation: "save",
+        phase: "started",
+      }));
+      harness.receive(nativeOperationStatusMessage(saveRequestId, {
+        operation: "save",
+        phase: "completed",
+      }));
+    });
+    expect(feedback?.textContent).toBe("Saved");
+
+    const replacement = fixtureDocument({ elements: [fixtureLine()] });
+    act(() => {
+      harness.receive(nativeLoadMessage(replacement, "line", secondaryRequestId));
+    });
+    await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("line-1:15,20"));
+
+    expect(editorFeedbackStatus()).toBe(feedback);
+    expect(feedback?.textContent).toBe("Saved");
+    expect(harness.subscribeCalls).toBe(1);
   });
 
   it("returns total correlated outcomes and keeps history inert during the accepted-load remount gap", async () => {

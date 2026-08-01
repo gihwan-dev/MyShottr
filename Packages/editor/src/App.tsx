@@ -23,6 +23,7 @@ import {
   type RailPropertyValueByKey,
 } from "./components/contextRailModel";
 import { FloatingToolPalette } from "./components/FloatingToolPalette";
+import { EditorFeedback, useEditorFeedback } from "./components/EditorFeedback";
 import { ShortcutHelpDialog } from "./components/ShortcutHelpDialog";
 import { TextEditorOverlay } from "./components/TextEditorOverlay";
 import {
@@ -711,6 +712,7 @@ function measureTextBounds(text: string, fontSize: TextElement["fontSize"]): Pic
 export function App() {
   const bridge = useNativeBridge();
   const editorRef = useRef<EditorAppHandle>(null);
+  const { state: feedbackState, receive: receiveOperationStatus } = useEditorFeedback();
   const [loadedDocument, setLoadedDocument] = useState<LoadedDocument>();
   const loadedDocumentRef = useRef<LoadedDocumentIdentity | undefined>(undefined);
   const acceptedLoadSequence = useRef(0);
@@ -764,6 +766,10 @@ export function App() {
     };
     void bridge.send("editorReady", {});
     const unsubscribe = bridge.subscribe((message) => {
+      if (message.type === "operationStatus") {
+        receiveOperationStatus(message);
+        return;
+      }
       if (message.type === "loadDocument") {
         void acceptLoad(message);
         return;
@@ -797,32 +803,38 @@ export function App() {
       unsubscribe();
       window.removeEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
     };
-  }, [bridge]);
+  }, [bridge, receiveOperationStatus]);
 
-  if (!loadedDocument) return <main aria-label="MyShottr editor">Waiting for document</main>;
-  return <EditorApp
-    ref={editorRef}
-    key={loadedDocument.loadInstanceId}
-    initialDocument={loadedDocument.initialDocument}
-    initialTool={loadedDocument.initialTool}
-    sourceImageURL={loadedDocument.sourceImageURL}
-    onChange={(document) => {
-      const loaded = loadedDocumentRef.current;
-      if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
-      if (editorRef.current?.getDocument() !== document) return;
-      void bridge.send("documentChanged", {});
-    }}
-    onHistoryStateChange={(state) => {
-      const loaded = loadedDocumentRef.current;
-      if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
-      void bridge.send("historyStateChanged", state);
-    }}
-    onPreferencesChange={(tool, defaults) => {
-      const loaded = loadedDocumentRef.current;
-      if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
-      void bridge.send("editorPreferencesChanged", { tool, defaults });
-    }}
-  />;
+  return (
+    <>
+      {loadedDocument
+        ? <EditorApp
+            ref={editorRef}
+            key={loadedDocument.loadInstanceId}
+            initialDocument={loadedDocument.initialDocument}
+            initialTool={loadedDocument.initialTool}
+            sourceImageURL={loadedDocument.sourceImageURL}
+            onChange={(document) => {
+              const loaded = loadedDocumentRef.current;
+              if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
+              if (editorRef.current?.getDocument() !== document) return;
+              void bridge.send("documentChanged", {});
+            }}
+            onHistoryStateChange={(state) => {
+              const loaded = loadedDocumentRef.current;
+              if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
+              void bridge.send("historyStateChanged", state);
+            }}
+            onPreferencesChange={(tool, defaults) => {
+              const loaded = loadedDocumentRef.current;
+              if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
+              void bridge.send("editorPreferencesChanged", { tool, defaults });
+            }}
+          />
+        : <main aria-label="MyShottr editor">Waiting for document</main>}
+      <EditorFeedback state={feedbackState} />
+    </>
+  );
 }
 
 type LoadedDocument = {
