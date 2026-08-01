@@ -633,6 +633,67 @@ describe("EditorCanvas gesture terminals", () => {
     expect(history.document.elements).toEqual(initial.elements);
   });
 
+  it("cancels an active annotation move on blur once and permits shortcuts and the next move", () => {
+    const initial = fixtureDocument();
+    const history = createHistoryStore(initial);
+    const onCancelTransaction = vi.fn(() => history.cancelTransaction());
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        selectedIds={["rect-1"]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={(command) => history.dispatch(command)}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={() => history.commitTransaction()}
+        onCancelTransaction={onCancelTransaction}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const annotation = screen.getByTestId("annotation-node");
+
+    fireEvent.dragStart(annotation);
+    fireEvent.drag(annotation);
+    expect(history.isTransactionActive).toBe(true);
+    expect(history.document.elements[0]).toMatchObject({ x: 40, y: 50 });
+
+    fireEvent(window, new Event("blur"));
+
+    expect(history.isTransactionActive).toBe(false);
+    expect(history.document.elements).toEqual(initial.elements);
+    expect(konvaControl.stopDrag).toHaveBeenCalledOnce();
+    expect(konvaControl.annotationValues).toMatchObject({
+      x: initial.elements[0].x,
+      y: initial.elements[0].y,
+      scaleX: 1,
+      scaleY: 1,
+      rotation: initial.elements[0].rotation,
+    });
+    expect(onCancelTransaction).toHaveBeenCalledOnce();
+    expect(keyboardCommandFor(new KeyboardEvent("keydown", { code: "KeyR", key: "r" }), {
+      interactionActive: history.isTransactionActive,
+      shortcutHelpOpen: false,
+      textEditing: false,
+    })).toEqual({ type: "selectTool", tool: "rectangle" });
+
+    fireEvent(window, new Event("blur"));
+    fireEvent(window, new Event("mouseup"));
+    fireEvent(window, new Event("pointercancel"));
+    expect(onCancelTransaction).toHaveBeenCalledOnce();
+
+    konvaControl.dragTarget = { x: 25, y: 35 };
+    fireEvent.dragStart(annotation);
+    fireEvent.drag(annotation);
+    fireEvent.dragEnd(annotation);
+    expect(history.isTransactionActive).toBe(false);
+    expect(history.document.elements[0]).toMatchObject({ x: 25, y: 35 });
+    expect(history.undo()).toBe(true);
+    expect(history.document.elements).toEqual(initial.elements);
+  });
+
   it("attaches the Transformer to every registered selected group", () => {
     const initial = fixtureDocument({ elements: [fixtureDocument().elements[0], fixtureText()] });
     const history = createHistoryStore(initial);
@@ -806,6 +867,61 @@ describe("EditorCanvas gesture terminals", () => {
     });
 
     expect(() => history.undo()).not.toThrow();
+    expect(history.document.elements).toEqual(initial.elements);
+  });
+
+  it("cancels an active transform on blur once and permits shortcuts and the next transform", () => {
+    const initial = fixtureDocument();
+    const history = createHistoryStore(initial);
+    const onCancelTransaction = vi.fn(() => history.cancelTransaction());
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        selectedIds={["rect-1"]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={(command) => history.dispatch(command)}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={() => history.commitTransaction()}
+        onCancelTransaction={onCancelTransaction}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const annotation = screen.getByTestId("annotation-node");
+
+    fireEvent.doubleClick(annotation);
+    expect(history.isTransactionActive).toBe(true);
+
+    fireEvent(window, new Event("blur"));
+
+    expect(history.isTransactionActive).toBe(false);
+    expect(konvaControl.stopTransform).toHaveBeenCalledOnce();
+    expect(konvaControl.annotationValues).toMatchObject({
+      x: initial.elements[0].x,
+      y: initial.elements[0].y,
+      scaleX: 1,
+      scaleY: 1,
+      rotation: initial.elements[0].rotation,
+    });
+    expect(onCancelTransaction).toHaveBeenCalledOnce();
+    expect(keyboardCommandFor(new KeyboardEvent("keydown", { code: "KeyR", key: "r" }), {
+      interactionActive: history.isTransactionActive,
+      shortcutHelpOpen: false,
+      textEditing: false,
+    })).toEqual({ type: "selectTool", tool: "rectangle" });
+
+    fireEvent(window, new Event("blur"));
+    fireEvent(window, new Event("mouseup"));
+    fireEvent(window, new Event("pointercancel"));
+    expect(onCancelTransaction).toHaveBeenCalledOnce();
+
+    fireEvent.doubleClick(annotation);
+    fireEvent.contextMenu(annotation);
+    expect(history.isTransactionActive).toBe(false);
+    expect(history.undo()).toBe(true);
     expect(history.document.elements).toEqual(initial.elements);
   });
 });
