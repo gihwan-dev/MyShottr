@@ -27,7 +27,7 @@ import {
   textEditCommand,
   type TextEditResult,
   type TextEditSession,
-} from "./components/textEditSession";
+} from "./interaction/textEditSession";
 import { ZoomControls } from "./components/ZoomControls";
 import {
   EditorWorkspace,

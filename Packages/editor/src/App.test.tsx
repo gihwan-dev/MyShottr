@@ -524,8 +524,10 @@ describe("EditorApp", () => {
       .toBe("true");
     expect(rectangle.getAttribute("aria-pressed"))
       .toBe("false");
+    expect(rectangle.getAttribute("aria-disabled")).toBe("true");
+    expect(rectangle.tabIndex).toBe(-1);
     expect(lockedMouseDown.defaultPrevented).toBe(true);
-    expect(editor).toHaveValue("Draft stays open");
+    expect((editor as HTMLTextAreaElement).value).toBe("Draft stays open");
     expect(onPreferencesChange).not.toHaveBeenCalled();
 
     fireEvent.keyDown(editor, { code: "Escape", key: "Escape" });
@@ -537,6 +539,8 @@ describe("EditorApp", () => {
       .toBe("false");
     expect(rectangle.getAttribute("aria-pressed"))
       .toBe("true");
+    expect(rectangle.getAttribute("aria-disabled")).toBe("false");
+    expect(rectangle.tabIndex).toBe(0);
     expect(unlockedMouseDown.defaultPrevented).toBe(false);
     expect(onPreferencesChange).toHaveBeenCalledOnce();
     expect(onPreferencesChange.mock.calls[0]?.[0]).toBe("rectangle");
@@ -563,7 +567,7 @@ describe("EditorApp", () => {
     expect(screen.getByRole("button", { name: "Selection, shortcut V" }).getAttribute("aria-pressed"))
       .toBe("true");
     expect(lockedMouseDown.defaultPrevented).toBe(true);
-    expect(editor).toHaveValue("Existing stays open");
+    expect((editor as HTMLTextAreaElement).value).toBe("Existing stays open");
     expect(onPreferencesChange).not.toHaveBeenCalled();
 
     fireEvent.keyDown(editor, { code: "Escape", key: "Escape" });

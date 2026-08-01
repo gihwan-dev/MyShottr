@@ -3,8 +3,8 @@ import { TEXT_LINE_HEIGHT } from "../canvas/renderingConstants";
 import type {
   TextEditResult,
   TextEditSession,
-} from "./textEditSession";
-import { textEditPresentation } from "./textEditSession";
+} from "../interaction/textEditSession";
+import { textEditPresentation } from "../interaction/textEditSession";
 
 export function TextEditorOverlay({
   session,
