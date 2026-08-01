@@ -1,4 +1,4 @@
-import { cleanup, createEvent, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, createEvent, fireEvent, render, screen, within } from "@testing-library/react";
 import { createRef, forwardRef, useImperativeHandle, useRef, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -237,11 +237,16 @@ type SentBridgeMessage = {
 
 function createNativeBridgeHarness() {
   let receiveNative: ((message: NativeMessage) => void) | undefined;
+  let onMessageSent: ((message: SentBridgeMessage) => void) | undefined;
   const sent: SentBridgeMessage[] = [];
+  const record = (message: SentBridgeMessage) => {
+    sent.push(message);
+    onMessageSent?.(message);
+  };
   const bridge: NativeBridge = {
-    send: async (type, payload) => { sent.push({ type, payload }); },
+    send: async (type, payload) => { record({ type, payload }); },
     sendCorrelated: async (requestId, type, payload) => {
-      sent.push({ requestId, type, payload });
+      record({ requestId, type, payload });
     },
     subscribe: (handler) => {
       receiveNative = handler;
@@ -257,6 +262,9 @@ function createNativeBridgeHarness() {
     },
     messages(type: string) {
       return sent.filter((message) => message.type === type);
+    },
+    observeSent(observer: (message: SentBridgeMessage) => void) {
+      onMessageSent = observer;
     },
   };
 }
@@ -324,21 +332,28 @@ const historyLockCases = [
     name: "pointer",
     document: () => fixtureDocument(),
     select: () => fireEvent.click(screen.getByRole("button", { name: "Select rect-1" })),
-    enter: () => fireEvent.click(screen.getByRole("button", { name: "Begin canvas interaction" })),
+    enter: () => screen.getByRole("button", { name: "Begin canvas interaction" })
+      .dispatchEvent(new MouseEvent("click", { bubbles: true })),
     leave: () => fireEvent.click(screen.getByRole("button", { name: "End canvas interaction" })),
   },
   {
     name: "nudge",
     document: () => fixtureDocument(),
     select: () => fireEvent.click(screen.getByRole("button", { name: "Select rect-1" })),
-    enter: () => fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" }),
+    enter: () => window.dispatchEvent(new KeyboardEvent("keydown", {
+      code: "ArrowRight",
+      key: "ArrowRight",
+      bubbles: true,
+      cancelable: true,
+    })),
     leave: () => window.dispatchEvent(new Event("blur")),
   },
   {
     name: "text",
     document: () => fixtureDocument({ elements: [fixtureText()] }),
     select: () => fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" })),
-    enter: () => fireEvent.click(screen.getByRole("button", { name: "Edit text-1" })),
+    enter: () => screen.getByRole("button", { name: "Edit text-1" })
+      .dispatchEvent(new MouseEvent("click", { bubbles: true })),
     leave: () => fireEvent.keyDown(screen.getByRole("textbox", { name: "Edit annotation text" }), {
       code: "Escape",
       key: "Escape",
@@ -348,9 +363,11 @@ const historyLockCases = [
     name: "slider",
     document: () => fixtureDocument(),
     select: () => fireEvent.click(screen.getByRole("button", { name: "Select rect-1" })),
-    enter: () => fireEvent.input(screen.getByRole("slider", { name: "Opacity" }), {
-      target: { value: "50" },
-    }),
+    enter: () => {
+      const slider = screen.getByRole("slider", { name: "Opacity" }) as HTMLInputElement;
+      slider.value = "50";
+      return slider.dispatchEvent(new Event("input", { bubbles: true }));
+    },
     leave: () => fireEvent.keyDown(screen.getByRole("slider", { name: "Opacity" }), {
       code: "Escape",
       key: "Escape",
@@ -360,14 +377,21 @@ const historyLockCases = [
     name: "shortcut help",
     document: () => fixtureDocument(),
     select: () => fireEvent.click(screen.getByRole("button", { name: "Select rect-1" })),
-    enter: () => fireEvent.keyDown(window, { code: "Slash", key: "?", shiftKey: true }),
+    enter: () => window.dispatchEvent(new KeyboardEvent("keydown", {
+      code: "Slash",
+      key: "?",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })),
     leave: () => fireEvent.click(screen.getByRole("button", { name: "Close keyboard shortcuts" })),
   },
   {
     name: "transaction",
     document: () => fixtureDocument(),
     select: () => fireEvent.click(screen.getByRole("button", { name: "Select rect-1" })),
-    enter: () => fireEvent.click(screen.getByRole("button", { name: "Begin defaults transaction" })),
+    enter: () => screen.getByRole("button", { name: "Begin defaults transaction" })
+      .dispatchEvent(new MouseEvent("click", { bubbles: true })),
     leave: () => fireEvent.keyDown(window, { code: "Escape", key: "Escape" }),
   },
 ] as const;
@@ -1963,13 +1987,6 @@ describe("EditorApp", () => {
     expect(duplicated?.seed).toBe(102);
   });
 
-  it("publishes exactly one initial unavailable history state after an accepted load", async () => {
-    const harness = await renderAcceptedNativeEditor();
-    expect(historyStatePayloads(harness)).toEqual([
-      { canUndo: false, canRedo: false },
-    ]);
-  });
-
   it.each(["keyboard", "native"] as const)(
     "performs Undo through one shared action for %s",
     async (source) => {
@@ -2011,7 +2028,10 @@ describe("EditorApp", () => {
       }));
       harness.sent.length = 0;
 
-      lockCase.enter();
+      act(() => {
+        lockCase.enter();
+        harness.receive(nativeHistoryMessage("undo"));
+      });
 
       await vi.waitFor(() => expect(historyStatePayloads(harness)).toEqual([
         { canUndo: false, canRedo: false },
@@ -2019,7 +2039,6 @@ describe("EditorApp", () => {
       const lockedPositions = screen.getByTestId("canvas-positions").textContent;
       const lockedSelection = screen.getByTestId("canvas-selection").textContent;
 
-      harness.receive(nativeHistoryMessage("undo"));
       fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
 
       expect(screen.getByTestId("canvas-positions").textContent).toBe(lockedPositions);
@@ -2188,19 +2207,58 @@ describe("EditorApp", () => {
     ]);
   });
 
-  it("keeps native history actions safe before load and after editor replacement", async () => {
+  it("returns total correlated outcomes and keeps history inert during the accepted-load remount gap", async () => {
     stubImmediatelyLoadedSourceImage();
     const harness = createNativeBridgeHarness();
-    const view = render(<NativeBridgeProvider bridge={harness.bridge}><App /></NativeBridgeProvider>);
-
-    expect(() => harness.receive(nativeHistoryMessage("undo"))).not.toThrow();
-    expect(harness.messages("documentChanged")).toEqual([]);
+    render(<NativeBridgeProvider bridge={harness.bridge}><App /></NativeBridgeProvider>);
     harness.receive(nativeLoadMessage(fixtureDocument()));
-    await screen.findByRole("button", { name: "Create rectangle from canvas" });
-    view.unmount();
+    await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("rect-1:0,0"));
+    fireEvent.click(screen.getByRole("button", { name: "Create rectangle from canvas" }));
+    harness.sent.length = 0;
+    const gapSnapshotRequestId = "11111111-2222-3333-4444-555555555555";
+    const gapCompositeRequestId = "66666666-7777-8888-9999-AAAAAAAAAAAA";
+    let exercisedGap = false;
+    harness.observeSent((message) => {
+      if (
+        exercisedGap
+        || message.type !== "annotationSnapshot"
+        || message.requestId !== secondaryRequestId
+      ) return;
+      exercisedGap = true;
+      harness.receive(nativeHistoryMessage("undo"));
+      window.dispatchEvent(new CustomEvent("myshottr:request-annotation-snapshot", {
+        detail: { requestId: gapSnapshotRequestId },
+      }));
+      harness.receive({
+        protocolVersion: 1,
+        requestId: gapCompositeRequestId,
+        type: "requestComposite",
+        payload: { requestId: gapCompositeRequestId },
+      });
+    });
 
-    expect(() => harness.receive(nativeHistoryMessage("redo"))).toThrow("Native bridge is not subscribed");
+    const replacement = fixtureDocument({ elements: [{ ...fixtureRect(), x: 200 }] });
+    harness.receive(nativeLoadMessage(replacement, "selection", secondaryRequestId));
+    await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("rect-1:200,0"));
+
+    expect(exercisedGap).toBe(true);
     expect(harness.messages("documentChanged")).toEqual([]);
+    expect(harness.messages("bridgeError")).toEqual(expect.arrayContaining([
+      {
+        requestId: gapSnapshotRequestId,
+        type: "bridgeError",
+        payload: { code: "INVALID_DOCUMENT", message: "No editor document is loaded" },
+      },
+      {
+        requestId: gapCompositeRequestId,
+        type: "bridgeError",
+        payload: { code: "RENDER_FAILED", message: "No editor document is loaded" },
+      },
+    ]));
+    expect(exportMocks.renderDocumentToBlob).not.toHaveBeenCalled();
+    expect(historyStatePayloads(harness).at(-1)).toEqual({ canUndo: false, canRedo: false });
   });
 
   it("acknowledges an accepted native document with the correlated snapshot", async () => {
@@ -2242,6 +2300,11 @@ describe("EditorApp", () => {
       type: "annotationSnapshot",
       payload: { document: fixtureDocument() },
     });
+    await vi.waitFor(() => expect(sent.filter(({ type }) => type === "historyStateChanged"))
+      .toEqual([{
+        type: "historyStateChanged",
+        payload: { canUndo: false, canRedo: false },
+      }]));
   });
 
   it("replaces editor state for every accepted same-URL load instance", async () => {

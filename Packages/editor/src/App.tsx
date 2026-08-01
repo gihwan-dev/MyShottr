@@ -122,40 +122,69 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
     onHistoryStateChange(next);
   }, [history, onHistoryStateChange]);
 
+  const transitionHistoryLock = useCallback((key: Exclude<keyof HistoryLocks, "transaction">, active: boolean) => {
+    historyLocksRef.current = {
+      ...historyLocksRef.current,
+      [key]: active,
+      transaction: history.isTransactionActive,
+    };
+    publishHistoryState();
+  }, [history, publishHistoryState]);
+  const updateNudgeSession = useCallback((next: NudgeSession | undefined) => {
+    transitionHistoryLock("nudge", next !== undefined);
+    setNudgeSession(next);
+  }, [transitionHistoryLock]);
+  const updateTextEditSession = useCallback((next: TextEditSession | undefined) => {
+    transitionHistoryLock("text", next !== undefined);
+    setTextEditSession(next);
+  }, [transitionHistoryLock]);
+  const updateSliderLock = useCallback((active: boolean) => {
+    transitionHistoryLock("slider", active);
+    setLocks((current) => ({ ...current, slider: active }));
+  }, [transitionHistoryLock]);
+  const updateShortcutHelp = useCallback((active: boolean) => {
+    transitionHistoryLock("shortcutHelp", active);
+    setShortcutHelpOpen(active);
+  }, [transitionHistoryLock]);
+  const updateCanvasInteraction = useCallback((active: boolean) => {
+    transitionHistoryLock("canvasInteraction", active);
+    setCanvasInteractionActive(active);
+  }, [transitionHistoryLock]);
+
   const publishSceneChange = useCallback(() => {
     onChange(history.getSnapshot());
   }, [history, onChange]);
 
   const dispatch = useCallback((command: EditorCommand) => {
-    setNudgeSession(undefined);
+    updateNudgeSession(undefined);
     history.dispatch(command);
     publishSceneChange();
     publishHistoryState();
-  }, [history, publishHistoryState, publishSceneChange]);
+  }, [history, publishHistoryState, publishSceneChange, updateNudgeSession]);
   const updateDefaults = useCallback((nextDefaults: EditorDefaults) => {
-    setNudgeSession(undefined);
+    updateNudgeSession(undefined);
     history.setDefaults(nextDefaults);
     onPreferencesChange(tool, history.getSnapshot().defaults);
     publishHistoryState();
-  }, [history, onPreferencesChange, publishHistoryState, tool]);
+  }, [history, onPreferencesChange, publishHistoryState, tool, updateNudgeSession]);
   const select = useCallback((id: string | undefined, toggle = false) => {
-    setNudgeSession(undefined);
+    updateNudgeSession(undefined);
     setSelectionOpacityPreview(undefined);
-    setLocks((current) => ({ ...current, slider: false }));
+    updateSliderLock(false);
     setSelectedIds((current) => {
       if (!id) return [...clearSelection()];
       return [...(toggle
         ? toggleSelection(current, id)
         : replaceSelection(id))];
     });
-  }, []);
+  }, [updateNudgeSession, updateSliderLock]);
   const selectTool = useCallback((nextTool: EditorTool) => {
     if (textLocked) return;
-    setNudgeSession(undefined);
+    updateNudgeSession(undefined);
     setTool(nextTool);
     if (nextTool !== "selection") select(undefined);
     onPreferencesChange(nextTool, history.getSnapshot().defaults);
-  }, [history, onPreferencesChange, select, textLocked]);
+  }, [history, onPreferencesChange, select, textLocked, updateNudgeSession]);
   const duplicateSelection = useCallback(() => {
     if (selectedIds.length === 0) return;
     const current = history.document;
@@ -174,9 +203,9 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
     const elements = createDuplicateElements(history.document, copiedElements.current);
     dispatch({ type: "createMany", elements });
     setSelectionOpacityPreview(undefined);
-    setLocks((current) => ({ ...current, slider: false }));
+    updateSliderLock(false);
     setSelectedIds(elements.map((element) => element.id));
-  }, [dispatch, history]);
+  }, [dispatch, history, updateSliderLock]);
   const reorderSelection = useCallback((direction: "forward" | "backward") => {
     if (selectedIds.length === 0) return;
     dispatch({ type: "reorder", ids: selectedIds, direction });
@@ -192,9 +221,9 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
       element: structuredClone(element),
       initialText: element.text,
     };
-    setNudgeSession(undefined);
-    setTextEditSession(session);
-  }, [history, selectedIds]);
+    updateNudgeSession(undefined);
+    updateTextEditSession(session);
+  }, [history, selectedIds, updateNudgeSession, updateTextEditSession]);
   const beginNewText = useCallback((point: { x: number; y: number }, defaults: EditorDefaults) => {
     const session: TextEditSession = {
       kind: "new",
@@ -202,11 +231,11 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
       defaults: structuredClone(defaults),
       initialText: "",
     };
-    setNudgeSession(undefined);
-    setTextEditSession(session);
-  }, []);
+    updateNudgeSession(undefined);
+    updateTextEditSession(session);
+  }, [updateNudgeSession, updateTextEditSession]);
   const finishTextEdit = useCallback((session: TextEditSession, result: TextEditResult) => {
-    setTextEditSession(undefined);
+    updateTextEditSession(undefined);
     const command = textEditCommand(
       history.document,
       session,
@@ -221,7 +250,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
         (id) => !command.ids.includes(id),
       ));
     }
-  }, [dispatch, history]);
+  }, [dispatch, history, updateTextEditSession]);
   const selectedElements = selectedIds.map((id) => findElement(document, id));
   const scenePreviewElements = nudgeSession
     ? nudgeSession.previewElements
@@ -312,7 +341,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
           ? new Set(nudgeSession.heldCodes)
           : new Set<string>();
         heldCodes.add(event.code);
-        setNudgeSession({ startingElements, previewElements, heldCodes });
+        updateNudgeSession({ startingElements, previewElements, heldCodes });
         return;
       }
       if (
@@ -368,14 +397,14 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
         if (canvasRef.current?.cancelInteraction()) {
           return;
         } else if (nudgeSession) {
-          setNudgeSession(undefined);
+          updateNudgeSession(undefined);
         } else if (shortcutHelpOpen) {
-          setShortcutHelpOpen(false);
+          updateShortcutHelp(false);
         } else if (textEditSession) {
           finishTextEdit(textEditSession, { type: "cancel" });
         } else if (locks.slider) {
           setSelectionOpacityPreview(undefined);
-          setLocks((current) => ({ ...current, slider: false }));
+          updateSliderLock(false);
         } else if (history.isTransactionActive) {
           if (history.cancelTransaction()) publishSceneChange();
           publishHistoryState();
@@ -387,7 +416,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
         return;
       }
       if (command.type === "openShortcutHelp") {
-        setShortcutHelpOpen(true);
+        updateShortcutHelp(true);
         return;
       }
       if (command.type === "zoom100") {
@@ -435,7 +464,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
       const heldCodes = new Set(nudgeSession.heldCodes);
       heldCodes.delete(event.code);
       if (heldCodes.size > 0) {
-        setNudgeSession({ ...nudgeSession, heldCodes });
+        updateNudgeSession({ ...nudgeSession, heldCodes });
         return;
       }
       const finalElements = nudgeSession.previewElements;
@@ -443,7 +472,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
         const starting = nudgeSession.startingElements[index];
         return !starting || element.x !== starting.x || element.y !== starting.y;
       });
-      setNudgeSession(undefined);
+      updateNudgeSession(undefined);
       if (changed) {
         dispatch({ type: "updateMany", elements: [...finalElements] });
       }
@@ -454,13 +483,13 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [beginTextEdit, canvasInteractionActive, copySelection, dispatch, duplicateSelection, finishTextEdit, history, locks.slider, nudgeSession, pasteSelection, performHistoryAction, publishHistoryState, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, textEditSession, textLocked, tool]);
+  }, [beginTextEdit, canvasInteractionActive, copySelection, dispatch, duplicateSelection, finishTextEdit, history, locks.slider, nudgeSession, pasteSelection, performHistoryAction, publishHistoryState, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, textEditSession, textLocked, tool, updateNudgeSession, updateShortcutHelp, updateSliderLock]);
 
   useEffect(() => {
-    const cancelNudge = () => setNudgeSession(undefined);
+    const cancelNudge = () => updateNudgeSession(undefined);
     window.addEventListener("blur", cancelNudge);
     return () => window.removeEventListener("blur", cancelNudge);
-  }, []);
+  }, [updateNudgeSession]);
 
   const handleContextRailIntent = useCallback((intent: ContextRailIntent) => {
     if (nudgeSession || textLocked) return;
@@ -480,20 +509,20 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
         const selected = selectedIds.map((id) => findElement(history.document, id));
         applyRailProperty(selected, "opacity", intent.value);
         setSelectionOpacityPreview({ value: intent.value });
-        setLocks((current) => ({ ...current, slider: true }));
+        updateSliderLock(true);
         return;
       }
       case "commitSelectionOpacity": {
         const selected = selectedIds.map((id) => findElement(history.document, id));
         const elements = applyRailProperty(selected, "opacity", intent.value);
         setSelectionOpacityPreview(undefined);
-        setLocks((current) => ({ ...current, slider: false }));
+        updateSliderLock(false);
         dispatch({ type: "updateMany", elements });
         return;
       }
       case "cancelSelectionOpacity":
         setSelectionOpacityPreview(undefined);
-        setLocks((current) => ({ ...current, slider: false }));
+        updateSliderLock(false);
         return;
       case "bringForward":
         reorderSelection("forward");
@@ -510,7 +539,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
         select(undefined);
         return;
     }
-  }, [dispatch, document.defaults, duplicateSelection, history, nudgeSession, reorderSelection, select, selectedIds, textLocked, tool, updateDefaults]);
+  }, [dispatch, document.defaults, duplicateSelection, history, nudgeSession, reorderSelection, select, selectedIds, textLocked, tool, updateDefaults, updateSliderLock]);
 
   return (
     <main
@@ -558,7 +587,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
               }}
               onViewportWheel={onWheel}
               onViewportPanBy={panBy}
-              onInteractionActiveChange={setCanvasInteractionActive}
+              onInteractionActiveChange={updateCanvasInteraction}
               toSourcePoint={toSourcePoint}
               textEditorOverlay={textEditSession && <TextEditorOverlay
                 key={textEditSession.kind === "new"
@@ -584,7 +613,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
       />
       <ContextRail model={contextRailModel} onIntent={handleContextRailIntent} />
       {shortcutHelpOpen && (
-        <ShortcutHelpDialog onClose={() => setShortcutHelpOpen(false)} />
+        <ShortcutHelpDialog onClose={() => updateShortcutHelp(false)} />
       )}
     </main>
   );
@@ -743,7 +772,14 @@ export function App() {
         editorRef.current?.performHistoryAction(message.payload.action);
         return;
       }
-      if (message.type === "requestComposite" && loadedDocumentRef.current && editorRef.current) {
+      if (message.type === "requestComposite") {
+        if (!loadedDocumentRef.current || !editorRef.current) {
+          void bridge.sendCorrelated(message.requestId, "bridgeError", {
+            code: "RENDER_FAILED",
+            message: "No editor document is loaded",
+          });
+          return;
+        }
         const loaded = loadedDocumentRef.current;
         const currentDocument = editorRef.current.getDocument();
         void renderDocumentToBlob(currentDocument, loaded.sourceImageURL)
@@ -752,6 +788,7 @@ export function App() {
             code: "RENDER_FAILED",
             message: error instanceof Error ? error.message : "Unable to render composite PNG",
           }));
+        return;
       }
     });
     window.addEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
