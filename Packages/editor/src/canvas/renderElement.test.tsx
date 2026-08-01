@@ -35,8 +35,11 @@ describe("renderElement", () => {
     expect(text.getAttribute("data-line-height")).toBe("1.2");
   });
 
-  it("forwards the exact native pointer owner through drag and transform terminals", () => {
-    const handlers = interactionHandlers();
+  it("snapshots the exact native pointer owner before MouseEvent drag and transform lifecycles", () => {
+    const handlers = {
+      ...interactionHandlers(),
+      onPointerDown: vi.fn(),
+    };
     const container = document.createElement("div");
     const node = {
       getStage: () => ({ container: () => container }),
@@ -44,23 +47,27 @@ describe("renderElement", () => {
     const rendered = renderElement(fixtureRect(), handlers);
     if (!isValidElement(rendered)) throw new Error("Expected a rendered element");
     const props = rendered.props as {
+      onPointerDown: (event: unknown) => void;
       onDragStart: (event: unknown) => void;
       onDragEnd: (event: unknown) => void;
       onTransformStart: (event: unknown) => void;
       onTransformEnd: (event: unknown) => void;
     };
-    const event = { currentTarget: node, evt: { pointerId: 7 } };
+    const pointerEvent = { currentTarget: node, evt: { pointerId: 7 } };
+    const lifecycleEvent = { currentTarget: node, evt: new MouseEvent("drag") };
 
-    props.onDragStart(event);
-    props.onDragEnd(event);
-    props.onTransformStart(event);
-    props.onTransformEnd(event);
+    props.onPointerDown(pointerEvent);
+    props.onDragStart(lifecycleEvent);
+    props.onDragEnd(lifecycleEvent);
+    props.onTransformStart(lifecycleEvent);
+    props.onTransformEnd(lifecycleEvent);
 
     const owner = { pointerId: 7, container };
-    expect(handlers.onDragStart).toHaveBeenCalledWith(node, owner);
-    expect(handlers.onDragEnd).toHaveBeenCalledWith(owner);
-    expect(handlers.onTransformStart).toHaveBeenCalledWith("rect-1", node, owner);
-    expect(handlers.onTransformEnd).toHaveBeenCalledWith("rect-1", node, owner);
+    expect(handlers.onPointerDown).toHaveBeenCalledWith("rect-1", node, owner);
+    expect(handlers.onDragStart).toHaveBeenCalledWith("rect-1", node);
+    expect(handlers.onDragEnd).toHaveBeenCalledWith("rect-1", node);
+    expect(handlers.onTransformStart).toHaveBeenCalledWith("rect-1", node);
+    expect(handlers.onTransformEnd).toHaveBeenCalledWith("rect-1", node);
   });
 });
 
@@ -71,6 +78,7 @@ function interactionHandlers(): ElementInteractionHandlers {
     textEditingEnabled: false,
     onSelect: vi.fn(),
     onEditText: vi.fn(),
+    onPointerDown: vi.fn(),
     onDragStart: vi.fn(),
     onDragMove: vi.fn(),
     onDragEnd: vi.fn(),

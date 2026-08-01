@@ -15,6 +15,7 @@ import {
 } from "./SelectionController";
 import { createElementFromDocument } from "./tools/createElement";
 import {
+  pointerOwnerFor,
   renderElement,
   type ElementInteractionHandlers,
   type ElementPointerOwner,
@@ -84,6 +85,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   const frame = useRef<number | null>(null);
   const disposed = useRef(false);
   const selectionToggle = useRef(false);
+  const pendingAnnotationPointer = useRef<AnnotationPointerSnapshot | undefined>(undefined);
   const activeAnnotationInteraction = useRef<ActiveAnnotationInteraction | undefined>(undefined);
   const [isTransforming, setIsTransforming] = useState(false);
   const [isSpacePanning, setIsSpacePanning] = useState(false);
@@ -108,6 +110,29 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   const interactionPoint = (stage: Konva.Stage): Point => {
     const point = workspacePoint(stage);
     return spacePanActive.current ? point : toSourcePoint(point);
+  };
+  const consumeMovePointer = (
+    elementId: string,
+    node: Konva.Group,
+  ): MovePointerSnapshot => {
+    const snapshot = pendingAnnotationPointer.current;
+    pendingAnnotationPointer.current = undefined;
+    if (
+      snapshot?.kind !== "move"
+      || snapshot.elementId !== elementId
+      || snapshot.node !== node
+    ) {
+      throw new Error(`Annotation move requires pointerdown on ${elementId}`);
+    }
+    return snapshot;
+  };
+  const consumeTransformPointer = (node: Konva.Group): TransformPointerSnapshot => {
+    const snapshot = pendingAnnotationPointer.current;
+    pendingAnnotationPointer.current = undefined;
+    if (snapshot?.kind !== "transform" || !snapshot.nodes.has(node)) {
+      throw new Error("Annotation transform requires pointerdown on its Transformer");
+    }
+    return snapshot;
   };
   const applyPreview = (preview: InteractionPreview) => {
     if (preview.type === "creation") {
@@ -183,7 +208,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     if (!activeInteraction) return;
     activeAnnotationInteraction.current = undefined;
     try {
-      cancelAnnotationInteraction(activeInteraction, transformer.current);
+      cancelAnnotationInteraction(activeInteraction, activeInteraction.cancelTransformer);
     } finally {
       try {
         releaseAnnotationPointerCapture(activeInteraction);
@@ -191,7 +216,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
         try {
           onCancelTransaction();
         } finally {
-          setIsTransforming(false);
+          if (!disposed.current) setIsTransforming(false);
         }
       }
     }
@@ -200,6 +225,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     const pointerWasActive = interactionController.active;
     const wasActive = pointerWasActive
       || activeAnnotationInteraction.current !== undefined;
+    pendingAnnotationPointer.current = undefined;
     if (!wasActive) return false;
     try {
       cancelAnnotationTransaction();
@@ -231,11 +257,8 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       interactionController.cancel();
       clearScheduledMove();
       releasePointerCapture();
-      const annotationInteraction = activeAnnotationInteraction.current;
-      activeAnnotationInteraction.current = undefined;
-      if (annotationInteraction) {
-        releaseAnnotationPointerCapture(annotationInteraction);
-      }
+      pendingAnnotationPointer.current = undefined;
+      cancelAnnotationTransaction();
     };
   }, []);
   const orderedElements = [...document.elements].sort(byZIndex);
@@ -329,6 +352,13 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
           }
         }}
         onPointerUp={(event) => {
+          const pendingPointer = pendingAnnotationPointer.current;
+          if (
+            pendingPointer
+            && event.evt.pointerId === pendingPointer.owner.pointerId
+          ) {
+            pendingAnnotationPointer.current = undefined;
+          }
           if (
             !interactionController.active
             || event.evt.pointerId !== capturedPointerId.current
@@ -355,6 +385,12 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
             annotationInteraction
             && event.evt.pointerId !== annotationInteraction.owner.pointerId
           ) return;
+          const pendingPointer = pendingAnnotationPointer.current;
+          if (
+            pendingPointer
+            && event.evt.pointerId !== pendingPointer.owner.pointerId
+          ) return;
+          pendingAnnotationPointer.current = undefined;
           cancelPointerInteraction();
         }}
       >
@@ -377,22 +413,37 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                 selectionToggle.current = false;
               },
               onEditText: (id) => onEditText(id),
-              onDragStart: (node, owner) => {
+              onPointerDown: (id, node, owner) => {
+                if (
+                  activeAnnotationInteraction.current
+                  || pendingAnnotationPointer.current
+                ) return;
+                pendingAnnotationPointer.current = {
+                  kind: "move",
+                  elementId: id,
+                  node,
+                  owner,
+                  cancelTransformer: transformer.current,
+                };
+              },
+              onDragStart: (id, node) => {
+                const pointer = consumeMovePointer(id, node);
                 const elementToMove = selectedElements.find(
-                  (candidate) => candidate.id === element.id,
+                  (candidate) => candidate.id === id,
                 );
                 if (!elementToMove) {
-                  throw new Error(`Cannot move missing element: ${element.id}`);
+                  throw new Error(`Cannot move missing element: ${id}`);
                 }
                 onBeginTransaction("move");
-                owner.container.setPointerCapture(owner.pointerId);
+                pointer.owner.container.setPointerCapture(pointer.owner.pointerId);
                 activeAnnotationInteraction.current = {
                   kind: "move",
                   node,
                   element: elementToMove,
                   elements: selectedElements,
                   nodes: selectedNodeMap(selectedElements, nodes.current),
-                  owner,
+                  owner: pointer.owner,
+                  cancelTransformer: pointer.cancelTransformer,
                 };
               },
               onDragMove: (id, x, y) => {
@@ -419,11 +470,12 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                   throw error;
                 }
               },
-              onDragEnd: (owner) => {
+              onDragEnd: (id, node) => {
                 const activeInteraction = activeAnnotationInteraction.current;
                 if (
                   activeInteraction?.kind !== "move"
-                  || !samePointerOwner(activeInteraction.owner, owner)
+                  || activeInteraction.element.id !== id
+                  || activeInteraction.node !== node
                 ) return;
                 try {
                   onCommitTransaction();
@@ -434,31 +486,33 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                   throw error;
                 }
               },
-              onTransformStart: (id, node, owner) => {
+              onTransformStart: (id, node) => {
                 const activeInteraction = activeAnnotationInteraction.current;
                 if (activeInteraction?.kind === "transform") return;
                 if (activeInteraction) {
                   throw new Error("Cannot transform during an active move");
                 }
+                const pointer = consumeTransformPointer(node);
                 const elementToTransform = selectedElements.find((candidate) => candidate.id === id);
                 if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
                 onBeginTransaction("transform");
-                owner.container.setPointerCapture(owner.pointerId);
+                pointer.owner.container.setPointerCapture(pointer.owner.pointerId);
                 activeAnnotationInteraction.current = {
                   kind: "transform",
                   node,
                   element: elementToTransform,
                   elements: selectedElements,
                   nodes: selectedNodeMap(selectedElements, nodes.current),
-                  owner,
+                  owner: pointer.owner,
+                  cancelTransformer: pointer.cancelTransformer,
                 };
                 setIsTransforming(true);
               },
-              onTransformEnd: (id, node, owner) => {
+              onTransformEnd: (id, node) => {
                 const currentInteraction = activeAnnotationInteraction.current;
                 if (
                   currentInteraction?.kind !== "transform"
-                  || !samePointerOwner(currentInteraction.owner, owner)
+                  || currentInteraction.nodes.get(id) !== node
                 ) return;
                 try {
                   const active = currentInteraction;
@@ -526,6 +580,23 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
               ref={transformer}
               rotateEnabled={!selectedElements.some((element) => element.type === "blur")}
               flipEnabled={false}
+              onPointerDown={(event) => {
+                if (
+                  activeAnnotationInteraction.current
+                  || pendingAnnotationPointer.current
+                ) return;
+                const transformerNode = event.currentTarget as Konva.Transformer;
+                const transformNodes = transformerNode.nodes() as Konva.Group[];
+                if (transformNodes.length === 0) {
+                  throw new Error("Annotation transform requires a selected target");
+                }
+                pendingAnnotationPointer.current = {
+                  kind: "transform",
+                  nodes: new Set(transformNodes),
+                  owner: pointerOwnerFor(transformerNode, event.evt),
+                  cancelTransformer: transformerNode,
+                };
+              }}
             />
           </Group>
         </Layer>
@@ -541,6 +612,7 @@ const previewInteractionHandlers = {
   textEditingEnabled: false,
   onSelect: () => {},
   onEditText: () => {},
+  onPointerDown: () => {},
   onDragStart: () => {},
   onDragMove: () => {},
   onDragEnd: () => {},
@@ -558,6 +630,23 @@ type TransformerControl = {
   forceUpdate(): void;
 };
 
+type MovePointerSnapshot = {
+  kind: "move";
+  elementId: string;
+  node: Konva.Group;
+  owner: ElementPointerOwner;
+  cancelTransformer: TransformerControl | null;
+};
+
+type TransformPointerSnapshot = {
+  kind: "transform";
+  nodes: ReadonlySet<Konva.Group>;
+  owner: ElementPointerOwner;
+  cancelTransformer: TransformerControl;
+};
+
+type AnnotationPointerSnapshot = MovePointerSnapshot | TransformPointerSnapshot;
+
 type AnnotationInteractionState = {
   kind: "move" | "transform";
   node: Konva.Group;
@@ -568,6 +657,7 @@ type AnnotationInteractionState = {
 
 type ActiveAnnotationInteraction = AnnotationInteractionState & {
   owner: ElementPointerOwner;
+  cancelTransformer: TransformerControl | null;
 };
 
 export function cancelAnnotationInteraction(
@@ -606,13 +696,6 @@ function selectedNodeMap(
     }
     return [element.id, node];
   }));
-}
-
-function samePointerOwner(
-  left: ElementPointerOwner,
-  right: ElementPointerOwner,
-): boolean {
-  return left.pointerId === right.pointerId && left.container === right.container;
 }
 
 function releaseAnnotationPointerCapture(
