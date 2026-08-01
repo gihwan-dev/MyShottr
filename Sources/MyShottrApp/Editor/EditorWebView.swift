@@ -17,6 +17,11 @@ final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
             bridge.onUncorrelatedError = onBridgeFailure
         }
     }
+    var onHistoryStateChanged: ((EditorHistoryState) -> Void)? {
+        didSet {
+            bridge.onHistoryStateChanged = onHistoryStateChanged
+        }
+    }
     var onProtocolFailure:
         ((EditorBridgeEnvelopeError) -> Void)?
     {
@@ -98,6 +103,20 @@ final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func requestComposite(destinationDirectory: URL? = nil) async throws -> CompositeTransfer {
         try await bridge.requestComposite(destinationDirectory: destinationDirectory)
+    }
+
+    func performHistoryAction(_ action: EditorHistoryAction) {
+        bridge.performHistoryAction(action)
+    }
+
+    func sendOperationStatus(
+        requestID: UUID,
+        status: EditorOperationStatus
+    ) {
+        bridge.sendOperationStatus(
+            requestID: requestID,
+            status: status
+        )
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {

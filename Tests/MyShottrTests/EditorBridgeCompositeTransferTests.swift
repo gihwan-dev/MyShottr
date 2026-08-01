@@ -8,6 +8,7 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         let session = DocumentSession()
         var outgoing: [NativeToEditorEnvelope] = []
         var completions: [UUID: (Error?) -> Void] = [:]
+        var uncorrelatedErrors: [EditorBridgeError] = []
         let bridge = EditorBridge(
             session: session,
             javaScriptEvaluationObserver: { requestID, completion in
@@ -17,6 +18,9 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
                 if envelope.type == .loadDocument { outgoing.append(envelope) }
             }
         )
+        bridge.onUncorrelatedError = {
+            uncorrelatedErrors.append($0)
+        }
         defer { bridge.tearDown() }
         bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
 
@@ -28,17 +32,20 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         try XCTUnwrap(completions[superseded.requestId])(evaluationFailure())
         await Task.yield()
         XCTAssertNil(bridge.lastError)
+        XCTAssertTrue(uncorrelatedErrors.isEmpty)
 
         bridge.receive(data: try annotationSnapshot(requestID: accepted.requestId))
         try XCTUnwrap(completions[accepted.requestId])(evaluationFailure())
         await Task.yield()
         XCTAssertNil(bridge.lastError)
+        XCTAssertTrue(uncorrelatedErrors.isEmpty)
     }
 
     func testLateSnapshotEvaluationErrorsAfterTimeoutAndCancellationAreIgnored() async throws {
         let session = DocumentSession()
         var completions: [UUID: (Error?) -> Void] = [:]
         var evaluationRequests: [UUID] = []
+        var uncorrelatedErrors: [EditorBridgeError] = []
         let bridge = EditorBridge(
             session: session,
             requestTimeout: .milliseconds(10),
@@ -47,6 +54,9 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
                 completions[requestID] = completion
             }
         )
+        bridge.onUncorrelatedError = {
+            uncorrelatedErrors.append($0)
+        }
         defer { bridge.tearDown() }
         bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
 
@@ -56,6 +66,7 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         try XCTUnwrap(completions[timedOutID])(evaluationFailure())
         await Task.yield()
         XCTAssertNil(bridge.lastError)
+        XCTAssertTrue(uncorrelatedErrors.isEmpty)
 
         let cancelled = Task { @MainActor in try await bridge.requestAnnotationSnapshot() }
         let cancelledID = await nextSnapshotRequest(from: &evaluationRequests, expectedCount: 2)
@@ -64,6 +75,7 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         try XCTUnwrap(completions[cancelledID])(evaluationFailure())
         await Task.yield()
         XCTAssertNil(bridge.lastError)
+        XCTAssertTrue(uncorrelatedErrors.isEmpty)
     }
 
     func testLateCompositeEvaluationErrorsAfterSuccessAndTearDownAreIgnored() async throws {
@@ -71,6 +83,7 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         try session.open(project: validProject())
         var outgoing: [NativeToEditorEnvelope] = []
         var completions: [UUID: (Error?) -> Void] = [:]
+        var uncorrelatedErrors: [EditorBridgeError] = []
         let bridge = EditorBridge(
             session: session,
             javaScriptEvaluationObserver: { requestID, completion in
@@ -80,6 +93,9 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
                 if envelope.type == .requestComposite { outgoing.append(envelope) }
             }
         )
+        bridge.onUncorrelatedError = {
+            uncorrelatedErrors.append($0)
+        }
 
         bridge.receive(data: try EditorToNativeEnvelope(type: .editorReady, payload: .object([:])).encodedData())
         let succeeded = Task { @MainActor in try await bridge.requestComposite() }
@@ -97,6 +113,7 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         try XCTUnwrap(completions[succeededEnvelope.requestId])(evaluationFailure())
         await Task.yield()
         XCTAssertNil(bridge.lastError)
+        XCTAssertTrue(uncorrelatedErrors.isEmpty)
 
         let tornDown = Task { @MainActor in try await bridge.requestComposite() }
         let tornDownEnvelope = try await nextRequest(from: &outgoing, expectedCount: 2)
@@ -105,6 +122,7 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         try XCTUnwrap(completions[tornDownEnvelope.requestId])(evaluationFailure())
         await Task.yield()
         XCTAssertNil(bridge.lastError)
+        XCTAssertTrue(uncorrelatedErrors.isEmpty)
     }
 
     func testLoadTimeoutPreservesNativeProjectAndExactRetrySucceeds()

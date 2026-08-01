@@ -181,7 +181,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 compositeContinuations[requestID] = continuation
                 scheduleDeadline(for: requestID, kind: .composite)
                 do {
-                    _ = try send(
+                    try sendCorrelated(
                         requestID: requestID,
                         type: .requestComposite,
                         payload: .object(["requestId": .string(requestID.uuidString)])
@@ -199,6 +199,61 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 )
             }
         }
+    }
+
+    func performHistoryAction(_ action: EditorHistoryAction) {
+        sendFireAndForget(
+            requestID: UUID(),
+            type: .performHistoryAction,
+            payload: .object([
+                "action": .string(action.rawValue),
+            ])
+        )
+    }
+
+    func sendOperationStatus(
+        requestID: UUID,
+        status: EditorOperationStatus
+    ) {
+        let payload: BridgeJSONValue
+        switch status {
+        case let .started(operation):
+            payload = .object([
+                "operation": .string(operation.rawValue),
+                "phase": .string("started"),
+            ])
+        case .saveCompleted:
+            payload = .object([
+                "operation": .string(EditorOutputOperation.save.rawValue),
+                "phase": .string("completed"),
+            ])
+        case .saveSuperseded:
+            payload = .object([
+                "operation": .string(EditorOutputOperation.save.rawValue),
+                "phase": .string("superseded"),
+            ])
+        case let .exportCompleted(displayName):
+            payload = .object([
+                "operation": .string(EditorOutputOperation.export.rawValue),
+                "phase": .string("completed"),
+                "displayName": .string(displayName),
+            ])
+        case let .cancelled(operation):
+            payload = .object([
+                "operation": .string(operation.rawValue),
+                "phase": .string("cancelled"),
+            ])
+        case let .failed(operation):
+            payload = .object([
+                "operation": .string(operation.rawValue),
+                "phase": .string("failed"),
+            ])
+        }
+        sendFireAndForget(
+            requestID: requestID,
+            type: .operationStatus,
+            payload: payload
+        )
     }
 
     func tearDown() {
@@ -425,7 +480,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             "annotationDocument": annotationDocument,
             "initialTool": .string(preferences.load().tool),
         ])
-        let requestID = try send(type: .loadDocument, payload: payload)
+        let requestID = UUID()
+        try sendCorrelated(
+            requestID: requestID,
+            type: .loadDocument,
+            payload: payload
+        )
         pendingLoadRequestID = requestID
         scheduleDeadline(for: requestID, kind: .load)
     }
@@ -544,8 +604,11 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         )
     }
 
-    @discardableResult
-    private func send(requestID: UUID = UUID(), type: NativeToEditorMessageType, payload: BridgeJSONValue) throws -> UUID {
+    private func sendCorrelated(
+        requestID: UUID,
+        type: NativeToEditorMessageType,
+        payload: BridgeJSONValue
+    ) throws {
         let envelope = try NativeToEditorEnvelope(requestId: requestID, type: type, payload: payload)
         outgoingMessageObserver?(envelope)
         guard let data = try? envelope.encodedData(),
@@ -561,7 +624,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 guard let self, let error else { return }
                 self.failPendingRequest(requestID, error: error)
             }
-            return requestID
+            return
         }
         webView?.evaluateJavaScript(
             "window.dispatchEvent(new CustomEvent('myshottr:native-message', { detail: \(json) }));"
@@ -569,7 +632,51 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             guard let self, let error else { return }
             self.failPendingRequest(requestID, error: error)
         }
-        return requestID
+    }
+
+    private func sendFireAndForget(
+        requestID: UUID,
+        type: NativeToEditorMessageType,
+        payload: BridgeJSONValue
+    ) {
+        do {
+            let envelope = try NativeToEditorEnvelope(
+                requestId: requestID,
+                type: type,
+                payload: payload
+            )
+            outgoingMessageObserver?(envelope)
+            let data = try envelope.encodedData()
+            guard let json = String(data: data, encoding: .utf8),
+                  webView != nil
+                    || outgoingMessageObserver != nil
+                    || javaScriptEvaluationObserver != nil
+            else {
+                throw EditorBridgeError.invalidMessage
+            }
+            if let javaScriptEvaluationObserver {
+                javaScriptEvaluationObserver(requestID) {
+                    [weak self] error in
+                    guard let self, error != nil else {
+                        return
+                    }
+                    self.reportUncorrelatedError(
+                        .invalidMessage
+                    )
+                }
+                return
+            }
+            webView?.evaluateJavaScript(
+                "window.dispatchEvent(new CustomEvent('myshottr:native-message', { detail: \(json) }));"
+            ) { [weak self] _, error in
+                guard let self, error != nil else {
+                    return
+                }
+                self.reportUncorrelatedError(.invalidMessage)
+            }
+        } catch {
+            reportUncorrelatedError(.invalidMessage)
+        }
     }
 
     private func failPendingRequest(_ requestID: UUID, error: Error) {

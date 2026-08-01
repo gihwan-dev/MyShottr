@@ -22,6 +22,321 @@ final class DocumentWindowControllerCommandTests:
         XCTAssertFalse(controller.exportComposite(nil))
     }
 
+    func testToolbarUsesExactDefaultOrderAndIconAndLabelDisplayMode()
+        throws
+    {
+        let controller = try makeController()
+        let toolbar = try XCTUnwrap(controller.window?.toolbar)
+
+        XCTAssertEqual(toolbar.displayMode, .iconAndLabel)
+        XCTAssertEqual(
+            controller.toolbarDefaultItemIdentifiers(toolbar),
+            [
+                .copyComposite,
+                .undoEditor,
+                .redoEditor,
+                .flexibleSpace,
+                .saveProject,
+                .exportComposite,
+            ]
+        )
+        XCTAssertEqual(
+            Set(controller.toolbarAllowedItemIdentifiers(toolbar)),
+            Set([
+                .copyComposite,
+                .undoEditor,
+                .redoEditor,
+                .saveProject,
+                .exportComposite,
+                .flexibleSpace,
+            ])
+        )
+    }
+
+    func testToolbarItemsUseApprovedLabelsTooltipsSymbolsAndSelectors()
+        throws
+    {
+        let controller = try makeController()
+        let toolbar = try XCTUnwrap(controller.window?.toolbar)
+        let cases: [(
+            NSToolbarItem.Identifier,
+            String,
+            String,
+            String,
+            Selector
+        )] = [
+            (
+                .copyComposite,
+                "Copy Image",
+                "Copy the annotated PNG (Command-Shift-C)",
+                "doc.on.doc",
+                #selector(DocumentWindowController.copyComposite(_:))
+            ),
+            (
+                .undoEditor,
+                "Undo",
+                "Undo the last annotation change (Command-Z)",
+                "arrow.uturn.backward",
+                #selector(DocumentWindowController.undoEditor(_:))
+            ),
+            (
+                .redoEditor,
+                "Redo",
+                "Redo the last annotation change (Command-Shift-Z)",
+                "arrow.uturn.forward",
+                #selector(DocumentWindowController.redoEditor(_:))
+            ),
+            (
+                .saveProject,
+                "Save Project",
+                "Save an editable MyShottr project (Command-S)",
+                "square.and.arrow.down",
+                #selector(DocumentWindowController.saveProjectAction(_:))
+            ),
+            (
+                .exportComposite,
+                "Export PNG",
+                "Export the annotated PNG (Command-E)",
+                "square.and.arrow.up",
+                #selector(DocumentWindowController.exportComposite(_:))
+            ),
+        ]
+
+        for (identifier, label, toolTip, symbolName, action) in cases {
+            let item = try XCTUnwrap(
+                controller.toolbar(
+                    toolbar,
+                    itemForItemIdentifier: identifier,
+                    willBeInsertedIntoToolbar: true
+                )
+            )
+            let expectedImage = try XCTUnwrap(
+                NSImage(
+                    systemSymbolName: symbolName,
+                    accessibilityDescription: label
+                )
+            )
+
+            XCTAssertEqual(item.label, label)
+            XCTAssertEqual(item.toolTip, toolTip)
+            XCTAssertEqual(item.action, action)
+            XCTAssertTrue(item.target === controller)
+            XCTAssertEqual(
+                item.image?.tiffRepresentation,
+                expectedImage.tiffRepresentation
+            )
+        }
+    }
+
+    func testToolbarValidationFollowsReadinessAndLatestHistoryState()
+        async throws
+    {
+        let controller = try makeController()
+        let toolbar = try XCTUnwrap(controller.window?.toolbar)
+        let outputItems = try [
+            NSToolbarItem.Identifier.copyComposite,
+            .saveProject,
+            .exportComposite,
+        ].map {
+            try makeToolbarItem(
+                identifier: $0,
+                controller: controller,
+                toolbar: toolbar
+            )
+        }
+        let undoItem = try makeToolbarItem(
+            identifier: .undoEditor,
+            controller: controller,
+            toolbar: toolbar
+        )
+        let redoItem = try makeToolbarItem(
+            identifier: .redoEditor,
+            controller: controller,
+            toolbar: toolbar
+        )
+
+        for item in outputItems + [undoItem, redoItem] {
+            XCTAssertFalse(controller.validateToolbarItem(item))
+        }
+
+        try await controller.waitForEditorLoad()
+
+        for item in outputItems {
+            XCTAssertTrue(controller.validateToolbarItem(item))
+        }
+        XCTAssertFalse(controller.validateToolbarItem(undoItem))
+        XCTAssertFalse(controller.validateToolbarItem(redoItem))
+
+        controller.receiveHistoryState(
+            EditorHistoryState(canUndo: true, canRedo: false)
+        )
+        XCTAssertTrue(controller.validateToolbarItem(undoItem))
+        XCTAssertFalse(controller.validateToolbarItem(redoItem))
+
+        controller.receiveHistoryState(
+            EditorHistoryState(canUndo: false, canRedo: true)
+        )
+        XCTAssertFalse(controller.validateToolbarItem(undoItem))
+        XCTAssertTrue(controller.validateToolbarItem(redoItem))
+    }
+
+    func testDisabledHistorySelectorsReturnFalseBeforeEditorReadiness()
+        throws
+    {
+        let controller = try makeController()
+
+        XCTAssertFalse(controller.undoEditor(nil))
+        XCTAssertFalse(controller.redoEditor(nil))
+    }
+
+    func testAllDocumentSelectorsRejectInactiveCommandWindow()
+        async throws
+    {
+        var sentActions: [EditorHistoryAction] = []
+        let controller = try DocumentWindowController(
+            project: ProjectFixtures.project(
+                text: "Inactive command window"
+            ),
+            projectURL: nil,
+            testSession: DocumentSession(),
+            historyActionSender: { sentActions.append($0) },
+            commandWindowPredicate: { _ in false }
+        )
+        try await controller.waitForEditorLoad()
+        controller.receiveHistoryState(
+            EditorHistoryState(canUndo: true, canRedo: true)
+        )
+
+        XCTAssertFalse(controller.copyComposite(nil))
+        XCTAssertFalse(controller.saveProjectAction(nil))
+        XCTAssertFalse(controller.exportComposite(nil))
+        XCTAssertFalse(controller.undoEditor(nil))
+        XCTAssertFalse(controller.redoEditor(nil))
+        XCTAssertTrue(sentActions.isEmpty)
+    }
+
+    func testEnabledHistorySelectorsSendOneMatchingActionAndDisabledSendsNone()
+        async throws
+    {
+        var sentActions: [EditorHistoryAction] = []
+        let controller = try DocumentWindowController(
+            project: ProjectFixtures.project(
+                text: "History actions"
+            ),
+            projectURL: nil,
+            testSession: DocumentSession(),
+            historyActionSender: { sentActions.append($0) },
+            commandWindowPredicate: { _ in true }
+        )
+        try await controller.waitForEditorLoad()
+        controller.receiveHistoryState(
+            EditorHistoryState(canUndo: true, canRedo: false)
+        )
+        XCTAssertFalse(controller.redoEditor(nil))
+        XCTAssertTrue(sentActions.isEmpty)
+        XCTAssertTrue(controller.undoEditor(nil))
+        XCTAssertEqual(sentActions, [.undo])
+
+        controller.receiveHistoryState(
+            EditorHistoryState(canUndo: false, canRedo: true)
+        )
+        XCTAssertTrue(controller.redoEditor(nil))
+        XCTAssertEqual(sentActions, [.undo, .redo])
+    }
+
+    func testOutputInFlightDisablesOnlyOutputToolbarItems()
+        async throws
+    {
+        let project = ProjectFixtures.project(
+            text: "Suspended output"
+        )
+        let session = DocumentSession()
+        try session.open(project: project)
+        var snapshotContinuation:
+            CheckedContinuation<Data, any Error>?
+        let controller = try DocumentWindowController(
+            project: project,
+            projectURL: temporaryDirectory.appendingPathComponent(
+                "Output.myshottr",
+                isDirectory: true
+            ),
+            testSession: session,
+            annotationSnapshotProvider: {
+                try await withCheckedThrowingContinuation {
+                    continuation in
+                    snapshotContinuation = continuation
+                }
+            },
+            commandWindowPredicate: { _ in true }
+        )
+        let initialWindow = try XCTUnwrap(controller.window)
+        let toolbar = try XCTUnwrap(initialWindow.toolbar)
+        let outputItems = try [
+            NSToolbarItem.Identifier.copyComposite,
+            .saveProject,
+            .exportComposite,
+        ].map {
+            try makeToolbarItem(
+                identifier: $0,
+                controller: controller,
+                toolbar: toolbar
+            )
+        }
+        let undoItem = try makeToolbarItem(
+            identifier: .undoEditor,
+            controller: controller,
+            toolbar: toolbar
+        )
+        let redoItem = try makeToolbarItem(
+            identifier: .redoEditor,
+            controller: controller,
+            toolbar: toolbar
+        )
+
+        try await controller.waitForEditorLoad()
+        controller.receiveHistoryState(
+            EditorHistoryState(canUndo: true, canRedo: true)
+        )
+        XCTAssertTrue(controller.saveProjectAction(nil))
+        await waitUntil { snapshotContinuation != nil }
+
+        for item in outputItems {
+            XCTAssertFalse(controller.validateToolbarItem(item))
+        }
+        XCTAssertTrue(controller.validateToolbarItem(undoItem))
+        XCTAssertTrue(controller.validateToolbarItem(redoItem))
+
+        snapshotContinuation?.resume(
+            returning: project.annotationJSON
+        )
+        await waitUntil {
+            outputItems.allSatisfy {
+                controller.validateToolbarItem($0)
+            }
+        }
+    }
+
+    func testBridgeFailureUsesExistingEditorBridgePresenterPathExactlyOnce()
+        throws
+    {
+        let presenter = SpyUserFacingErrorPresenter()
+        let controller = try makeController(
+            errorPresenter: presenter
+        )
+
+        controller.receiveBridgeFailure(.invalidMessage)
+
+        XCTAssertEqual(
+            presenter.presentedViewModels,
+            [
+                MyShottrUserFacingError.editorBridge(
+                    .invalidMessage
+                ).viewModel,
+            ]
+        )
+        XCTAssertEqual(presenter.windowWasProvided, [true])
+    }
+
     func testErrorPresentationTerminatesWhenTheDocumentWindowIsUnavailable() throws {
         let presenter = SpyUserFacingErrorPresenter()
         let controller = try DocumentWindowController(
@@ -142,6 +457,34 @@ final class DocumentWindowControllerCommandTests:
             await Task.yield()
         }
         XCTFail("Timed out waiting for async document state")
+    }
+
+    private func makeController(
+        errorPresenter: any UserFacingErrorPresenting =
+            UserFacingErrorPresenter.shared
+    ) throws -> DocumentWindowController {
+        try DocumentWindowController(
+            project: ProjectFixtures.project(
+                text: "Toolbar contract"
+            ),
+            projectURL: nil,
+            errorPresenter: errorPresenter,
+            testSession: DocumentSession()
+        )
+    }
+
+    private func makeToolbarItem(
+        identifier: NSToolbarItem.Identifier,
+        controller: DocumentWindowController,
+        toolbar: NSToolbar
+    ) throws -> NSToolbarItem {
+        try XCTUnwrap(
+            controller.toolbar(
+                toolbar,
+                itemForItemIdentifier: identifier,
+                willBeInsertedIntoToolbar: true
+            )
+        )
     }
 }
 

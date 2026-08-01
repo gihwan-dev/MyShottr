@@ -12,33 +12,45 @@ struct MyShottrApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .saveItem) {
-                Button("Save Project") {
+                Button(DocumentCommandDefinition.saveProject.title) {
                     NSApp.sendAction(
-                        #selector(DocumentWindowController.saveProjectAction(_:)),
+                        DocumentCommandDefinition.saveProject.action,
                         to: nil,
                         from: nil
                     )
                 }
-                .keyboardShortcut("s", modifiers: [.command])
+                .keyboardShortcut(
+                    DocumentCommandDefinition.saveProject.key,
+                    modifiers: DocumentCommandDefinition
+                        .saveProject.swiftUIModifiers
+                )
             }
             CommandMenu("Image") {
-                Button("Copy Image") {
+                Button(DocumentCommandDefinition.copyImage.title) {
                     NSApp.sendAction(
-                        #selector(DocumentWindowController.copyComposite(_:)),
+                        DocumentCommandDefinition.copyImage.action,
                         to: nil,
                         from: nil
                     )
                 }
-                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .keyboardShortcut(
+                    DocumentCommandDefinition.copyImage.key,
+                    modifiers: DocumentCommandDefinition
+                        .copyImage.swiftUIModifiers
+                )
 
-                Button("Export PNG") {
+                Button(DocumentCommandDefinition.exportPNG.title) {
                     NSApp.sendAction(
-                        #selector(DocumentWindowController.exportComposite(_:)),
+                        DocumentCommandDefinition.exportPNG.action,
                         to: nil,
                         from: nil
                     )
                 }
-                .keyboardShortcut("e", modifiers: [.command])
+                .keyboardShortcut(
+                    DocumentCommandDefinition.exportPNG.key,
+                    modifiers: DocumentCommandDefinition
+                        .exportPNG.swiftUIModifiers
+                )
             }
         }
     }
