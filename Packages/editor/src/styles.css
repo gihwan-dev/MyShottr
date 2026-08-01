@@ -14,6 +14,13 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--canvas-surround);
@@ -43,19 +50,28 @@ input:focus-visible {
 }
 
 .editor-app {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
+  width: 100%;
+  height: 100%;
   position: relative;
   overflow: hidden;
   background: var(--canvas-surround);
 }
 
-.canvas-shell {
+.editor-workspace {
+  position: absolute;
+  inset: 0;
   overflow: hidden;
-  background: #ffffff;
-  box-shadow: 0 18px 52px rgb(73 45 38 / 18%);
-  filter: none;
+}
+
+.canvas-shell {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+.canvas-shell canvas {
+  display: block;
 }
 
 .floating-tool-palette,

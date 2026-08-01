@@ -1,5 +1,5 @@
 import type { EditorElement, Point } from "../model/elements";
-import type { SourceBounds } from "./CanvasViewport";
+import type { SourceBounds } from "../viewport/ViewportController";
 
 export class SelectionController {
   #selectedIds: string[] = [];
@@ -22,23 +22,6 @@ export class SelectionController {
 
   public clear(): void {
     this.#selectedIds = [];
-  }
-}
-
-export class CanvasPointerController {
-  private mode: "annotation" | "idle" | "pan" = "idle";
-
-  public begin(event: { shiftKey: boolean }): "annotation" | "pan" {
-    this.mode = event.shiftKey ? "pan" : "annotation";
-    return this.mode;
-  }
-
-  public shouldDispatchAnnotationDrag(): boolean {
-    return this.mode === "annotation";
-  }
-
-  public end(): void {
-    this.mode = "idle";
   }
 }
 

@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type Konva from "konva";
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Transformer } from "react-konva";
 import type { CreationGesture, EditorCommand, EditorDocument, EditorElement, EditorTool, Point } from "../model/elements";
-import { CanvasViewport } from "./CanvasViewport";
+import type { ViewportSnapshot } from "../viewport/ViewportController";
 import {
-  CanvasPointerController,
   moveElementsWithinBounds,
   resizeElementWithinBounds,
 } from "./SelectionController";
@@ -14,13 +13,14 @@ import {
   type ElementInteractionHandlers,
 } from "./renderElement";
 import { BLUR_RADIUS_PX, createBlurredSourceCanvas } from "./blurSource";
+import { cursorForTool } from "./tools/ToolController";
 
-export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, selectedIds, onSelect, onEditText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onPanChange, textEditorOverlay }: {
+export function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePanReady, selectedIds, onSelect, onEditText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onViewportWheel, onViewportPanBy, onInteractionActiveChange, toSourcePoint, textEditorOverlay }: {
   document: EditorDocument;
   sourceImageURL: string;
   tool: EditorTool;
-  zoom: number;
-  pan: Point;
+  viewport: ViewportSnapshot;
+  spacePanReady: boolean;
   selectedIds: readonly string[];
   onSelect: (id: string | undefined, toggle?: boolean) => void;
   onEditText: (id: string) => void;
@@ -28,7 +28,16 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
   onBeginTransaction: (label: string) => void;
   onCommitTransaction: () => void;
   onCancelTransaction: () => void;
-  onPanChange: (pan: Point) => void;
+  onViewportWheel: (input: {
+    pointer: Point;
+    deltaX: number;
+    deltaY: number;
+    metaKey: boolean;
+    ctrlKey: boolean;
+  }) => void;
+  onViewportPanBy: (delta: Point) => void;
+  onInteractionActiveChange: (active: boolean) => void;
+  toSourcePoint: (workspacePoint: Point) => Point;
   textEditorOverlay: ReactNode;
 }) {
   const image = useSourceImage(sourceImageURL);
@@ -43,18 +52,14 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
       : undefined,
     [image, document.sourcePixelWidth, document.sourcePixelHeight],
   );
-  const viewport = useMemo(() => new CanvasViewport({ sourceWidth: document.sourcePixelWidth, sourceHeight: document.sourcePixelHeight }), [document.sourcePixelWidth, document.sourcePixelHeight]);
-  viewport.setTransform({ zoom, panX: pan.x, panY: pan.y });
   const nodes = useRef(new Map<string, Konva.Group>());
   const transformer = useRef<Konva.Transformer | null>(null);
   const gesture = useRef<ActiveCreationGesture | undefined>(undefined);
-  const panGesture = useRef<{ start: Point; pan: Point } | undefined>(undefined);
-  const pointerController = useRef(new CanvasPointerController());
+  const panGesture = useRef<{ last: Point } | undefined>(undefined);
   const selectionToggle = useRef(false);
-  const suppressedAnnotationDrag = useRef(false);
-  const suppressedTransform = useRef(false);
   const activeAnnotationInteraction = useRef<ActiveAnnotationInteraction | undefined>(undefined);
   const [isTransforming, setIsTransforming] = useState(false);
+  const [isSpacePanning, setIsSpacePanning] = useState(false);
   const [creationPreview, setCreationPreview] = useState<EditorElement | undefined>(undefined);
 
   useEffect(() => {
@@ -71,7 +76,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
     if (!pointer) {
       throw new Error("Canvas pointer position is unavailable");
     }
-    return viewport.toSourcePoint(pointer);
+    return toSourcePoint(pointer);
   };
   const finishGesture = (stage: Konva.Stage) => {
     const activeGesture = gesture.current;
@@ -102,10 +107,12 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
   };
   useEffect(() => {
     const clearPointerInteraction = () => {
+      const wasActive = gesture.current !== undefined || panGesture.current !== undefined;
       gesture.current = undefined;
       setCreationPreview(undefined);
       panGesture.current = undefined;
-      pointerController.current.end();
+      setIsSpacePanning(false);
+      if (wasActive) onInteractionActiveChange(false);
     };
     const cancelPointerInteraction = () => {
       try {
@@ -130,18 +137,44 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
   const selectedIdSet = new Set(selectedIds);
 
   return (
-    <div className="canvas-shell" data-testid="editor-canvas" style={{ position: "relative" }}>
+    <div
+      className="canvas-shell"
+      data-testid="editor-canvas"
+      style={{
+        position: "relative",
+        cursor: cursorForTool(
+          tool,
+          isSpacePanning ? "active" : spacePanReady ? "ready" : "inactive",
+        ),
+      }}
+    >
       <Stage
-        width={Math.ceil(document.sourcePixelWidth * zoom)}
-        height={Math.ceil(document.sourcePixelHeight * zoom)}
+        width={viewport.workspace.width}
+        height={viewport.workspace.height}
+        onWheel={(event) => {
+          const stage = event.target.getStage();
+          if (!stage) throw new Error("Canvas stage is unavailable");
+          const pointer = stage.getPointerPosition();
+          if (!pointer) throw new Error("Canvas pointer position is unavailable");
+          event.evt.preventDefault();
+          onViewportWheel({
+            pointer,
+            deltaX: event.evt.deltaX,
+            deltaY: event.evt.deltaY,
+            metaKey: event.evt.metaKey,
+            ctrlKey: event.evt.ctrlKey,
+          });
+        }}
         onMouseDown={(event) => {
           const stage = event.target.getStage();
           if (!stage) throw new Error("Canvas stage is unavailable");
           selectionToggle.current = event.evt.shiftKey;
-          if (pointerController.current.begin({ shiftKey: event.evt.shiftKey }) === "pan") {
+          if (spacePanReady) {
             const start = stage.getPointerPosition();
             if (!start) throw new Error("Canvas pointer position is unavailable");
-            panGesture.current = { start, pan };
+            panGesture.current = { last: start };
+            setIsSpacePanning(true);
+            onInteractionActiveChange(true);
             return;
           }
           if (tool === "selection" || isTransforming) {
@@ -163,6 +196,7 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
             points: [start],
             previewId: preview.id,
           };
+          onInteractionActiveChange(true);
         }}
         onMouseMove={(event) => {
           const stage = event.target.getStage();
@@ -170,9 +204,14 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
           if (panGesture.current) {
             const pointer = stage.getPointerPosition();
             if (!pointer) throw new Error("Canvas pointer position is unavailable");
-            onPanChange({
-              x: panGesture.current.pan.x + pointer.x - panGesture.current.start.x,
-              y: panGesture.current.pan.y + pointer.y - panGesture.current.start.y,
+            const delta = {
+              x: pointer.x - panGesture.current.last.x,
+              y: pointer.y - panGesture.current.last.y,
+            };
+            panGesture.current.last = pointer;
+            onViewportPanBy({
+              x: delta.x,
+              y: delta.y,
             });
             return;
           }
@@ -200,20 +239,29 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
           if (!stage) throw new Error("Canvas stage is unavailable");
           if (panGesture.current) {
             panGesture.current = undefined;
-            pointerController.current.end();
+            setIsSpacePanning(false);
+            onInteractionActiveChange(false);
             return;
           }
-          finishGesture(stage);
-          if (tool !== "selection") pointerController.current.end();
+          if (gesture.current) {
+            try {
+              finishGesture(stage);
+            } finally {
+              onInteractionActiveChange(false);
+            }
+          }
         }}
       >
-        <Layer id="sourceLayer" listening={false}>
-          <Group x={pan.x} y={pan.y} scaleX={zoom} scaleY={zoom}>
-            {image && <KonvaImage image={image} width={document.sourcePixelWidth} height={document.sourcePixelHeight} />}
-          </Group>
-        </Layer>
-        <Layer id="annotationLayer">
-          <Group x={pan.x} y={pan.y} scaleX={zoom} scaleY={zoom}>
+        <Layer id="workspaceLayer">
+          <Group x={viewport.pan.x} y={viewport.pan.y} scaleX={viewport.zoom} scaleY={viewport.zoom}>
+            {image && (
+              <KonvaImage
+                image={image}
+                width={document.sourcePixelWidth}
+                height={document.sourcePixelHeight}
+                listening={false}
+              />
+            )}
             {orderedElements.map((element) => renderElement(element, {
               selected: selectedIdSet.has(element.id),
               draggable: tool === "selection" && selectedIdSet.has(element.id),
@@ -224,11 +272,6 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
               },
               onEditText: (id) => onEditText(id),
               onDragStart: (node) => {
-                if (!pointerController.current.shouldDispatchAnnotationDrag()) {
-                  suppressedAnnotationDrag.current = true;
-                  node.stopDrag();
-                  return;
-                }
                 const elementToMove = selectedElements.find(
                   (candidate) => candidate.id === element.id,
                 );
@@ -245,7 +288,6 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
                 };
               },
               onDragMove: (id, x, y) => {
-                if (!pointerController.current.shouldDispatchAnnotationDrag()) return;
                 try {
                   const active = activeAnnotationInteraction.current;
                   if (!active || active.kind !== "move") {
@@ -266,15 +308,10 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
                   });
                 } catch (error) {
                   cancelAnnotationTransaction();
-                  pointerController.current.end();
                   throw error;
                 }
               },
               onDragEnd: () => {
-                if (suppressedAnnotationDrag.current) {
-                  suppressedAnnotationDrag.current = false;
-                  return;
-                }
                 if (activeAnnotationInteraction.current?.kind !== "move") return;
                 try {
                   onCommitTransaction();
@@ -282,8 +319,6 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
                 } catch (error) {
                   cancelAnnotationTransaction();
                   throw error;
-                } finally {
-                  pointerController.current.end();
                 }
               },
               onTransformStart: (id, node) => {
@@ -294,10 +329,6 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
                 }
                 const elementToTransform = selectedElements.find((candidate) => candidate.id === id);
                 if (!elementToTransform) throw new Error(`Cannot transform missing element: ${id}`);
-                if (!beginTransformerInteraction(pointerController.current, transformer.current, node, elementToTransform)) {
-                  suppressedTransform.current = true;
-                  return;
-                }
                 onBeginTransaction("transform");
                 activeAnnotationInteraction.current = {
                   kind: "transform",
@@ -309,10 +340,6 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
                 setIsTransforming(true);
               },
               onTransformEnd: (id, node) => {
-                if (suppressedTransform.current) {
-                  suppressedTransform.current = false;
-                  return;
-                }
                 if (activeAnnotationInteraction.current?.kind !== "transform") return;
                 try {
                   const active = activeAnnotationInteraction.current;
@@ -347,7 +374,6 @@ export function EditorCanvas({ document, sourceImageURL, tool, zoom, pan, select
                   throw error;
                 } finally {
                   setIsTransforming(false);
-                  pointerController.current.end();
                 }
               },
               registerNode: (id, node) => {
@@ -437,14 +463,6 @@ type TransformerControl = {
   forceUpdate(): void;
 };
 
-type TransformableNode = {
-  x(value: number): unknown;
-  y(value: number): unknown;
-  scaleX(value: number): unknown;
-  scaleY(value: number): unknown;
-  rotation(value: number): unknown;
-};
-
 type ActiveAnnotationInteraction = {
   kind: "move" | "transform";
   node: Konva.Group;
@@ -489,25 +507,6 @@ function selectedNodeMap(
     }
     return [element.id, node];
   }));
-}
-
-export function beginTransformerInteraction(
-  pointerController: CanvasPointerController,
-  transformer: TransformerControl | null,
-  node: TransformableNode,
-  element: EditorElement,
-): boolean {
-  if (pointerController.shouldDispatchAnnotationDrag()) return true;
-  if (!transformer) throw new Error("Transformer is unavailable for pan cancellation");
-
-  transformer.stopTransform();
-  node.x(element.x);
-  node.y(element.y);
-  node.scaleX(1);
-  node.scaleY(1);
-  node.rotation(element.rotation);
-  transformer.forceUpdate();
-  return false;
 }
 
 export function createCanvasElement(

@@ -11,6 +11,7 @@ const konvaControl = vi.hoisted(() => ({
   stopTransform: vi.fn(),
   forceUpdate: vi.fn(),
   draw: vi.fn(),
+  preventDefault: vi.fn(),
   annotationValues: {
     x: 0,
     y: 0,
@@ -107,11 +108,14 @@ vi.mock("react-konva", async () => {
     }));
     return React.createElement("div");
   });
-  const Stage = ({ children, onMouseDown, onMouseMove, onMouseUp }: {
+  const Stage = ({ children, width, height, onMouseDown, onMouseMove, onMouseUp, onWheel }: {
     children?: React.ReactNode;
+    width: number;
+    height: number;
     onMouseDown?: (event: unknown) => void;
     onMouseMove?: (event: unknown) => void;
     onMouseUp?: (event: unknown) => void;
+    onWheel?: (event: unknown) => void;
   }) => {
     const pointer = { x: 0, y: 0 };
     const stage = {
@@ -121,7 +125,17 @@ vi.mock("react-konva", async () => {
       pointer.x = event.clientX;
       pointer.y = event.clientY;
       return {
-        evt: { shiftKey: event.shiftKey },
+        evt: {
+          shiftKey: event.shiftKey,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+          deltaX: "deltaX" in event ? Number(event.deltaX) : 0,
+          deltaY: "deltaY" in event ? Number(event.deltaY) : 0,
+          preventDefault: () => {
+            konvaControl.preventDefault();
+            event.preventDefault();
+          },
+        },
         target: {
           getStage: () => stage,
         },
@@ -129,9 +143,12 @@ vi.mock("react-konva", async () => {
     };
     return React.createElement("div", {
       "data-testid": "stage",
+      "data-width": width,
+      "data-height": height,
       onMouseDown: (event: React.MouseEvent) => onMouseDown?.(eventFor(event)),
       onMouseMove: (event: React.MouseEvent) => onMouseMove?.(eventFor(event)),
       onMouseUp: (event: React.MouseEvent) => onMouseUp?.(eventFor(event)),
+      onWheel: (event: React.WheelEvent) => onWheel?.(eventFor(event)),
     }, children);
   };
   return {
@@ -147,6 +164,22 @@ vi.mock("react-konva", async () => {
     Transformer,
   };
 });
+
+const VIEWPORT = {
+  workspace: { width: 1000, height: 700 },
+  availableRect: { x: 16, y: 76, width: 968, height: 608 },
+  zoom: 1,
+  pan: { x: 0, y: 0 },
+};
+
+const VIEWPORT_PROPS = {
+  viewport: VIEWPORT,
+  spacePanReady: false,
+  onViewportWheel: () => {},
+  onViewportPanBy: () => {},
+  onInteractionActiveChange: () => {},
+  toSourcePoint: (point: { x: number; y: number }) => point,
+};
 
 afterEach(() => {
   cleanup();
@@ -204,16 +237,90 @@ describe("cancelAnnotationInteraction", () => {
 });
 
 describe("EditorCanvas gesture terminals", () => {
-  it("renders a rectangle preview during drag before committing the element", () => {
+  it("sizes the Stage to the full measured workspace instead of source pixels times zoom", () => {
+    const initial = fixtureDocument();
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        viewport={{ ...VIEWPORT, zoom: 2 }}
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={() => {}}
+        onBeginTransaction={() => {}}
+        onCommitTransaction={() => {}}
+        onCancelTransaction={() => {}}
+        textEditorOverlay={undefined}
+      />,
+    );
+
+    expect(screen.getByTestId("stage").getAttribute("data-width")).toBe("1000");
+    expect(screen.getByTestId("stage").getAttribute("data-height")).toBe("700");
+  });
+
+  it.each([
+    ["ordinary trackpad pan", false, false],
+    ["control-wheel zoom", false, true],
+    ["command-wheel zoom", true, false],
+  ] as const)("prevents the browser default and routes %s", (_label, metaKey, ctrlKey) => {
+    const onViewportWheel = vi.fn();
+    render(
+      <EditorCanvas
+        document={fixtureDocument()}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        onViewportWheel={onViewportWheel}
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={() => {}}
+        onBeginTransaction={() => {}}
+        onCommitTransaction={() => {}}
+        onCancelTransaction={() => {}}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const event = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 320,
+      clientY: 240,
+      deltaX: 12,
+      deltaY: -30,
+      metaKey,
+      ctrlKey,
+    });
+
+    fireEvent(screen.getByTestId("stage"), event);
+
+    expect(konvaControl.preventDefault).toHaveBeenCalledOnce();
+    expect(onViewportWheel).toHaveBeenCalledWith({
+      pointer: { x: 320, y: 240 },
+      deltaX: 12,
+      deltaY: -30,
+      metaKey,
+      ctrlKey,
+    });
+  });
+
+  it("starts panning only when Space was already held at pointer-down", () => {
     const initial = fixtureDocument({ elements: [] });
     const history = createHistoryStore(initial);
+    const onViewportPanBy = vi.fn();
+    const onInteractionActiveChange = vi.fn();
     render(
       <EditorCanvas
         document={initial}
         sourceImageURL="data:image/png;base64,iVBORw0KGgo="
         tool="rectangle"
-        zoom={1}
-        pan={{ x: 0, y: 0 }}
+        {...VIEWPORT_PROPS}
+        spacePanReady
+        onViewportPanBy={onViewportPanBy}
+        onInteractionActiveChange={onInteractionActiveChange}
         selectedIds={[]}
         onSelect={() => {}}
         onEditText={() => {}}
@@ -221,7 +328,130 @@ describe("EditorCanvas gesture terminals", () => {
         onBeginTransaction={(label) => history.beginTransaction(label)}
         onCommitTransaction={() => history.commitTransaction()}
         onCancelTransaction={() => history.cancelTransaction()}
-        onPanChange={() => {}}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20 });
+    fireEvent.mouseMove(stage, { clientX: 40, clientY: 55 });
+    fireEvent.mouseUp(stage, { clientX: 40, clientY: 55 });
+
+    expect(onViewportPanBy).toHaveBeenCalledWith({ x: 30, y: 35 });
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
+      .toEqual([true, false]);
+    expect(history.document.elements).toHaveLength(0);
+  });
+
+  it("shows grab while Space is ready and grabbing only during its pan", () => {
+    render(
+      <EditorCanvas
+        document={fixtureDocument()}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        spacePanReady
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={() => {}}
+        onBeginTransaction={() => {}}
+        onCommitTransaction={() => {}}
+        onCancelTransaction={() => {}}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const canvas = screen.getByTestId("editor-canvas");
+    const stage = screen.getByTestId("stage");
+
+    expect(canvas.style.cursor).toBe("grab");
+    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20 });
+    expect(canvas.style.cursor).toBe("grabbing");
+    fireEvent.mouseUp(stage, { clientX: 10, clientY: 20 });
+    expect(canvas.style.cursor).toBe("grab");
+  });
+
+  it("does not convert an in-progress annotation drag when Space is pressed late", () => {
+    const initial = fixtureDocument({ elements: [] });
+    const history = createHistoryStore(initial);
+    const onViewportPanBy = vi.fn();
+    const canvas = (spacePanReady: boolean) => (
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="rectangle"
+        {...VIEWPORT_PROPS}
+        spacePanReady={spacePanReady}
+        onViewportPanBy={onViewportPanBy}
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={(command) => history.dispatch(command)}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={() => history.commitTransaction()}
+        onCancelTransaction={() => history.cancelTransaction()}
+        textEditorOverlay={undefined}
+      />
+    );
+    const view = render(canvas(false));
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20 });
+    view.rerender(canvas(true));
+    fireEvent.mouseMove(stage, { clientX: 40, clientY: 55 });
+    fireEvent.mouseUp(stage, { clientX: 40, clientY: 55 });
+
+    expect(onViewportPanBy).not.toHaveBeenCalled();
+    expect(history.document.elements).toEqual([
+      expect.objectContaining({ x: 10, y: 20, width: 30, height: 35 }),
+    ]);
+  });
+
+  it("does not route Shift-drag into viewport pan", () => {
+    const onViewportPanBy = vi.fn();
+    render(
+      <EditorCanvas
+        document={fixtureDocument()}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        onViewportPanBy={onViewportPanBy}
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={() => {}}
+        onBeginTransaction={() => {}}
+        onCommitTransaction={() => {}}
+        onCancelTransaction={() => {}}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.mouseDown(stage, { clientX: 10, clientY: 20, shiftKey: true });
+    fireEvent.mouseMove(stage, { clientX: 40, clientY: 55, shiftKey: true });
+
+    expect(onViewportPanBy).not.toHaveBeenCalled();
+  });
+
+  it("renders a rectangle preview during drag before committing the element", () => {
+    const initial = fixtureDocument({ elements: [] });
+    const history = createHistoryStore(initial);
+    const onInteractionActiveChange = vi.fn();
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="rectangle"
+        {...VIEWPORT_PROPS}
+        onInteractionActiveChange={onInteractionActiveChange}
+        selectedIds={[]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={(command) => history.dispatch(command)}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={() => history.commitTransaction()}
+        onCancelTransaction={() => history.cancelTransaction()}
         textEditorOverlay={undefined}
       />,
     );
@@ -244,6 +474,8 @@ describe("EditorCanvas gesture terminals", () => {
         height: 70,
       }),
     ]);
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
+      .toEqual([true, false]);
   });
 
   it("does not begin text editing from a non-selection tool", () => {
@@ -255,8 +487,7 @@ describe("EditorCanvas gesture terminals", () => {
         document={document}
         sourceImageURL="data:image/png;base64,iVBORw0KGgo="
         tool="rectangle"
-        zoom={1}
-        pan={{ x: 0, y: 0 }}
+        {...VIEWPORT_PROPS}
         selectedIds={[]}
         onSelect={() => {}}
         onEditText={onEditText}
@@ -264,7 +495,6 @@ describe("EditorCanvas gesture terminals", () => {
         onBeginTransaction={(label) => history.beginTransaction(label)}
         onCommitTransaction={() => history.commitTransaction()}
         onCancelTransaction={() => history.cancelTransaction()}
-        onPanChange={() => {}}
         textEditorOverlay={undefined}
       />,
     );
@@ -286,8 +516,7 @@ describe("EditorCanvas gesture terminals", () => {
           document={initial}
           sourceImageURL="data:image/png;base64,iVBORw0KGgo="
           tool="rectangle"
-          zoom={1}
-          pan={{ x: 0, y: 0 }}
+          {...VIEWPORT_PROPS}
           selectedIds={[]}
           onSelect={() => {}}
           onEditText={() => {}}
@@ -295,7 +524,6 @@ describe("EditorCanvas gesture terminals", () => {
           onBeginTransaction={(label) => history.beginTransaction(label)}
           onCommitTransaction={() => history.commitTransaction()}
           onCancelTransaction={() => history.cancelTransaction()}
-          onPanChange={() => {}}
           textEditorOverlay={undefined}
         />,
       );
@@ -364,8 +592,7 @@ describe("EditorCanvas gesture terminals", () => {
         document={initial}
         sourceImageURL="data:image/png;base64,iVBORw0KGgo="
         tool="selection"
-        zoom={1}
-        pan={{ x: 0, y: 0 }}
+        {...VIEWPORT_PROPS}
         selectedIds={["rect-1"]}
         onSelect={onSelect}
         onEditText={() => {}}
@@ -373,7 +600,6 @@ describe("EditorCanvas gesture terminals", () => {
         onBeginTransaction={(label) => history.beginTransaction(label)}
         onCommitTransaction={() => history.commitTransaction()}
         onCancelTransaction={() => history.cancelTransaction()}
-        onPanChange={() => {}}
         textEditorOverlay={undefined}
       />,
     );
@@ -428,8 +654,7 @@ describe("EditorCanvas gesture terminals", () => {
         document={initial}
         sourceImageURL="data:image/png;base64,iVBORw0KGgo="
         tool="selection"
-        zoom={1}
-        pan={{ x: 0, y: 0 }}
+        {...VIEWPORT_PROPS}
         selectedIds={["rect-1", "text-1"]}
         onSelect={() => {}}
         onEditText={() => {}}
@@ -437,7 +662,6 @@ describe("EditorCanvas gesture terminals", () => {
         onBeginTransaction={onBeginTransaction}
         onCommitTransaction={onCommitTransaction}
         onCancelTransaction={() => {}}
-        onPanChange={() => {}}
         textEditorOverlay={undefined}
       />,
     );
@@ -468,8 +692,7 @@ describe("EditorCanvas gesture terminals", () => {
         document={initial}
         sourceImageURL="data:image/png;base64,iVBORw0KGgo="
         tool="selection"
-        zoom={1}
-        pan={{ x: 0, y: 0 }}
+        {...VIEWPORT_PROPS}
         selectedIds={["rect-1", "text-1"]}
         onSelect={() => {}}
         onEditText={() => {}}
@@ -477,7 +700,6 @@ describe("EditorCanvas gesture terminals", () => {
         onBeginTransaction={onBeginTransaction}
         onCommitTransaction={onCommitTransaction}
         onCancelTransaction={() => history.cancelTransaction()}
-        onPanChange={() => {}}
         textEditorOverlay={undefined}
       />,
     );
@@ -539,8 +761,7 @@ function renderSelectionCanvas(
       document={document}
       sourceImageURL="data:image/png;base64,iVBORw0KGgo="
       tool="selection"
-      zoom={1}
-      pan={{ x: 0, y: 0 }}
+      {...VIEWPORT_PROPS}
     selectedIds={selectedIds}
     onSelect={() => {}}
     onEditText={() => {}}
@@ -548,7 +769,6 @@ function renderSelectionCanvas(
       onBeginTransaction={(label) => history.beginTransaction(label)}
       onCommitTransaction={() => history.commitTransaction()}
       onCancelTransaction={() => history.cancelTransaction()}
-    onPanChange={() => {}}
     textEditorOverlay={undefined}
     />,
   );

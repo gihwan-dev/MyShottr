@@ -19,12 +19,17 @@ import { FloatingToolPalette } from "./components/FloatingToolPalette";
 import { ShortcutHelpDialog } from "./components/ShortcutHelpDialog";
 import { TextEditorOverlay } from "./components/TextEditorOverlay";
 import { ZoomControls } from "./components/ZoomControls";
+import {
+  EditorWorkspace,
+  type EditorWorkspaceHandle,
+} from "./components/EditorWorkspace";
 import { useNativeBridge } from "./bridge/nativeBridge";
 import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
 import { sendComposite } from "./export/sendComposite";
 import { createHistoryStore, type HistoryStore } from "./model/history";
 import { applyRailProperty, findElement } from "./model/reducer";
-import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, Point, TextElement } from "./model/elements";
+import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, TextElement } from "./model/elements";
+import type { Rect } from "./viewport/ViewportController";
 import { KONVA_DEFAULT_FONT_FAMILY, TEXT_LINE_HEIGHT } from "./canvas/renderingConstants";
 import { keyboardCommandFor } from "./input/ShortcutRouter";
 import "./styles.css";
@@ -41,6 +46,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   const historyRef = useRef<HistoryStore | undefined>(undefined);
   if (!historyRef.current) historyRef.current = createHistoryStore(initialDocument);
   const history = historyRef.current;
+  const viewportRef = useRef<EditorWorkspaceHandle>(null);
   const copiedElements = useRef<EditorElement[]>([]);
   const document = useSyncExternalStore(
     history.subscribe,
@@ -49,10 +55,9 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   );
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<EditorTool>(initialTool);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [editingTextId, setEditingTextId] = useState<string>();
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [canvasInteractionActive, setCanvasInteractionActive] = useState(false);
   const [selectionOpacityPreview, setSelectionOpacityPreview] = useState<{
     value: RailPropertyValueByKey["opacity"];
   }>();
@@ -157,7 +162,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const command = keyboardCommandFor(event, {
-        interactionActive: history.isTransactionActive || locks.slider,
+        interactionActive: history.isTransactionActive || locks.slider || canvasInteractionActive,
         shortcutHelpOpen,
         textEditing: editingTextId !== undefined,
       });
@@ -185,10 +190,11 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         return;
       }
       if (command.type === "zoom100") {
-        setZoom(1);
+        viewportRef.current?.applyIntent(command);
         return;
       }
       if (command.type === "fitImage" || command.type === "fitSelection") {
+        viewportRef.current?.applyIntent(command);
         return;
       }
       if (command.type === "delete") {
@@ -225,7 +231,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [copySelection, dispatch, duplicateSelection, editingTextId, history, locks.slider, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, tool]);
+  }, [canvasInteractionActive, copySelection, dispatch, duplicateSelection, editingTextId, history, locks.slider, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, tool]);
 
   const handleContextRailIntent = useCallback((intent: ContextRailIntent) => {
     switch (intent.type) {
@@ -282,42 +288,98 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       aria-label="MyShottr editor"
       style={{ cursor: cursorForTool(tool) }}
     >
-      <EditorCanvas
-        document={renderedDocument}
-        sourceImageURL={sourceImageURL}
-        tool={tool}
-        zoom={zoom}
-        pan={pan}
-        selectedIds={selectedIds}
-        onSelect={select}
-        onEditText={beginTextEdit}
-        onCommand={dispatch}
-        onBeginTransaction={(label) => history.beginTransaction(label)}
-        onCommitTransaction={() => {
-          history.commitTransaction();
+      <EditorWorkspace
+        ref={viewportRef}
+        source={{
+          width: document.sourcePixelWidth,
+          height: document.sourcePixelHeight,
         }}
-        onCancelTransaction={() => {
-          if (history.cancelTransaction()) {
-            publishSceneChange();
-          }
-        }}
-        onPanChange={setPan}
-        textEditorOverlay={editingText && <TextEditorOverlay
-          element={editingText}
-          zoom={zoom}
-          pan={pan}
-          onCommit={commitTextEdit}
-          onCancel={() => setEditingTextId(undefined)}
-        />}
-      />
+        railVisible={contextRailModel.kind !== "hidden"}
+        selectionBounds={selectionBoundsFor(selectedElements)}
+      >
+        {({ viewport, spacePanReady, onWheel, panBy, toSourcePoint }) => (
+          <>
+            <EditorCanvas
+              document={renderedDocument}
+              sourceImageURL={sourceImageURL}
+              tool={tool}
+              viewport={viewport}
+              spacePanReady={spacePanReady}
+              selectedIds={selectedIds}
+              onSelect={select}
+              onEditText={beginTextEdit}
+              onCommand={dispatch}
+              onBeginTransaction={(label) => history.beginTransaction(label)}
+              onCommitTransaction={() => {
+                history.commitTransaction();
+              }}
+              onCancelTransaction={() => {
+                if (history.cancelTransaction()) {
+                  publishSceneChange();
+                }
+              }}
+              onViewportWheel={onWheel}
+              onViewportPanBy={panBy}
+              onInteractionActiveChange={setCanvasInteractionActive}
+              toSourcePoint={toSourcePoint}
+              textEditorOverlay={editingText && <TextEditorOverlay
+                element={editingText}
+                zoom={viewport.zoom}
+                pan={viewport.pan}
+                onCommit={commitTextEdit}
+                onCancel={() => setEditingTextId(undefined)}
+              />}
+            />
+            <ZoomControls
+              zoom={viewport.zoom}
+              onIntent={(intent) => viewportRef.current?.applyIntent(intent)}
+            />
+          </>
+        )}
+      </EditorWorkspace>
       <FloatingToolPalette tool={tool} onSelect={selectTool} />
       <ContextRail model={contextRailModel} onIntent={handleContextRailIntent} />
-      <ZoomControls zoom={zoom} onChange={setZoom} />
       {shortcutHelpOpen && (
         <ShortcutHelpDialog onClose={() => setShortcutHelpOpen(false)} />
       )}
     </main>
   );
+}
+
+function selectionBoundsFor(elements: readonly EditorElement[]): Rect | undefined {
+  if (elements.length === 0) return undefined;
+  const points = elements.flatMap((element) => {
+    const center = {
+      x: element.x + element.width / 2,
+      y: element.y + element.height / 2,
+    };
+    const radians = element.rotation * Math.PI / 180;
+    const cosine = Math.cos(radians);
+    const sine = Math.sin(radians);
+    return [
+      { x: element.x, y: element.y },
+      { x: element.x + element.width, y: element.y },
+      { x: element.x + element.width, y: element.y + element.height },
+      { x: element.x, y: element.y + element.height },
+    ].map((point) => {
+      const deltaX = point.x - center.x;
+      const deltaY = point.y - center.y;
+      return {
+        x: center.x + deltaX * cosine - deltaY * sine,
+        y: center.y + deltaX * sine + deltaY * cosine,
+      };
+    });
+  });
+  const minimumX = Math.min(...points.map((point) => point.x));
+  const maximumX = Math.max(...points.map((point) => point.x));
+  const minimumY = Math.min(...points.map((point) => point.y));
+  const maximumY = Math.max(...points.map((point) => point.y));
+  return {
+    x: minimumX,
+    y: minimumY,
+    width: maximumX - minimumX,
+    height: maximumY - minimumY,
+  };
 }
 
 function applyRailDefault<K extends RailPropertyKey>(

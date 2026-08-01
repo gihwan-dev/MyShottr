@@ -9,7 +9,7 @@ import type { EditorCommand, EditorDocument } from "./model/elements";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "./test/fixtures";
 
 vi.mock("./canvas/EditorCanvas", () => ({
-  EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, textEditorOverlay }: {
+  EditorCanvas: ({ document, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onInteractionActiveChange, textEditorOverlay }: {
     document: EditorDocument;
     onCommand: (command: EditorCommand) => void;
     onSelect: (id: string | undefined, toggle?: boolean) => void;
@@ -17,6 +17,7 @@ vi.mock("./canvas/EditorCanvas", () => ({
     onCommitTransaction: () => void;
     onCancelTransaction: () => void;
     onEditText: (id: string) => void;
+    onInteractionActiveChange: (active: boolean) => void;
     textEditorOverlay: ReactNode;
   }) => (
     <>
@@ -27,6 +28,8 @@ vi.mock("./canvas/EditorCanvas", () => ({
       <button type="button" onClick={() => onSelect("text-1", true)}>Shift-select text-1</button>
       <button type="button" onClick={() => onSelect("highlighter-1", true)}>Shift-select highlighter-1</button>
       <button type="button" onClick={() => onEditText("text-1")}>Edit text-1</button>
+      <button type="button" onClick={() => onInteractionActiveChange(true)}>Begin canvas interaction</button>
+      <button type="button" onClick={() => onInteractionActiveChange(false)}>End canvas interaction</button>
       <button
         type="button"
         onClick={() => onCommand({
@@ -89,6 +92,19 @@ vi.mock("./canvas/EditorCanvas", () => ({
 }));
 
 beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class implements ResizeObserver {
+    public constructor(private readonly callback: ResizeObserverCallback) {}
+    public disconnect() {}
+    public observe() {
+      this.callback([{
+        contentRect: { width: 1000, height: 700 },
+      } as ResizeObserverEntry], this);
+    }
+    public unobserve() {}
+  });
+  vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
+  vi.stubGlobal("requestAnimationFrame", vi.fn());
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
     font: "",
     measureText: (text: string) => ({ width: text.length * 12 }),
@@ -98,9 +114,71 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("EditorApp", () => {
+  it("routes every zoom control intent through the measured viewport", () => {
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={() => {}}
+    />);
+
+    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("100%");
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("110%");
+    fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("100%");
+    fireEvent.click(screen.getByRole("button", { name: "Fit Image" }));
+    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("62%");
+    fireEvent.click(screen.getByRole("button", { name: "100%" }));
+    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("100%");
+  });
+
+  it("routes registry fit commands and leaves empty-selection fit unchanged", () => {
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.keyDown(window, { code: "Digit2", key: "@", shiftKey: true });
+    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("100%");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    fireEvent.keyDown(window, { code: "Digit2", key: "@", shiftKey: true });
+    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("547%");
+    fireEvent.keyDown(window, { code: "Digit1", key: "!", shiftKey: true });
+    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("46%");
+    fireEvent.keyDown(window, { code: "Digit0", key: "0", metaKey: true });
+    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("100%");
+  });
+
+  it("suppresses shortcuts while a creation or Space-pan interaction is active", () => {
+    render(<EditorApp
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={() => {}}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Begin canvas interaction" }));
+    fireEvent.keyDown(window, { code: "KeyR", key: "r" });
+    expect(screen.getByRole("button", { name: "Selection, shortcut V" }).getAttribute("aria-pressed"))
+      .toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "End canvas interaction" }));
+    fireEvent.keyDown(window, { code: "KeyR", key: "r" });
+    expect(screen.getByRole("button", { name: "Rectangle, shortcut R" }).getAttribute("aria-pressed"))
+      .toBe("true");
+  });
+
   it("edits existing text and commits one history command", () => {
     const changes: EditorDocument[] = [];
     render(<EditorApp
