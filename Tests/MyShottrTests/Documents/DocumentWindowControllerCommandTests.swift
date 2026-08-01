@@ -411,9 +411,11 @@ final class DocumentWindowControllerCommandTests:
             },
             closeWindow: {
                 closeRequestCount += 1
-            }
+            },
+            operationStatusSender: { _, _ in }
         )
         let window = try XCTUnwrap(controller.window)
+        try await controller.waitForEditorLoad()
 
         let firstResolution = await controller
             .resolvePendingChangesForTermination()

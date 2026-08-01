@@ -7,6 +7,34 @@ enum DocumentPendingChangesDecision {
     case cancel
 }
 
+enum ProjectSaveOutcome: Equatable {
+    case saved
+    case superseded
+    case cancelledBeforeStart
+    case cancelledAfterStart
+    case failed
+}
+
+typealias CompositeProvider = @MainActor (
+    _ destinationDirectory: URL?
+) async throws -> CompositeTransfer
+
+typealias ClipboardWriter = @MainActor (_ data: Data) throws -> Void
+typealias URLProvider = @MainActor () -> URL?
+typealias OperationStatusSender = @MainActor (
+    _ requestID: UUID,
+    _ status: EditorOperationStatus
+) -> Void
+typealias WindowHider = @MainActor () -> Void
+
+func displaySafeBasename(for url: URL) -> String {
+    let filtered = url.lastPathComponent.unicodeScalars.filter {
+        !CharacterSet.controlCharacters.contains($0)
+    }
+    let filteredString = String(String.UnicodeScalarView(filtered))
+    return String(filteredString.prefix(120))
+}
+
 @MainActor
 final class DocumentTerminationResolutionGate {
     private var inFlight: Task<Bool, Never>?
@@ -41,6 +69,8 @@ final class DocumentWindowController:
         case export
     }
 
+    private struct SaveOutputReservation {}
+
     private let session: DocumentSession
     private let editorWebView: EditorWebView
     private let editorLoadOperation: EditorLoadOperation?
@@ -50,6 +80,11 @@ final class DocumentWindowController:
         @MainActor (NSWindow?) -> Bool
     private let projectStore: any ProjectPackageStoring
     private let errorPresenter: any UserFacingErrorPresenting
+    private let compositeProvider: CompositeProvider
+    private let clipboardWriter: ClipboardWriter
+    private let pngExportURLProvider: URLProvider
+    private let operationStatusSender: OperationStatusSender
+    private let hideWindow: WindowHider
     let representedDocumentID: UUID
     private var projectURL: URL?
     private var closeAfterPrompt = false
@@ -57,8 +92,7 @@ final class DocumentWindowController:
         (@MainActor () async throws -> Data)?
     private let pendingChangesDecisionProvider:
         (@MainActor () async -> DocumentPendingChangesDecision)?
-    private let projectSaveURLProvider:
-        (@MainActor () -> URL?)?
+    private let projectSaveURLProvider: URLProvider
     private let closeWindow: (@MainActor () -> Void)?
     private let terminationResolutionGate =
         DocumentTerminationResolutionGate()
@@ -84,11 +118,15 @@ final class DocumentWindowController:
         pendingChangesDecisionProvider:
             (@MainActor () async -> DocumentPendingChangesDecision)? =
                 nil,
-        projectSaveURLProvider:
-            (@MainActor () -> URL?)? = nil,
+        projectSaveURLProvider: URLProvider? = nil,
         closeWindow: (@MainActor () -> Void)? = nil,
         historyActionSender:
             (@MainActor (EditorHistoryAction) -> Void)? = nil,
+        compositeProvider: CompositeProvider? = nil,
+        clipboardWriter: ClipboardWriter? = nil,
+        pngExportURLProvider: URLProvider? = nil,
+        operationStatusSender: OperationStatusSender? = nil,
+        windowHider: WindowHider? = nil,
         commandWindowPredicate:
             @escaping @MainActor (NSWindow?) -> Bool = {
                 $0?.isKeyWindow == true
@@ -117,6 +155,22 @@ final class DocumentWindowController:
         } else {
             editorLoadOperation = nil
         }
+        let window = NSWindow(
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: 1280,
+                height: 860
+            ),
+            styleMask: [
+                .titled,
+                .closable,
+                .miniaturizable,
+                .resizable,
+            ],
+            backing: .buffered,
+            defer: false
+        )
         self.session = session
         self.editorWebView = editorWebView
         self.editorLoadOperation = editorLoadOperation
@@ -130,22 +184,61 @@ final class DocumentWindowController:
         self.commandWindowPredicate = commandWindowPredicate
         self.projectStore = projectStore
         self.errorPresenter = errorPresenter
+        if let compositeProvider {
+            self.compositeProvider = compositeProvider
+        } else {
+            self.compositeProvider = { destinationDirectory in
+                try await editorWebView.requestComposite(
+                    destinationDirectory: destinationDirectory
+                )
+            }
+        }
+        if let clipboardWriter {
+            self.clipboardWriter = clipboardWriter
+        } else {
+            self.clipboardWriter = { data in
+                try PNGClipboardWriter().write(data: data)
+            }
+        }
+        if let pngExportURLProvider {
+            self.pngExportURLProvider = pngExportURLProvider
+        } else {
+            self.pngExportURLProvider = {
+                DocumentWindowController.choosePNGExportURL()
+            }
+        }
+        if let operationStatusSender {
+            self.operationStatusSender = operationStatusSender
+        } else {
+            self.operationStatusSender = { requestID, status in
+                editorWebView.sendOperationStatus(
+                    requestID: requestID,
+                    status: status
+                )
+            }
+        }
+        if let windowHider {
+            self.hideWindow = windowHider
+        } else {
+            self.hideWindow = {
+                window.orderOut(nil)
+            }
+        }
         self.annotationSnapshotProvider =
             annotationSnapshotProvider
         self.pendingChangesDecisionProvider =
             pendingChangesDecisionProvider
-        self.projectSaveURLProvider =
-            projectSaveURLProvider
+        if let projectSaveURLProvider {
+            self.projectSaveURLProvider = projectSaveURLProvider
+        } else {
+            self.projectSaveURLProvider = {
+                DocumentWindowController.chooseProjectSaveURL()
+            }
+        }
         self.closeWindow = closeWindow
         self.representedDocumentID =
             project.manifest.documentId
         self.projectURL = projectURL
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 860),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
         super.init(window: window)
         self.nextResponder = window.nextResponder
         window.nextResponder = self
@@ -228,7 +321,12 @@ final class DocumentWindowController:
         }
         switch decision {
         case .save:
-            return await saveProject()
+            guard let reservation = beginSaveOutput() else {
+                return false
+            }
+            return await saveProject(
+                with: reservation
+            ) == .saved
         case .discard:
             return true
         case .cancel:
@@ -362,9 +460,18 @@ final class DocumentWindowController:
         Task { @MainActor in
             defer { finishOutput() }
             do {
-                let transfer = try await editorWebView.requestComposite()
+                let transfer = try await compositeProvider(nil)
                 defer { transfer.discard() }
-                try PNGClipboardWriter().write(data: transfer.data())
+                let data = try transfer.data()
+                do {
+                    try clipboardWriter(data)
+                } catch {
+                    present(
+                        .wrapping(error, context: .clipboard)
+                    )
+                    return
+                }
+                hideWindow()
             } catch {
                 present(
                     .wrapping(error, context: .clipboard)
@@ -376,11 +483,10 @@ final class DocumentWindowController:
 
     @objc func saveProjectAction(_ sender: Any?) -> Bool {
         guard commandWindowPredicate(window),
-              beginOutput(.save)
+              let reservation = beginSaveOutput()
         else { return false }
         Task { @MainActor in
-            defer { finishOutput() }
-            _ = await saveProject()
+            _ = await saveProject(with: reservation)
         }
         return true
     }
@@ -389,17 +495,41 @@ final class DocumentWindowController:
         guard commandWindowPredicate(window),
               beginOutput(.export)
         else { return false }
-        guard let destinationURL = choosePNGExportURL() else {
-            finishOutput()
+        guard let destinationURL = pngExportURLProvider() else {
+            defer { finishOutput() }
             return false
         }
+        let requestID = UUID()
+        operationStatusSender(
+            requestID,
+            .started(.export)
+        )
         Task { @MainActor in
             defer { finishOutput() }
             do {
-                let transfer = try await editorWebView.requestComposite(destinationDirectory: destinationURL.deletingLastPathComponent())
+                let transfer = try await compositeProvider(
+                    destinationURL.deletingLastPathComponent()
+                )
                 defer { transfer.discard() }
                 try transfer.move(to: destinationURL)
+                operationStatusSender(
+                    requestID,
+                    .exportCompleted(
+                        displayName: displaySafeBasename(
+                            for: destinationURL
+                        )
+                    )
+                )
+            } catch is CancellationError {
+                operationStatusSender(
+                    requestID,
+                    .cancelled(.export)
+                )
             } catch {
+                operationStatusSender(
+                    requestID,
+                    .failed(.export)
+                )
                 present(
                     .wrapping(error, context: .pngExport)
                 )
@@ -474,10 +604,36 @@ final class DocumentWindowController:
         window?.toolbar?.validateVisibleItems()
     }
 
-    private func saveProject() async -> Bool {
+    private func beginSaveOutput() -> SaveOutputReservation? {
+        guard beginOutput(.save) else { return nil }
+        return SaveOutputReservation()
+    }
+
+    private func saveProject(
+        with reservation: SaveOutputReservation
+    ) async -> ProjectSaveOutcome {
+        _ = reservation
+        defer { finishOutput() }
+
+        let url: URL
+        if let projectURL {
+            url = projectURL
+        } else {
+            guard let selectedURL = projectSaveURLProvider() else {
+                return .cancelledBeforeStart
+            }
+            url = selectedURL
+        }
+
+        let modificationRevision =
+            session.modificationRevision
+        let requestID = UUID()
+        operationStatusSender(
+            requestID,
+            .started(.save)
+        )
+
         do {
-            let modificationRevision =
-                session.modificationRevision
             let annotationJSON: Data
             if let annotationSnapshotProvider {
                 annotationJSON =
@@ -490,22 +646,6 @@ final class DocumentWindowController:
             let project = try session.projectForSave(
                 annotationJSON: annotationJSON
             )
-            let url: URL
-            if let projectURL {
-                url = projectURL
-            } else {
-                let selectedURL: URL?
-                if let projectSaveURLProvider {
-                    selectedURL =
-                        projectSaveURLProvider()
-                } else {
-                    selectedURL = chooseProjectSaveURL()
-                }
-                guard let selectedURL else {
-                    return false
-                }
-                url = selectedURL
-            }
             try projectStore.save(project, to: url)
             projectURL = url
             let completion = try session.completeSave(
@@ -515,18 +655,36 @@ final class DocumentWindowController:
             )
             window?.title = url.deletingPathExtension().lastPathComponent
             if case .savedWithNewerChanges = completion {
-                return false
+                operationStatusSender(
+                    requestID,
+                    .saveSuperseded
+                )
+                return .superseded
             }
-            return true
+            operationStatusSender(
+                requestID,
+                .saveCompleted
+            )
+            return .saved
+        } catch is CancellationError {
+            operationStatusSender(
+                requestID,
+                .cancelled(.save)
+            )
+            return .cancelledAfterStart
         } catch {
+            operationStatusSender(
+                requestID,
+                .failed(.save)
+            )
             present(
                 .wrapping(error, context: .projectSave)
             )
-            return false
+            return .failed
         }
     }
 
-    private func chooseProjectSaveURL() -> URL? {
+    private static func chooseProjectSaveURL() -> URL? {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "myshottr")!]
         panel.canCreateDirectories = true
@@ -534,7 +692,7 @@ final class DocumentWindowController:
         return panel.runModal() == .OK ? panel.url : nil
     }
 
-    private func choosePNGExportURL() -> URL? {
+    private static func choosePNGExportURL() -> URL? {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
         panel.canCreateDirectories = true
