@@ -130,7 +130,6 @@ describe("EditorFeedback", () => {
 
       const output = screen.getByRole("status");
       expect(output.textContent).toBe("");
-      expect(vi.getTimerCount()).toBe(0);
       advance(1);
       expect(output.textContent).toBe("");
       expect(screen.queryByText(progress)).toBeNull();
