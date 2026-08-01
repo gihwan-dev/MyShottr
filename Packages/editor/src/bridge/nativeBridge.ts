@@ -23,8 +23,10 @@ declare global {
 export type NativeBridge = {
   send<T extends EditorToNativeType>(type: T, payload: PayloadFor<T>): Promise<void>;
   sendCorrelated<T extends EditorToNativeType>(requestId: string, type: T, payload: PayloadFor<T>): Promise<void>;
-  subscribe(handler: (message: NativeToEditorEnvelope) => void): () => void;
+  subscribe(handler: NativeBridgeMessageHandler): () => void;
 };
+
+export type NativeBridgeMessageHandler = (message: NativeToEditorEnvelope) => void;
 
 const nativeMessageEvent = "myshottr:native-message";
 const uuidPattern = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;

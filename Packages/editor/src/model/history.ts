@@ -2,6 +2,11 @@ import type { EditorCommand, EditorDefaults, EditorDocument } from "./elements";
 import { applyCommand } from "./reducer";
 import { EditorDocumentSchema } from "./schema";
 
+export type HistoryAvailability = {
+  canUndo: boolean;
+  canRedo: boolean;
+};
+
 export type HistoryStore = {
   readonly document: EditorDocument;
   readonly canUndo: boolean;

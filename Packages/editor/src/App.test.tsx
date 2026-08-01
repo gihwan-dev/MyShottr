@@ -1,14 +1,27 @@
 import { cleanup, createEvent, fireEvent, render, screen, within } from "@testing-library/react";
-import { forwardRef, useImperativeHandle, useRef, type ReactNode } from "react";
+import { createRef, forwardRef, useImperativeHandle, useRef, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { App, EditorApp } from "./App";
+import { App, EditorApp, type EditorAppHandle } from "./App";
 import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
 import type { EditorCanvasHandle } from "./canvas/EditorCanvas";
 import { keyboardCommandFor } from "./input/ShortcutRouter";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorTool, Point } from "./model/elements";
 import { fixtureDocument, fixtureLine, fixtureRect, fixtureText } from "./test/fixtures";
 import type { ViewportSnapshot } from "./viewport/ViewportController";
+
+const exportMocks = vi.hoisted(() => ({
+  renderDocumentToBlob: vi.fn(async () => new Blob(["png"], { type: "image/png" })),
+  sendComposite: vi.fn(async () => {}),
+}));
+
+vi.mock("./export/renderDocumentToBlob", () => ({
+  renderDocumentToBlob: exportMocks.renderDocumentToBlob,
+}));
+
+vi.mock("./export/sendComposite", () => ({
+  sendComposite: exportMocks.sendComposite,
+}));
 
 vi.mock("./canvas/EditorCanvas", async () => {
   const { createElementFromDocument } = await import("./canvas/tools/createElement");
@@ -150,6 +163,15 @@ vi.mock("./canvas/EditorCanvas", async () => {
       </button>
       <button
         type="button"
+        onClick={() => onCommand({
+          type: "update",
+          element: { ...document.elements[0], x: document.elements[0].x + 1 },
+        })}
+      >
+        Update first element
+      </button>
+      <button
+        type="button"
         onClick={() => {
           onBeginTransaction("move");
           onCommand({
@@ -169,6 +191,8 @@ vi.mock("./canvas/EditorCanvas", async () => {
 });
 
 beforeEach(() => {
+  exportMocks.renderDocumentToBlob.mockClear();
+  exportMocks.sendComposite.mockClear();
   vi.stubGlobal("ResizeObserver", class implements ResizeObserver {
     public constructor(private readonly callback: ResizeObserverCallback) {}
     public disconnect() {}
@@ -201,6 +225,152 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+type NativeMessage = Parameters<NativeBridge["subscribe"]>[0] extends
+  (message: infer Message) => void ? Message : never;
+
+type SentBridgeMessage = {
+  requestId?: string;
+  type: string;
+  payload: unknown;
+};
+
+function createNativeBridgeHarness() {
+  let receiveNative: ((message: NativeMessage) => void) | undefined;
+  const sent: SentBridgeMessage[] = [];
+  const bridge: NativeBridge = {
+    send: async (type, payload) => { sent.push({ type, payload }); },
+    sendCorrelated: async (requestId, type, payload) => {
+      sent.push({ requestId, type, payload });
+    },
+    subscribe: (handler) => {
+      receiveNative = handler;
+      return () => { receiveNative = undefined; };
+    },
+  };
+  return {
+    bridge,
+    sent,
+    receive(message: NativeMessage) {
+      if (!receiveNative) throw new Error("Native bridge is not subscribed");
+      receiveNative(message);
+    },
+    messages(type: string) {
+      return sent.filter((message) => message.type === type);
+    },
+  };
+}
+
+function stubImmediatelyLoadedSourceImage(): void {
+  vi.stubGlobal("Image", class {
+    naturalWidth = 1440;
+    naturalHeight = 900;
+    onload: (() => void) | null = null;
+    set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+  });
+}
+
+const primaryDocumentId = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+const secondaryRequestId = "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB";
+
+function nativeLoadMessage(
+  annotationDocument: EditorDocument,
+  initialTool: EditorTool = "selection",
+  requestId = primaryDocumentId,
+): Extract<NativeMessage, { type: "loadDocument" }> {
+  return {
+    protocolVersion: 1,
+    requestId,
+    type: "loadDocument",
+    payload: {
+      documentId: primaryDocumentId,
+      sourceImageURL: `myshottr-editor://editor/document/${primaryDocumentId}/original.png`,
+      annotationDocument,
+      initialTool,
+    },
+  };
+}
+
+function nativeHistoryMessage(action: "undo" | "redo"): Extract<NativeMessage, { type: "performHistoryAction" }> {
+  return {
+    protocolVersion: 1,
+    requestId: secondaryRequestId,
+    type: "performHistoryAction",
+    payload: { action },
+  };
+}
+
+function historyStatePayloads(harness: ReturnType<typeof createNativeBridgeHarness>) {
+  return harness.messages("historyStateChanged").map((message) => message.payload);
+}
+
+async function renderAcceptedNativeEditor(
+  initialDocument: EditorDocument = fixtureDocument(),
+  initialTool: EditorTool = "selection",
+) {
+  stubImmediatelyLoadedSourceImage();
+  const harness = createNativeBridgeHarness();
+  render(<NativeBridgeProvider bridge={harness.bridge}><App /></NativeBridgeProvider>);
+  harness.receive(nativeLoadMessage(initialDocument, initialTool));
+  await screen.findByRole("button", { name: "Create rectangle from canvas" });
+  await vi.waitFor(() => expect(historyStatePayloads(harness)).toEqual([
+    { canUndo: false, canRedo: false },
+  ]));
+  return harness;
+}
+
+const historyLockCases = [
+  {
+    name: "pointer",
+    document: () => fixtureDocument(),
+    select: () => fireEvent.click(screen.getByRole("button", { name: "Select rect-1" })),
+    enter: () => fireEvent.click(screen.getByRole("button", { name: "Begin canvas interaction" })),
+    leave: () => fireEvent.click(screen.getByRole("button", { name: "End canvas interaction" })),
+  },
+  {
+    name: "nudge",
+    document: () => fixtureDocument(),
+    select: () => fireEvent.click(screen.getByRole("button", { name: "Select rect-1" })),
+    enter: () => fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" }),
+    leave: () => window.dispatchEvent(new Event("blur")),
+  },
+  {
+    name: "text",
+    document: () => fixtureDocument({ elements: [fixtureText()] }),
+    select: () => fireEvent.click(screen.getByRole("button", { name: "Shift-select text-1" })),
+    enter: () => fireEvent.click(screen.getByRole("button", { name: "Edit text-1" })),
+    leave: () => fireEvent.keyDown(screen.getByRole("textbox", { name: "Edit annotation text" }), {
+      code: "Escape",
+      key: "Escape",
+    }),
+  },
+  {
+    name: "slider",
+    document: () => fixtureDocument(),
+    select: () => fireEvent.click(screen.getByRole("button", { name: "Select rect-1" })),
+    enter: () => fireEvent.input(screen.getByRole("slider", { name: "Opacity" }), {
+      target: { value: "50" },
+    }),
+    leave: () => fireEvent.keyDown(screen.getByRole("slider", { name: "Opacity" }), {
+      code: "Escape",
+      key: "Escape",
+    }),
+  },
+  {
+    name: "shortcut help",
+    document: () => fixtureDocument(),
+    select: () => fireEvent.click(screen.getByRole("button", { name: "Select rect-1" })),
+    enter: () => fireEvent.keyDown(window, { code: "Slash", key: "?", shiftKey: true }),
+    leave: () => fireEvent.click(screen.getByRole("button", { name: "Close keyboard shortcuts" })),
+  },
+  {
+    name: "transaction",
+    document: () => fixtureDocument(),
+    select: () => fireEvent.click(screen.getByRole("button", { name: "Select rect-1" })),
+    enter: () => fireEvent.click(screen.getByRole("button", { name: "Begin defaults transaction" })),
+    leave: () => fireEvent.keyDown(window, { code: "Escape", key: "Escape" }),
+  },
+] as const;
 
 describe("EditorApp", () => {
   it("routes every zoom control intent through the measured viewport", () => {
@@ -1793,6 +1963,246 @@ describe("EditorApp", () => {
     expect(duplicated?.seed).toBe(102);
   });
 
+  it("publishes exactly one initial unavailable history state after an accepted load", async () => {
+    const harness = await renderAcceptedNativeEditor();
+    expect(historyStatePayloads(harness)).toEqual([
+      { canUndo: false, canRedo: false },
+    ]);
+  });
+
+  it.each(["keyboard", "native"] as const)(
+    "performs Undo through one shared action for %s",
+    async (source) => {
+      const harness = await renderAcceptedNativeEditor();
+
+      fireEvent.click(screen.getByRole("button", { name: "Create rectangle from canvas" }));
+      fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+      await vi.waitFor(() => expect(historyStatePayloads(harness).at(-1)).toEqual({
+        canUndo: true,
+        canRedo: false,
+      }));
+      harness.sent.length = 0;
+
+      if (source === "keyboard") {
+        fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+      } else {
+        harness.receive(nativeHistoryMessage("undo"));
+      }
+
+      await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+        .toBe("rect-1:0,0"));
+      expect(screen.getByTestId("canvas-selection").textContent).toBe("");
+      expect(harness.messages("documentChanged")).toHaveLength(1);
+      expect(historyStatePayloads(harness)).toEqual([
+        { canUndo: false, canRedo: true },
+      ]);
+    },
+  );
+
+  it.each(historyLockCases)(
+    "publishes and enforces the $name history lock without duplicate state",
+    async (lockCase) => {
+      const harness = await renderAcceptedNativeEditor(lockCase.document());
+      fireEvent.click(screen.getByRole("button", { name: "Create rectangle from canvas" }));
+      lockCase.select();
+      await vi.waitFor(() => expect(historyStatePayloads(harness).at(-1)).toEqual({
+        canUndo: true,
+        canRedo: false,
+      }));
+      harness.sent.length = 0;
+
+      lockCase.enter();
+
+      await vi.waitFor(() => expect(historyStatePayloads(harness)).toEqual([
+        { canUndo: false, canRedo: false },
+      ]));
+      const lockedPositions = screen.getByTestId("canvas-positions").textContent;
+      const lockedSelection = screen.getByTestId("canvas-selection").textContent;
+
+      harness.receive(nativeHistoryMessage("undo"));
+      fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+
+      expect(screen.getByTestId("canvas-positions").textContent).toBe(lockedPositions);
+      expect(screen.getByTestId("canvas-selection").textContent).toBe(lockedSelection);
+      expect(harness.messages("documentChanged")).toEqual([]);
+      expect(historyStatePayloads(harness)).toEqual([
+        { canUndo: false, canRedo: false },
+      ]);
+
+      lockCase.leave();
+
+      await vi.waitFor(() => expect(historyStatePayloads(harness)).toEqual([
+        { canUndo: false, canRedo: false },
+        { canUndo: true, canRedo: false },
+      ]));
+    },
+  );
+
+  it("publishes transaction begin, changed commit, and changed cancel boundaries exactly", async () => {
+    const harness = await renderAcceptedNativeEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: "Begin defaults transaction" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update first element" }));
+    expect(historyStatePayloads(harness)).toEqual([{ canUndo: false, canRedo: false }]);
+    fireEvent.click(screen.getByRole("button", { name: "Commit transaction" }));
+    expect(historyStatePayloads(harness)).toEqual([
+      { canUndo: false, canRedo: false },
+      { canUndo: true, canRedo: false },
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Begin defaults transaction" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update first element" }));
+    expect(historyStatePayloads(harness).at(-1)).toEqual({ canUndo: false, canRedo: false });
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    expect(historyStatePayloads(harness).slice(-2)).toEqual([
+      { canUndo: false, canRedo: false },
+      { canUndo: true, canRedo: false },
+    ]);
+  });
+
+  it("publishes Undo, Redo, and redo-clearing new-command availability", async () => {
+    const harness = await renderAcceptedNativeEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create rectangle from canvas" }));
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    fireEvent.keyDown(window, {
+      code: "KeyZ",
+      key: "z",
+      metaKey: true,
+      shiftKey: true,
+    });
+    harness.receive(nativeHistoryMessage("undo"));
+    await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("rect-1:0,0"));
+    fireEvent.click(screen.getByRole("button", { name: "Update first element" }));
+
+    expect(historyStatePayloads(harness)).toEqual([
+      { canUndo: false, canRedo: false },
+      { canUndo: true, canRedo: false },
+      { canUndo: false, canRedo: true },
+      { canUndo: true, canRedo: false },
+      { canUndo: false, canRedo: true },
+      { canUndo: true, canRedo: false },
+    ]);
+    harness.receive(nativeHistoryMessage("redo"));
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:1,0");
+    expect(historyStatePayloads(harness).at(-1)).toEqual({
+      canUndo: true,
+      canRedo: false,
+    });
+  });
+
+  it("deduplicates impossible Undo and Redo while preserving selection and document", async () => {
+    const harness = await renderAcceptedNativeEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
+    harness.sent.length = 0;
+
+    harness.receive(nativeHistoryMessage("undo"));
+    harness.receive(nativeHistoryMessage("redo"));
+    fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
+    fireEvent.keyDown(window, {
+      code: "KeyZ",
+      key: "z",
+      metaKey: true,
+      shiftKey: true,
+    });
+
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:0,0");
+    expect(screen.getByTestId("canvas-selection").textContent).toBe("rect-1");
+    expect(harness.messages("documentChanged")).toEqual([]);
+    expect(historyStatePayloads(harness)).toEqual([]);
+  });
+
+  it("returns the latest canonical document through one stable editor handle", () => {
+    const editorRef = createRef<EditorAppHandle>();
+    const view = render(<EditorApp
+      ref={editorRef}
+      initialDocument={fixtureDocument()}
+      initialTool="selection"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={() => {}}
+      onPreferencesChange={() => {}}
+    />);
+    const handle = editorRef.current;
+    if (!handle) throw new Error("Editor handle was not installed");
+
+    expect(handle.getDocument().elements.map((element) => element.id)).toEqual(["rect-1"]);
+    expect(handle.performHistoryAction("undo")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Create rectangle from canvas" }));
+    expect(handle.getDocument().elements.map((element) => element.id)).toEqual(["rect-1", "rect-2"]);
+    expect(handle.performHistoryAction("undo")).toBe(true);
+    expect(handle.getDocument().elements.map((element) => element.id)).toEqual(["rect-1"]);
+    expect(handle.performHistoryAction("redo")).toBe(true);
+    expect(handle.getDocument().elements.map((element) => element.id)).toEqual(["rect-1", "rect-2"]);
+    expect(handle.performHistoryAction("redo")).toBe(false);
+
+    view.unmount();
+    expect(editorRef.current).toBeNull();
+  });
+
+  it("uses the replaced editor handle's latest document for snapshot and composite output", async () => {
+    stubImmediatelyLoadedSourceImage();
+    const harness = createNativeBridgeHarness();
+    render(<NativeBridgeProvider bridge={harness.bridge}><App /></NativeBridgeProvider>);
+    const firstDocument = fixtureDocument({ elements: [{ ...fixtureRect(), x: 20 }] });
+    const secondDocument = fixtureDocument({ elements: [{ ...fixtureRect(), x: 200 }] });
+    harness.receive(nativeLoadMessage(firstDocument));
+    await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("rect-1:20,0"));
+    harness.receive(nativeLoadMessage(secondDocument, "selection", secondaryRequestId));
+    await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
+      .toBe("rect-1:200,0"));
+    fireEvent.click(screen.getByRole("button", { name: "Update first element" }));
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:201,0");
+
+    window.dispatchEvent(new CustomEvent("myshottr:request-annotation-snapshot", {
+      detail: { requestId: secondaryRequestId },
+    }));
+    harness.receive({
+      protocolVersion: 1,
+      requestId: secondaryRequestId,
+      type: "requestComposite",
+      payload: { requestId: secondaryRequestId },
+    });
+
+    await vi.waitFor(() => expect(harness.sent).toContainEqual({
+      requestId: secondaryRequestId,
+      type: "annotationSnapshot",
+      payload: {
+        document: expect.objectContaining({
+          elements: [expect.objectContaining({ id: "rect-1", x: 201 })],
+        }),
+      },
+    }));
+    expect(exportMocks.renderDocumentToBlob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        elements: [expect.objectContaining({ id: "rect-1", x: 201 })],
+      }),
+      `myshottr-editor://editor/document/${primaryDocumentId}/original.png`,
+    );
+    await vi.waitFor(() => expect(exportMocks.sendComposite).toHaveBeenCalledOnce());
+    expect(historyStatePayloads(harness)).toEqual([
+      { canUndo: false, canRedo: false },
+      { canUndo: false, canRedo: false },
+      { canUndo: true, canRedo: false },
+    ]);
+  });
+
+  it("keeps native history actions safe before load and after editor replacement", async () => {
+    stubImmediatelyLoadedSourceImage();
+    const harness = createNativeBridgeHarness();
+    const view = render(<NativeBridgeProvider bridge={harness.bridge}><App /></NativeBridgeProvider>);
+
+    expect(() => harness.receive(nativeHistoryMessage("undo"))).not.toThrow();
+    expect(harness.messages("documentChanged")).toEqual([]);
+    harness.receive(nativeLoadMessage(fixtureDocument()));
+    await screen.findByRole("button", { name: "Create rectangle from canvas" });
+    view.unmount();
+
+    expect(() => harness.receive(nativeHistoryMessage("redo"))).toThrow("Native bridge is not subscribed");
+    expect(harness.messages("documentChanged")).toEqual([]);
+  });
+
   it("acknowledges an accepted native document with the correlated snapshot", async () => {
     vi.stubGlobal("Image", class {
       naturalWidth = 1440;
@@ -2034,6 +2444,10 @@ describe("EditorApp", () => {
     expect(screen.getByTestId("canvas-positions").textContent).toBe("line-1:15,20");
     expect(screen.getByRole("button", { name: "Line, shortcut L" }).getAttribute("aria-pressed"))
       .toBe("true");
+    expect(sent.filter(({ type }) => type === "historyStateChanged")).toEqual([{
+      type: "historyStateChanged",
+      payload: { canUndo: false, canRedo: false },
+    }]);
   });
 
   it("returns a correlated annotation snapshot through the local native request event", async () => {

@@ -1,6 +1,8 @@
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   useSyncExternalStore,
@@ -36,7 +38,11 @@ import {
 import { useNativeBridge } from "./bridge/nativeBridge";
 import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
 import { sendComposite } from "./export/sendComposite";
-import { createHistoryStore, type HistoryStore } from "./model/history";
+import {
+  createHistoryStore,
+  type HistoryAvailability,
+  type HistoryStore,
+} from "./model/history";
 import { applyRailProperty, findElement } from "./model/reducer";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, TextElement } from "./model/elements";
 import { KONVA_DEFAULT_FONT_FAMILY, TEXT_LINE_HEIGHT } from "./canvas/renderingConstants";
@@ -49,10 +55,16 @@ export type EditorAppProps = {
   initialTool: EditorTool;
   sourceImageURL: string;
   onChange: (document: EditorDocument) => void;
+  onHistoryStateChange?: (state: HistoryAvailability) => void;
   onPreferencesChange: (tool: EditorTool, defaults: EditorDefaults) => void;
 };
 
-export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChange, onPreferencesChange }: EditorAppProps) {
+export type EditorAppHandle = {
+  getDocument(): EditorDocument;
+  performHistoryAction(action: "undo" | "redo"): boolean;
+};
+
+export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function EditorApp({ initialDocument, initialTool, sourceImageURL, onChange, onHistoryStateChange, onPreferencesChange }, ref) {
   const historyRef = useRef<HistoryStore | undefined>(undefined);
   if (!historyRef.current) historyRef.current = createHistoryStore(initialDocument);
   const history = historyRef.current;
@@ -75,6 +87,40 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
   const [locks, setLocks] = useState({ slider: false });
   const [nudgeSession, setNudgeSession] = useState<NudgeSession>();
   const textLocked = textEditSession !== undefined;
+  const lastHistoryState = useRef<HistoryAvailability | undefined>(undefined);
+  const historyLocksRef = useRef<HistoryLocks>({
+    canvasInteraction: false,
+    nudge: false,
+    text: false,
+    slider: false,
+    shortcutHelp: false,
+    transaction: false,
+  });
+  historyLocksRef.current = {
+    canvasInteraction: canvasInteractionActive,
+    nudge: nudgeSession !== undefined,
+    text: textLocked,
+    slider: locks.slider,
+    shortcutHelp: shortcutHelpOpen,
+    transaction: history.isTransactionActive,
+  };
+
+  const publishHistoryState = useCallback(() => {
+    if (!onHistoryStateChange) return;
+    const currentLocks = {
+      ...historyLocksRef.current,
+      transaction: history.isTransactionActive,
+    };
+    const next: HistoryAvailability = isHistoryLocked(currentLocks)
+      ? { canUndo: false, canRedo: false }
+      : { canUndo: history.canUndo, canRedo: history.canRedo };
+    if (
+      lastHistoryState.current?.canUndo === next.canUndo
+      && lastHistoryState.current?.canRedo === next.canRedo
+    ) return;
+    lastHistoryState.current = next;
+    onHistoryStateChange(next);
+  }, [history, onHistoryStateChange]);
 
   const publishSceneChange = useCallback(() => {
     onChange(history.getSnapshot());
@@ -84,12 +130,14 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     setNudgeSession(undefined);
     history.dispatch(command);
     publishSceneChange();
-  }, [history, publishSceneChange]);
+    publishHistoryState();
+  }, [history, publishHistoryState, publishSceneChange]);
   const updateDefaults = useCallback((nextDefaults: EditorDefaults) => {
     setNudgeSession(undefined);
     history.setDefaults(nextDefaults);
     onPreferencesChange(tool, history.getSnapshot().defaults);
-  }, [history, onPreferencesChange, tool]);
+    publishHistoryState();
+  }, [history, onPreferencesChange, publishHistoryState, tool]);
   const select = useCallback((id: string | undefined, toggle = false) => {
     setNudgeSession(undefined);
     setSelectionOpacityPreview(undefined);
@@ -194,6 +242,42 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
     document: renderedDocument,
     selectedIds,
   });
+  const performHistoryAction = useCallback((action: "undo" | "redo"): boolean => {
+    const currentLocks = {
+      ...historyLocksRef.current,
+      transaction: history.isTransactionActive,
+    };
+    if (isHistoryLocked(currentLocks)) {
+      publishHistoryState();
+      return false;
+    }
+    const changed = action === "undo" ? history.undo() : history.redo();
+    if (!changed) {
+      publishHistoryState();
+      return false;
+    }
+    setSelectedIds([]);
+    publishSceneChange();
+    publishHistoryState();
+    return true;
+  }, [history, publishHistoryState, publishSceneChange]);
+
+  useImperativeHandle(ref, () => ({
+    getDocument: history.getSnapshot,
+    performHistoryAction,
+  }), [history, performHistoryAction]);
+
+  useEffect(() => {
+    publishHistoryState();
+  }, [
+    canvasInteractionActive,
+    locks.slider,
+    nudgeSession,
+    publishHistoryState,
+    shortcutHelpOpen,
+    textLocked,
+  ]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isNudgeCode(event.code)) {
@@ -255,7 +339,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         }
         return;
       }
-      const command = keyboardCommandFor(event, {
+      const commandContext = {
         interactionActive: history.isTransactionActive
           || locks.slider
           || textLocked
@@ -263,7 +347,21 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
           || canvasInteractionActive,
         shortcutHelpOpen,
         textEditing: textLocked,
-      });
+      };
+      const routedCommand = keyboardCommandFor(event, commandContext);
+      const otherwiseSuppressedCommand = routedCommand
+        ? undefined
+        : keyboardCommandFor(event, {
+            interactionActive: false,
+            shortcutHelpOpen: false,
+            textEditing: false,
+          });
+      const command = routedCommand ?? (
+        otherwiseSuppressedCommand?.type === "undo"
+          || otherwiseSuppressedCommand?.type === "redo"
+          ? otherwiseSuppressedCommand
+          : undefined
+      );
       if (!command) return;
       event.preventDefault();
       if (command.type === "escape") {
@@ -280,6 +378,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
           setLocks((current) => ({ ...current, slider: false }));
         } else if (history.isTransactionActive) {
           if (history.cancelTransaction()) publishSceneChange();
+          publishHistoryState();
         } else if (tool !== "selection") {
           selectTool("selection");
         } else {
@@ -323,10 +422,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
         return;
       }
       if (command.type === "undo" || command.type === "redo") {
-        if (history[command.type]()) {
-          publishSceneChange();
-          select(undefined);
-        }
+        performHistoryAction(command.type);
         return;
       }
       selectTool(command.tool);
@@ -358,7 +454,7 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [beginTextEdit, canvasInteractionActive, copySelection, dispatch, duplicateSelection, finishTextEdit, history, locks.slider, nudgeSession, pasteSelection, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, textEditSession, textLocked, tool]);
+  }, [beginTextEdit, canvasInteractionActive, copySelection, dispatch, duplicateSelection, finishTextEdit, history, locks.slider, nudgeSession, pasteSelection, performHistoryAction, publishHistoryState, publishSceneChange, reorderSelection, select, selectTool, selectedIds, shortcutHelpOpen, textEditSession, textLocked, tool]);
 
   useEffect(() => {
     const cancelNudge = () => setNudgeSession(undefined);
@@ -446,14 +542,19 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
               onEditText={beginTextEdit}
               onBeginNewText={beginNewText}
               onCommand={dispatch}
-              onBeginTransaction={(label) => history.beginTransaction(label)}
+              onBeginTransaction={(label) => {
+                history.beginTransaction(label);
+                publishHistoryState();
+              }}
               onCommitTransaction={() => {
                 history.commitTransaction();
+                publishHistoryState();
               }}
               onCancelTransaction={() => {
                 if (history.cancelTransaction()) {
                   publishSceneChange();
                 }
+                publishHistoryState();
               }}
               onViewportWheel={onWheel}
               onViewportPanBy={panBy}
@@ -487,13 +588,31 @@ export function EditorApp({ initialDocument, initialTool, sourceImageURL, onChan
       )}
     </main>
   );
-}
+});
 
 type NudgeSession = {
   startingElements: readonly EditorElement[];
   previewElements: readonly EditorElement[];
   heldCodes: Set<string>;
 };
+
+type HistoryLocks = {
+  canvasInteraction: boolean;
+  nudge: boolean;
+  text: boolean;
+  slider: boolean;
+  shortcutHelp: boolean;
+  transaction: boolean;
+};
+
+function isHistoryLocked(locks: HistoryLocks): boolean {
+  return locks.canvasInteraction
+    || locks.nudge
+    || locks.text
+    || locks.slider
+    || locks.shortcutHelp
+    || locks.transaction;
+}
 
 type NudgeCode = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 
@@ -562,8 +681,9 @@ function measureTextBounds(text: string, fontSize: TextElement["fontSize"]): Pic
 
 export function App() {
   const bridge = useNativeBridge();
+  const editorRef = useRef<EditorAppHandle>(null);
   const [loadedDocument, setLoadedDocument] = useState<LoadedDocument>();
-  const loadedDocumentRef = useRef<LoadedDocument | undefined>(undefined);
+  const loadedDocumentRef = useRef<LoadedDocumentIdentity | undefined>(undefined);
   const acceptedLoadSequence = useRef(0);
   const latestLoadRequestSequence = useRef(0);
 
@@ -588,26 +708,30 @@ export function App() {
       }
       acceptedLoadSequence.current += 1;
       const nextDocument = {
-        document: annotationDocument,
+        initialDocument: annotationDocument,
         sourceImageURL,
         initialTool,
         loadInstanceId: acceptedLoadSequence.current,
       };
-      loadedDocumentRef.current = nextDocument;
+      editorRef.current = null;
+      loadedDocumentRef.current = {
+        sourceImageURL,
+        loadInstanceId: nextDocument.loadInstanceId,
+      };
       setLoadedDocument(nextDocument);
       await bridge.sendCorrelated(message.requestId, "annotationSnapshot", { document: annotationDocument });
     };
     const receiveAnnotationSnapshotRequest = (event: Event) => {
       if (!(event instanceof CustomEvent) || typeof event.detail?.requestId !== "string") return;
-      const loaded = loadedDocumentRef.current;
-      if (!loaded) {
+      const currentDocument = editorRef.current?.getDocument();
+      if (!currentDocument) {
         void bridge.sendCorrelated(event.detail.requestId, "bridgeError", {
           code: "INVALID_DOCUMENT",
           message: "No editor document is loaded",
         });
         return;
       }
-      void bridge.sendCorrelated(event.detail.requestId, "annotationSnapshot", { document: loaded.document });
+      void bridge.sendCorrelated(event.detail.requestId, "annotationSnapshot", { document: currentDocument });
     };
     void bridge.send("editorReady", {});
     const unsubscribe = bridge.subscribe((message) => {
@@ -615,9 +739,14 @@ export function App() {
         void acceptLoad(message);
         return;
       }
-      if (message.type === "requestComposite" && loadedDocumentRef.current) {
+      if (message.type === "performHistoryAction") {
+        editorRef.current?.performHistoryAction(message.payload.action);
+        return;
+      }
+      if (message.type === "requestComposite" && loadedDocumentRef.current && editorRef.current) {
         const loaded = loadedDocumentRef.current;
-        void renderDocumentToBlob(loaded.document, loaded.sourceImageURL)
+        const currentDocument = editorRef.current.getDocument();
+        void renderDocumentToBlob(currentDocument, loaded.sourceImageURL)
           .then((blob) => sendComposite({ requestId: message.requestId, blob, sendCorrelated: bridge.sendCorrelated }))
           .catch((error: unknown) => bridge.sendCorrelated(message.requestId, "bridgeError", {
             code: "RENDER_FAILED",
@@ -635,34 +764,38 @@ export function App() {
 
   if (!loadedDocument) return <main aria-label="MyShottr editor">Waiting for document</main>;
   return <EditorApp
+    ref={editorRef}
     key={loadedDocument.loadInstanceId}
-    initialDocument={loadedDocument.document}
+    initialDocument={loadedDocument.initialDocument}
     initialTool={loadedDocument.initialTool}
     sourceImageURL={loadedDocument.sourceImageURL}
     onChange={(document) => {
       const loaded = loadedDocumentRef.current;
       if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
-      loadedDocumentRef.current = { ...loaded, document };
+      if (editorRef.current?.getDocument() !== document) return;
       void bridge.send("documentChanged", {});
+    }}
+    onHistoryStateChange={(state) => {
+      const loaded = loadedDocumentRef.current;
+      if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
+      void bridge.send("historyStateChanged", state);
     }}
     onPreferencesChange={(tool, defaults) => {
       const loaded = loadedDocumentRef.current;
       if (!loaded || loaded.loadInstanceId !== loadedDocument.loadInstanceId) return;
-      loadedDocumentRef.current = {
-        ...loaded,
-        document: { ...loaded.document, defaults },
-      };
       void bridge.send("editorPreferencesChanged", { tool, defaults });
     }}
   />;
 }
 
 type LoadedDocument = {
-  document: EditorDocument;
+  initialDocument: EditorDocument;
   sourceImageURL: string;
   initialTool: EditorTool;
   loadInstanceId: number;
 };
+
+type LoadedDocumentIdentity = Pick<LoadedDocument, "sourceImageURL" | "loadInstanceId">;
 
 function sourceDimensions(sourceImageURL: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {

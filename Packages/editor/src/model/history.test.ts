@@ -141,6 +141,60 @@ describe("applyCommand", () => {
 });
 
 describe("createHistoryStore", () => {
+  it("reports every history availability transition from the canonical stacks", () => {
+    const history = createHistoryStore(fixtureDocument());
+    const transitions: Array<{
+      operation: string;
+      canUndo: boolean;
+      canRedo: boolean;
+    }> = [];
+    const record = (operation: string) => transitions.push({
+      operation,
+      canUndo: history.canUndo,
+      canRedo: history.canRedo,
+    });
+
+    record("initial");
+    history.dispatch({ type: "update", element: { ...fixtureRect(), x: 10 } });
+    record("first command");
+    history.dispatch({ type: "update", element: { ...fixtureRect(), x: 20 } });
+    history.undo();
+    record("undo with past remaining");
+    history.redo();
+    record("redo with future exhausted");
+    history.undo();
+    history.dispatch({ type: "update", element: { ...fixtureRect(), x: 30 } });
+    record("new command after undo");
+    history.beginTransaction("move");
+    record("active transaction");
+    history.dispatch({ type: "update", element: { ...fixtureRect(), x: 40 } });
+    record("changed active transaction");
+    history.commitTransaction();
+    record("changed transaction commit");
+    history.undo();
+    const beforeCancel = {
+      availability: { canUndo: history.canUndo, canRedo: history.canRedo },
+      x: findElement(history.document, "rect-1").x,
+    };
+    history.beginTransaction("cancelled move");
+    history.dispatch({ type: "update", element: { ...fixtureRect(), x: 99 } });
+    history.cancelTransaction();
+    record("transaction cancel");
+
+    expect(transitions).toEqual([
+      { operation: "initial", canUndo: false, canRedo: false },
+      { operation: "first command", canUndo: true, canRedo: false },
+      { operation: "undo with past remaining", canUndo: true, canRedo: true },
+      { operation: "redo with future exhausted", canUndo: true, canRedo: false },
+      { operation: "new command after undo", canUndo: true, canRedo: false },
+      { operation: "active transaction", canUndo: false, canRedo: false },
+      { operation: "changed active transaction", canUndo: false, canRedo: false },
+      { operation: "changed transaction commit", canUndo: true, canRedo: false },
+      { operation: "transaction cancel", ...beforeCancel.availability },
+    ]);
+    expect(findElement(history.document, "rect-1").x).toBe(beforeCancel.x);
+  });
+
   it("coalesces a transform drag into one undo entry", () => {
     const history = createHistoryStore(fixtureDocument());
     history.beginTransaction("transform");
@@ -279,6 +333,23 @@ describe("createHistoryStore", () => {
     expect(history.document.elements).toEqual([]);
     expect(history.document.defaults.rectangleFillColor).toBe("#FADB14");
     expect(history.document.defaults.highlighterOpacity).toBe(0.25);
+  });
+
+  it("keeps the latest defaults through redo and transaction cancellation", () => {
+    const history = createHistoryStore(fixtureDocument());
+    history.dispatch({ type: "update", element: { ...fixtureRect(), x: 10 } });
+    history.undo();
+    history.setDefaults({ ...history.document.defaults, strokeWidth: 8 });
+
+    expect(history.redo()).toBe(true);
+    expect(history.document.defaults.strokeWidth).toBe(8);
+
+    history.beginTransaction("move");
+    history.dispatch({ type: "update", element: { ...fixtureRect(), x: 30 } });
+    history.setDefaults({ ...history.document.defaults, roughness: 2 });
+    expect(history.cancelTransaction()).toBe(true);
+    expect(findElement(history.document, "rect-1").x).toBe(10);
+    expect(history.document.defaults).toMatchObject({ strokeWidth: 8, roughness: 2 });
   });
 
   it("does not add a history entry when defaults change", () => {
