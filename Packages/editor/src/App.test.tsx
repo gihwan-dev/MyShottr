@@ -233,7 +233,7 @@ describe("EditorApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
     fireEvent.keyDown(window, { code: "Digit2", key: "@", shiftKey: true });
-    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("547%");
+    expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("529%");
     fireEvent.keyDown(window, { code: "Digit1", key: "!", shiftKey: true });
     expect(screen.getByRole("status", { name: "Zoom level" }).textContent).toBe("46%");
     fireEvent.keyDown(window, { code: "Digit0", key: "0", metaKey: true });
@@ -245,7 +245,7 @@ describe("EditorApp", () => {
       label: "a rectangle rotated 90° around its Konva Group origin",
       element: { ...fixtureRect(), x: 500, y: 300, rotation: 90 },
       selectName: "Select rect-1",
-      bounds: { x: 420, y: 300, width: 80, height: 120 },
+      bounds: { x: 418, y: 298, width: 84, height: 124 },
     },
     {
       label: "a line rotated 30° around its Konva Group origin",
@@ -751,7 +751,7 @@ describe("EditorApp", () => {
   });
 
   it("clamps held Shift-nudge to source bounds before one release commit", () => {
-    const rectangle = { ...fixtureRect(), x: 79, y: 20, width: 20, height: 20 };
+    const rectangle = { ...fixtureRect(), x: 77, y: 20, width: 20, height: 20 };
     const changes: EditorDocument[] = [];
     render(<EditorApp
       initialDocument={fixtureDocument({
@@ -777,12 +777,12 @@ describe("EditorApp", () => {
       shiftKey: true,
       repeat: true,
     });
-    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:80,20");
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:78,20");
     expect(changes).toHaveLength(0);
 
     fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
     expect(changes).toHaveLength(1);
-    expect(changes[0].elements[0]).toMatchObject({ x: 80, y: 20 });
+    expect(changes[0].elements[0]).toMatchObject({ x: 78, y: 20 });
   });
 
   it("keeps an oversized nudge axis fixed without adding no-op history", () => {
@@ -898,7 +898,9 @@ describe("EditorApp", () => {
   it("cancels a held nudge on tool switch so late keyup cannot create history", () => {
     const onChange = vi.fn();
     render(<EditorApp
-      initialDocument={fixtureDocument()}
+      initialDocument={fixtureDocument({
+        elements: [{ ...fixtureRect(), x: 20, y: 20 }],
+      })}
       initialTool="selection"
       sourceImageURL="data:image/png;base64,iVBORw0KGgo="
       onChange={onChange}
@@ -907,13 +909,13 @@ describe("EditorApp", () => {
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
 
     fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
-    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:1,0");
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:21,20");
 
     fireEvent.click(screen.getByRole("button", { name: "Rectangle, shortcut R" }));
     fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
     fireEvent.keyDown(window, { code: "KeyZ", key: "z", metaKey: true });
 
-    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:0,0");
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:20,20");
     expect(screen.getByTestId("canvas-selection").textContent).toBe("");
     expect(onChange).not.toHaveBeenCalled();
   });
@@ -921,7 +923,9 @@ describe("EditorApp", () => {
   it("removes a held nudge owner on unmount so late keyup cannot publish", () => {
     const onChange = vi.fn();
     const view = render(<EditorApp
-      initialDocument={fixtureDocument()}
+      initialDocument={fixtureDocument({
+        elements: [{ ...fixtureRect(), x: 20, y: 20 }],
+      })}
       initialTool="selection"
       sourceImageURL="data:image/png;base64,iVBORw0KGgo="
       onChange={onChange}
@@ -929,7 +933,7 @@ describe("EditorApp", () => {
     />);
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
     fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
-    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:1,0");
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:21,20");
 
     view.unmount();
     fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });
@@ -1485,7 +1489,9 @@ describe("EditorApp", () => {
       },
     };
     const sourceImageURL = "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png";
-    const firstDocument = fixtureDocument();
+    const firstDocument = fixtureDocument({
+      elements: [{ ...fixtureRect(), x: 20, y: 20 }],
+    });
     const secondDocument = fixtureDocument({ elements: [fixtureLine()] });
 
     render(<NativeBridgeProvider bridge={bridge}><App /></NativeBridgeProvider>);
@@ -1501,10 +1507,10 @@ describe("EditorApp", () => {
       },
     });
     await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
-      .toBe("rect-1:0,0"));
+      .toBe("rect-1:20,20"));
     fireEvent.click(screen.getByRole("button", { name: "Select rect-1" }));
     fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
-    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:1,0");
+    expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:21,20");
     expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("true");
 
     receiveNative!({

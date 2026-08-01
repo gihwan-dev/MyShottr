@@ -1918,6 +1918,56 @@ describe("EditorCanvas gesture terminals", () => {
     expect(history.undo()).toBe(false);
   });
 
+  it("cancels an identity transform terminal without publishing history", () => {
+    const initial = fixtureDocument();
+    const startingElement = initial.elements[0];
+    const history = createHistoryStore(initial);
+    const onCommand = vi.fn((command) => history.dispatch(command));
+    const onCommitTransaction = vi.fn(() => history.commitTransaction());
+    const onCancelTransaction = vi.fn(() => history.cancelTransaction());
+    const onHistoryChange = vi.fn();
+    history.subscribe(onHistoryChange);
+    render(
+      <EditorCanvas
+        document={initial}
+        sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+        tool="selection"
+        {...VIEWPORT_PROPS}
+        selectedIds={["rect-1"]}
+        onSelect={() => {}}
+        onEditText={() => {}}
+        onCommand={onCommand}
+        onBeginTransaction={(label) => history.beginTransaction(label)}
+        onCommitTransaction={onCommitTransaction}
+        onCancelTransaction={onCancelTransaction}
+        textEditorOverlay={undefined}
+      />,
+    );
+    const stage = screen.getByTestId("stage");
+    const annotation = screen.getByTestId("annotation-node");
+
+    startAnnotationTransform(annotation, 7);
+    Object.assign(konvaControl.annotationValues, {
+      x: startingElement.x,
+      y: startingElement.y,
+      scaleX: 1,
+      scaleY: 1,
+      rotation: startingElement.rotation,
+    });
+    fireEvent.contextMenu(annotation);
+    fireEvent.contextMenu(annotation);
+    fireEvent.pointerCancel(stage, { pointerId: 7 });
+    fireEvent(window, new Event("blur"));
+
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onCommitTransaction).not.toHaveBeenCalled();
+    expect(onCancelTransaction).toHaveBeenCalledOnce();
+    expect(onHistoryChange).not.toHaveBeenCalled();
+    expect(history.document.elements).toEqual(initial.elements);
+    expect(history.isTransactionActive).toBe(false);
+    expect(history.undo()).toBe(false);
+  });
+
   it("commits one updateMany command for a group transform", () => {
     const initial = fixtureDocument({ elements: [fixtureDocument().elements[0], fixtureText()] });
     const history = createHistoryStore(initial);
@@ -2138,6 +2188,13 @@ function startAnnotationMove(
 function startAnnotationTransform(annotation: HTMLElement, pointerId = 1): void {
   fireEvent.pointerDown(screen.getByTestId("transformer"), { pointerId });
   fireEvent.doubleClick(annotation);
+  Object.assign(konvaControl.annotationValues, {
+    x: 40,
+    y: 50,
+    scaleX: 0.5,
+    scaleY: 1.25,
+    rotation: 15,
+  });
 }
 
 function renderSelectionCanvas(

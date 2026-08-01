@@ -665,6 +665,10 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
                     selectedNode.scaleY(1);
                     return resized;
                   });
+                  if (sameElementSnapshots(active.elements, transformedElements)) {
+                    cancelAnnotationTransaction();
+                    return;
+                  }
                   onCommand({
                     type: "updateMany",
                     elements: transformedElements,

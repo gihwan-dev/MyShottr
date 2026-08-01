@@ -151,7 +151,7 @@ describe("moveElementsWithinBounds", () => {
     expect(moved[1]).toMatchObject({ x: 60, y: 52 });
   });
 
-  it("clamps a rotated rectangle by its rendered AABB at the source edge", () => {
+  it("clamps a thick rotated rectangle by its stroked rendered AABB at the source edge", () => {
     const rectangle = {
       ...fixtureRect(),
       x: 50,
@@ -159,6 +159,7 @@ describe("moveElementsWithinBounds", () => {
       width: 40,
       height: 20,
       rotation: 45,
+      strokeWidth: 8 as const,
     };
 
     const [moved] = moveElementsWithinBounds(
@@ -168,8 +169,12 @@ describe("moveElementsWithinBounds", () => {
     );
 
     const renderedBounds = rotatedElementBounds(moved);
+    expect(renderedBounds.x).toBeGreaterThanOrEqual(0);
+    expect(renderedBounds.y).toBeGreaterThanOrEqual(0);
     expect(renderedBounds.x + renderedBounds.width).toBeCloseTo(100);
     expect(renderedBounds.y + renderedBounds.height).toBeCloseTo(100);
+    expect(renderedBounds.x + renderedBounds.width).toBeLessThanOrEqual(100);
+    expect(renderedBounds.y + renderedBounds.height).toBeLessThanOrEqual(100);
   });
 
   it("clamps a rotated stroked line by its endpoint AABB at the source edge", () => {

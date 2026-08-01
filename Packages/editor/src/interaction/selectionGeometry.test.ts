@@ -9,7 +9,7 @@ import {
 } from "./selectionGeometry";
 
 describe("selection geometry", () => {
-  it("rotates box corners around the rendered Konva Group origin", () => {
+  it("rotates rectangle corners around the Konva Group origin and expands its visible stroke", () => {
     const rectangle = {
       ...fixtureRect(),
       x: 100,
@@ -17,13 +17,14 @@ describe("selection geometry", () => {
       width: 80,
       height: 20,
       rotation: 45,
+      strokeWidth: 8 as const,
     };
 
     expect(rotatedElementBounds(rectangle)).toEqual({
-      x: 85.85786437626905,
-      y: 100,
-      width: 70.71067811865476,
-      height: 70.71067811865476,
+      x: 81.85786437626905,
+      y: 96,
+      width: 78.71067811865476,
+      height: 78.71067811865476,
     });
   });
 
@@ -40,6 +41,22 @@ describe("selection geometry", () => {
     expect(intersectingElementIds(
       [rectangle],
       { x: 154, y: 152, width: 8, height: 8 },
+    )).toEqual([rectangle.id]);
+  });
+
+  it("selects a rectangle through a marquee intersecting only its visible thick stroke", () => {
+    const rectangle = {
+      ...fixtureRect(),
+      x: 100,
+      y: 100,
+      width: 80,
+      height: 20,
+      strokeWidth: 8 as const,
+    };
+
+    expect(intersectingElementIds(
+      [rectangle],
+      { x: 97, y: 105, width: 1, height: 1 },
     )).toEqual([rectangle.id]);
   });
 
@@ -106,8 +123,8 @@ describe("selection geometry", () => {
     expect(unionBounds([rectangle, line])).toEqual({
       x: 13,
       y: 18,
-      width: 143.5685424949238,
-      height: 152.71067811865476,
+      width: 145.5685424949238,
+      height: 154.71067811865476,
     });
     expect(unionBounds([])).toBeUndefined();
   });

@@ -196,6 +196,7 @@ function rotateAroundElementOrigin(
 
 function strokeExpansionFor(element: EditorElement): number {
   switch (element.type) {
+    case "rectangle":
     case "arrow":
     case "line":
     case "freehand":
