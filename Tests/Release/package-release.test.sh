@@ -232,6 +232,10 @@ cat >"${APP_STAGING}/Contents/Info.plist" <<'PLIST'
 <dict>
   <key>CFBundleExecutable</key>
   <string>MyShottr</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>CFBundleIconName</key>
+  <string>AppIcon</string>
   <key>CFBundleIdentifier</key>
   <string>com.myshottr.app</string>
   <key>CFBundlePackageType</key>
@@ -357,6 +361,28 @@ expect_failure \
   "unexpected app executable" \
   "app contains an unexpected executable" \
   "${TEST_ROOT}/unexpected-executable.log" \
+  "${VERIFY_SCRIPT}" "0.1.0" "${ARTIFACT_DIRECTORY}"
+
+UNEXPECTED_ICON_NAME_ROOT="${TEST_ROOT}/unexpected-icon-name"
+ditto -x -k "${TEST_ROOT}/valid-app.zip" "${UNEXPECTED_ICON_NAME_ROOT}"
+plutil -replace CFBundleIconName -string WrongIcon \
+  "${UNEXPECTED_ICON_NAME_ROOT}/MyShottr.app/Contents/Info.plist"
+repack_app_without_metadata "${UNEXPECTED_ICON_NAME_ROOT}"
+expect_failure \
+  "unexpected app icon name" \
+  "app icon name is not AppIcon" \
+  "${TEST_ROOT}/unexpected-icon-name.log" \
+  "${VERIFY_SCRIPT}" "0.1.0" "${ARTIFACT_DIRECTORY}"
+
+UNEXPECTED_ICON_FILE_ROOT="${TEST_ROOT}/unexpected-icon-file"
+ditto -x -k "${TEST_ROOT}/valid-app.zip" "${UNEXPECTED_ICON_FILE_ROOT}"
+plutil -replace CFBundleIconFile -string WrongIcon \
+  "${UNEXPECTED_ICON_FILE_ROOT}/MyShottr.app/Contents/Info.plist"
+repack_app_without_metadata "${UNEXPECTED_ICON_FILE_ROOT}"
+expect_failure \
+  "unexpected app icon file" \
+  "app icon file is not AppIcon" \
+  "${TEST_ROOT}/unexpected-icon-file.log" \
   "${VERIFY_SCRIPT}" "0.1.0" "${ARTIFACT_DIRECTORY}"
 
 APP_PRIVATE_KEY_ROOT="${TEST_ROOT}/app-private-key"

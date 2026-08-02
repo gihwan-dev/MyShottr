@@ -6,6 +6,7 @@ const CI_PATH = ".github/workflows/ci.yml";
 const RELEASE_PATH = ".github/workflows/release.yml";
 const XCODE_DEVELOPER_DIR =
   "/Applications/Xcode_26.3.app/Contents/Developer";
+const ZSH_SHELL = "/bin/zsh {0}";
 
 const AUDITED_ACTIONS = Object.freeze({
   "actions/checkout": Object.freeze({
@@ -108,6 +109,21 @@ function parseYaml(source, label) {
 
 function assertExactKeys(object, keys, label) {
   assert.deepEqual(Object.keys(object).sort(), [...keys].sort(), label);
+}
+
+function assertWorkflowShellTemplates(workflow, label) {
+  for (const job of Object.values(workflow.jobs)) {
+    for (const step of job.steps) {
+      if (!Object.hasOwn(step, "shell")) {
+        continue;
+      }
+      assert.equal(
+        step.shell,
+        ZSH_SHELL,
+        `${label} step "${step.name}" must use shell: ${ZSH_SHELL}`,
+      );
+    }
+  }
 }
 
 function pinnedUses(action) {
@@ -224,6 +240,7 @@ function validateCI(ciSource) {
   assert.deepEqual(ci.jobs.verify.env, {
     DEVELOPER_DIR: XCODE_DEVELOPER_DIR,
   });
+  assertWorkflowShellTemplates(ci, "CI workflow");
   assert.deepEqual(ci.jobs.verify.steps, [
     actionStep("Check out source", "actions/checkout", {
       "persist-credentials": false,
@@ -241,12 +258,12 @@ function validateCI(ciSource) {
     },
     {
       name: "Verify project Xcode requirement",
-      shell: "zsh",
+      shell: ZSH_SHELL,
       run: XCODE_REQUIREMENT_RUN,
     },
     {
       name: "Verify v1",
-      shell: "zsh",
+      shell: ZSH_SHELL,
       run: "Scripts/verify-v1.sh",
     },
   ]);
@@ -277,6 +294,7 @@ function validateRelease(releaseSource) {
   assert.deepEqual(release.jobs.release.env, {
     DEVELOPER_DIR: XCODE_DEVELOPER_DIR,
   });
+  assertWorkflowShellTemplates(release, "release workflow");
 
   const expectedSteps = [
     actionStep("Check out tagged source", "actions/checkout", {
@@ -296,13 +314,13 @@ function validateRelease(releaseSource) {
     },
     {
       name: "Verify project Xcode requirement",
-      shell: "zsh",
+      shell: ZSH_SHELL,
       run: XCODE_REQUIREMENT_RUN,
     },
     {
       name: "Validate release contract",
       id: "release-contract",
-      shell: "zsh",
+      shell: ZSH_SHELL,
       env: {
         TAG: "${{ github.ref_name }}",
         EXPECTED_SHA: "${{ github.sha }}",
@@ -311,12 +329,12 @@ function validateRelease(releaseSource) {
     },
     {
       name: "Verify exact source",
-      shell: "zsh",
+      shell: ZSH_SHELL,
       run: "Scripts/verify-v1.sh",
     },
     {
       name: "Package release",
-      shell: "zsh",
+      shell: ZSH_SHELL,
       env: {
         VERSION: "${{ steps.release-contract.outputs.version }}",
       },
@@ -324,7 +342,7 @@ function validateRelease(releaseSource) {
     },
     {
       name: "Verify release artifacts",
-      shell: "zsh",
+      shell: ZSH_SHELL,
       env: {
         VERSION: "${{ steps.release-contract.outputs.version }}",
       },
@@ -332,7 +350,7 @@ function validateRelease(releaseSource) {
     },
     {
       name: "Render release notes",
-      shell: "zsh",
+      shell: ZSH_SHELL,
       env: {
         TAG: "${{ github.ref_name }}",
         VERSION: "${{ steps.release-contract.outputs.version }}",
@@ -343,7 +361,7 @@ function validateRelease(releaseSource) {
     },
     {
       name: "Publish GitHub Release",
-      shell: "zsh",
+      shell: ZSH_SHELL,
       env: {
         GH_TOKEN: "${{ github.token }}",
         REPOSITORY: "${{ github.repository }}",
@@ -437,10 +455,10 @@ const extraReleaseUpload = replaceOnce(
 expectRejected("extra release uploads must be rejected", ciSource, extraReleaseUpload);
 
 const verifySourceBlock = `      - name: Verify exact source
-        shell: zsh
+        shell: ${ZSH_SHELL}
         run: Scripts/verify-v1.sh`;
 const packageBlock = `      - name: Package release
-        shell: zsh
+        shell: ${ZSH_SHELL}
         env:
           VERSION: \${{ steps.release-contract.outputs.version }}
         run: Scripts/package-release.sh "\${VERSION}"`;
@@ -509,4 +527,20 @@ expectRejected(
   "checkout credential persistence must be rejected",
   ciSource,
   persistedCredentials,
+);
+
+const zshShellWithoutPlaceholder = replaceOnce(
+  releaseSource,
+  `shell: ${ZSH_SHELL}`,
+  "shell: /bin/zsh",
+  "zsh shell without script placeholder",
+);
+assert.throws(
+  () => validateWorkflows(ciSource, zshShellWithoutPlaceholder),
+  {
+    name: "AssertionError",
+    message:
+      /release workflow step "Verify project Xcode requirement" must use shell: \/bin\/zsh \{0\}/,
+  },
+  "custom zsh shells without the required script placeholder must be rejected",
 );

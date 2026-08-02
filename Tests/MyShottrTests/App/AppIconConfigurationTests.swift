@@ -3,17 +3,15 @@ import XCTest
 @testable import MyShottr
 
 final class AppIconConfigurationTests: XCTestCase {
-    func testProjectConfigUsesQuickInkAppIcon() throws {
-        let repositoryRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let project = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("project.yml"),
-            encoding: .utf8
+    func testBuiltAppUsesQuickInkAppIconAndStatusBarIcon() {
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleIconName") as? String,
+            "AppIcon"
         )
-        XCTAssertTrue(project.contains("ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon"))
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
+            "AppIcon"
+        )
         XCTAssertNotNil(NSImage(named: "StatusBarIcon"))
     }
 }

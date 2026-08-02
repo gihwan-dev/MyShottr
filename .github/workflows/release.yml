@@ -32,7 +32,7 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Verify project Xcode requirement
-        shell: zsh
+        shell: /bin/zsh {0}
         run: |
           set -euo pipefail
           XCODE_VERSION="$(xcodebuild -version | awk '/^Xcode / { print $2 }')"
@@ -41,7 +41,7 @@ jobs:
           (( XCODE_MAJOR >= 26 ))
       - name: Validate release contract
         id: release-contract
-        shell: zsh
+        shell: /bin/zsh {0}
         env:
           TAG: ${{ github.ref_name }}
           EXPECTED_SHA: ${{ github.sha }}
@@ -66,20 +66,20 @@ jobs:
               "${EXPECTED_SHA}"
           printf 'version=%s\n' "${VERSION}" >> "${GITHUB_OUTPUT}"
       - name: Verify exact source
-        shell: zsh
+        shell: /bin/zsh {0}
         run: Scripts/verify-v1.sh
       - name: Package release
-        shell: zsh
+        shell: /bin/zsh {0}
         env:
           VERSION: ${{ steps.release-contract.outputs.version }}
         run: Scripts/package-release.sh "${VERSION}"
       - name: Verify release artifacts
-        shell: zsh
+        shell: /bin/zsh {0}
         env:
           VERSION: ${{ steps.release-contract.outputs.version }}
         run: Scripts/verify-release-artifacts.sh "${VERSION}" "dist/release/${VERSION}"
       - name: Render release notes
-        shell: zsh
+        shell: /bin/zsh {0}
         env:
           TAG: ${{ github.ref_name }}
           VERSION: ${{ steps.release-contract.outputs.version }}
@@ -97,7 +97,7 @@ jobs:
             > "${NOTES_PATH}"
           test -s "${NOTES_PATH}"
       - name: Publish GitHub Release
-        shell: zsh
+        shell: /bin/zsh {0}
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}

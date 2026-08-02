@@ -33,7 +33,7 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Verify project Xcode requirement
-        shell: zsh
+        shell: /bin/zsh {0}
         run: |
           set -euo pipefail
           XCODE_VERSION="$(xcodebuild -version | awk '/^Xcode / { print $2 }')"
@@ -41,5 +41,5 @@ jobs:
           [[ "${XCODE_MAJOR}" == <-> ]]
           (( XCODE_MAJOR >= 26 ))
       - name: Verify v1
-        shell: zsh
+        shell: /bin/zsh {0}
         run: Scripts/verify-v1.sh

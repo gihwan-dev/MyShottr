@@ -512,6 +512,12 @@ HELPER_COUNT="$(
   plutil -extract CFBundleExecutable raw "${INFO_PLIST}"
 )" == "MyShottr" ]] || fail "unexpected app executable name"
 [[ "$(
+  plutil -extract CFBundleIconName raw "${INFO_PLIST}"
+)" == "AppIcon" ]] || fail "app icon name is not AppIcon"
+[[ "$(
+  plutil -extract CFBundleIconFile raw "${INFO_PLIST}"
+)" == "AppIcon" ]] || fail "app icon file is not AppIcon"
+[[ "$(
   plutil -extract CFBundlePackageType raw "${INFO_PLIST}"
 )" == "APPL" ]] || fail "unexpected app package type"
 [[ "$(
