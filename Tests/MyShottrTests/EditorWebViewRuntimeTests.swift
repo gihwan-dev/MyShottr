@@ -436,7 +436,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
         in webView: WKWebView,
         window: NSWindow
     ) async throws {
-        let selected = try await evaluateString(
+        let clickResult = try await evaluateString(
             """
             (() => {
               const button = document.querySelector(
@@ -444,12 +444,21 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
               );
               if (!button) throw new Error('Rectangle tool is unavailable');
               button.click();
-              return button.getAttribute('aria-pressed') ?? 'missing';
+              return 'clicked';
             })()
             """,
             in: webView
         )
-        XCTAssertEqual(selected, "true")
+        XCTAssertEqual(clickResult, "clicked")
+        try await waitForJavaScriptPredicate(
+            "rectangle tool activates after application events",
+            predicate: """
+            document.querySelector(
+              '[aria-label="Annotation tools"] button[aria-label="Rectangle, shortcut R"]'
+            )?.getAttribute('aria-pressed') === 'true'
+            """,
+            in: webView
+        )
 
         let pointsJSONString = try await evaluateString(
             """
