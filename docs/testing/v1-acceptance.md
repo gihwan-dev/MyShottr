@@ -16,7 +16,8 @@ note.
 - macOS version:
 - Google Chrome version:
 - Tested commit SHA:
-- `Scripts/verify-v1.sh` log or evidence:
+- `Scripts/verify-v1.sh` result:
+- `Scripts/verify-v1.sh` evidence:
 
 ## Checks
 
@@ -66,8 +67,9 @@ Chrome `Option-Shift-2` runs the same visible-viewport capture flow.
 ### 7. Drawing tools and live preview
 
 Selection, rectangle, arrow, line, text, freehand, highlighter, blur, opaque
-redaction, and number-marker tools work, and drag-created marks preview live
-before pointer-up.
+redaction, and number-marker tools work. Every drag-created mark previews
+continuously before pointer-up; `T` enters inline editing immediately. Holding
+`Shift` constrains rectangles, arrows, and lines without taking over pan.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
@@ -75,23 +77,39 @@ before pointer-up.
 ### 8. Annotation editing and shortcut ownership
 
 Move, resize, rotate, duplicate, delete, reorder, multi-select, undo, and redo
-work. `R`, `T`, `?`, `Space`, `Command-D`, `Shift-1`, and `Shift-2` must
-behave in the editor exactly as documented, including inline text editing,
-shortcut-help focus restore, and temporary pan.
+work. Empty-canvas drag with Selection (`V`) previews a marquee and selects
+intersecting annotations; `Shift`-click toggles one annotation, and
+`Option`-drag or `Command-D` duplicates the selection.
+
+Scroll and `Space`-drag pan. Pinch or `Command`-scroll zooms around the pointer;
+`Command-0` sets 100%, `Shift-1` fits the image, and `Shift-2` fits the current
+selection. The Context Rail is hidden for Selection with no selection, shows
+creation defaults for a drawing tool, shows one selection's properties, and
+shows shared multi-selection fields with differing values labeled `Mixed`.
+
+The native toolbar order is Copy Image, Undo, Redo, flexible space, Save
+Project, Export PNG. `Command-Shift-C`, `Command-S`, and `Command-E` still route
+through the key document while inline text or shortcut help owns focus, while
+ordinary text Copy/Paste remains text-owned. `?` restores invoking focus after
+`Escape`. Light and Dark follow the document window, and Reduce Motion removes
+Context Rail reflow animation.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
 
 ### 9. Clipboard PNG
 
-Copy Image pastes a PNG into macOS Notes.
+Copy Image writes the complete composited PNG and it pastes into macOS Notes.
+Only after the pasteboard write succeeds, the editor window hides without
+closing the document; refocusing preserves the same editor session.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
 
 ### 10. Export dimensions
 
-Exported PNG dimensions equal the source image dimensions.
+Exported PNG dimensions equal the source image dimensions. The editor remains
+visible, and completion feedback exposes only the destination basename.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
@@ -151,9 +169,10 @@ A failed export leaves the document modified and the destination untouched.
 
 ### 18. Save terminal truthfulness and exact-artifact privacy gate
 
-Completed Save shows `Saved` only after the native operation finishes, later
-edits surface the superseded-save message, and `Scripts/verify-privacy.sh`
-passes on the exact artifacts built from the tested commit SHA.
+Completed Save shows `Saved` only after the native operation finishes. Later
+edits surface the superseded-save message; cancellation and failure remain
+truthful without closing the document. `Scripts/verify-privacy.sh` passes on
+the exact artifacts built from the tested commit SHA.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:

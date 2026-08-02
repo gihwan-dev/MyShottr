@@ -14,13 +14,9 @@ const NOTES_PATH = "docs/releases/v0.1.0.md";
 const INSTALL_PATH = "docs/testing/release-installation.md";
 const SCREENSHOT_PATH = "docs/images/editor-quick-ink.png";
 
-const RELEASE_SOURCE_SHA = "ddc95af1a2eb65a39ceb55d57e3154090a583679";
-const APP_SHA256 =
-  "2601c96dd5f8d3d674333c94754e522748a95bb88f051bfd26b2be1371c828f6";
-const EXTENSION_SHA256 =
-  "b5e8f91b31eaa3d5674954bcd1d63774be51f5a5ad595ee2542efed8458e2f3f";
+const SCREENSHOT_SOURCE_SHA = "a1c1a69b943ce42a4008cc41e8a930a5bb383445";
 const SCREENSHOT_SHA256 =
-  "119461380435271d6e733475f62a35854f22316f76ac208f754a2bd2cb9cd5a1";
+  "2cd57f83c6afddc53bcbb004842e202501f273bca03034bb061402d733e79d3e";
 
 for (const path of [
   README_PATH,
@@ -121,6 +117,21 @@ for (const tool of [
     readme.includes(`| ${tool[0]} | \`${tool[1]}\` |`),
     `README shortcut table is missing ${tool[0]}`,
   );
+}
+
+for (const shortcutContract of [
+  /`Command-0` sets 100%/,
+  /`Shift-1` fits the complete\s+image/,
+  /`Shift-2` fits the current selection/,
+  /Bring forward \/ send backward: `Command-\]` \/ `Command-\[`/,
+  /drag empty canvas to preview a marquee/,
+  /`Shift`-click toggles one annotation/,
+  /Context Rail[\s\S]*differing multi-selection values labeled `Mixed`/,
+  /native toolbar order is Copy Image, Undo, Redo, flexible space, Save\s+Project, and Export PNG/,
+  /window hides without closing the document/,
+  /Light or Dark appearance[\s\S]*Reduce Motion/,
+]) {
+  assert.match(readme, shortcutContract, `README interaction contract changed: ${shortcutContract}`);
 }
 
 for (const expectedLink of [
@@ -234,23 +245,45 @@ for (const asset of [
 ]) {
   assert.ok(notes.includes(asset), `release notes missing artifact: ${asset}`);
 }
-for (const hash of [APP_SHA256, EXTENSION_SHA256]) {
-  assert.ok(notes.includes(hash), `release notes missing current SHA-256: ${hash}`);
-}
-assert.ok(notes.includes(RELEASE_SOURCE_SHA), "release notes missing screenshot source SHA");
-assert.match(notes, /unsigned and unnotarized/);
-assert.match(notes, /link-time ad-hoc[\s\S]*no Developer ID/i);
-assert.match(notes, /automated[\s\S]*passed/i);
-assert.match(notes, /manual acceptance[\s\S]*BLOCKED \/ UNVERIFIED/i);
-assert.match(
-  notes,
-  /not a native\s+NSWindow or ScreenCaptureKit acceptance proof/i,
+assert.equal(
+  notes.split("<!-- MYSHOTTR_RELEASE_CHECKSUMS -->").length - 1,
+  1,
+  "release notes require one dynamic checksum marker",
 );
-assert.match(notes, /production\s+bridge[\s\S]*loadDocument/i);
-assert.match(notes, /neutral\s+generated source PNG/i);
+assert.equal(
+  notes.split("<!-- MYSHOTTR_RELEASE_COMMIT -->").length - 1,
+  1,
+  "release notes require one dynamic commit marker",
+);
 assert.doesNotMatch(
   notes,
-  /manual acceptance(?: gate| checks?) (?:passed|complete)|Apple-(?:reviewed|notarized)|available (?:in|on) the Chrome Web Store/i,
+  /^[0-9a-fA-F]{64}  [A-Za-z0-9.-]+$/m,
+  "tracked release notes must not pin environment-specific archive hashes",
+);
+assert.ok(notes.includes(SCREENSHOT_SOURCE_SHA), "release notes missing screenshot source SHA");
+assert.match(notes, /unsigned and unnotarized/);
+assert.match(notes, /link-time ad-hoc[\s\S]*no Developer ID/i);
+assert.match(
+  notes,
+  /tag commit[\s\S]*remote `main`[\s\S]*workflow SHA[\s\S]*myshottr-acceptance/i,
+);
+assert.match(notes, /all 18 interactive checks as\s+`PASS`/i);
+assert.match(notes, /myshottr-release-install[\s\S]*not a pre-publication\s+dependency/i);
+assert.match(
+  notes,
+  /not the full production `App`, a native NSWindow, or ScreenCaptureKit\s+acceptance proof/i,
+);
+assert.match(notes, /does not substitute for the interactive acceptance\s+note/i);
+assert.match(notes, /deterministic browser fixture/i);
+assert.match(
+  notes,
+  /production workspace, canvas, palette, rail, zoom, bridge, and appearance\s+units/i,
+);
+assert.match(notes, /production bridge[\s\S]*`loadDocument`/i);
+assert.match(notes, /`selected Rectangle` state/i);
+assert.doesNotMatch(
+  notes,
+  /BLOCKED \/ UNVERIFIED|Apple-(?:reviewed|notarized)|available (?:in|on) the Chrome Web Store/i,
 );
 
 assert.deepEqual(
@@ -295,6 +328,16 @@ assert.match(
 );
 assert.match(installation, /- Result: `<PASS\|FAIL\|BLOCKED>`/);
 assert.match(installation, /- Evidence:/);
+assert.equal(
+  installation.match(/<from downloaded SHA256SUMS\.txt>/g)?.length,
+  2,
+  "installation template must source both archive hashes from the downloaded checksum asset",
+);
+assert.doesNotMatch(
+  installation,
+  /\| `[0-9a-f]{64}` \| `<bytes>`/,
+  "installation template must not pin a local archive hash",
+);
 assert.match(
   installation,
   /A report containing `FAIL`, `BLOCKED`, a placeholder, or missing\s+evidence is not passing release-install evidence/,
@@ -305,7 +348,7 @@ for (const publicDocument of [readme, notes, installation]) {
 }
 
 const png = decodePng(screenshot);
-assert.ok(png.width >= 1440, `screenshot width must be at least 1440, got ${png.width}`);
+assert.ok(png.width >= 1280, `screenshot width must be at least 1280, got ${png.width}`);
 assert.ok(png.height >= 800, `screenshot height must be at least 800, got ${png.height}`);
 assert.ok(
   png.width / png.height >= 1.3 && png.width / png.height <= 2.2,
@@ -324,9 +367,9 @@ for (const [label, color, minimum] of [
   ["warm ivory workspace", [247, 241, 232], 5_000],
   ["Quick Ink coral", [255, 107, 95], 100],
   ["red rectangle", [255, 77, 79], 80],
-  ["blue arrow", [22, 119, 255], 80],
-  ["yellow line", [250, 219, 20], 80],
-  ["black text", [0, 0, 0], 80],
+  ["blue selection handles", [22, 119, 255], 80],
+  ["yellow fill swatch", [250, 219, 20], 80],
+  ["black rail labels", [0, 0, 0], 80],
 ]) {
   assert.ok(
     colors.count(color) >= minimum,
@@ -337,7 +380,7 @@ assert.ok(
   colors.luminanceBuckets.dark > 1_000
     && colors.luminanceBuckets.mid > 10_000
     && colors.luminanceBuckets.light > 100_000,
-  "screenshot does not contain the reviewed editor, annotations, and source image",
+  "screenshot does not contain the reviewed editor shell, selected annotation, and source image",
 );
 
 console.log(

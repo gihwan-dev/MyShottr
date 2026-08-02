@@ -90,14 +90,25 @@ quick-start above.
   inside the editor.
 - Press `?` to open shortcut help. `Escape` closes it and returns focus to the
   invoking control.
-- Hold `Space` and drag to pan. Use `Command-0` to fit the capture, `Shift-1`
-  to zoom out, and `Shift-2` to zoom in around the pointer.
+- Hold `Space` and drag, or scroll, to pan. Pinch or use `Command`-scroll to
+  zoom around the pointer. `Command-0` sets 100%, `Shift-1` fits the complete
+  image, and `Shift-2` fits the current selection when annotations are selected.
 - Hold `Shift` while drawing to constrain rectangles, arrows, and lines. Hold
   `Shift` while selecting to toggle an element into the current selection.
 - Use `Command-D` to duplicate the current selection, or hold `Option` while
   dragging a selection to duplicate in one gesture.
+- With Selection (`V`), drag empty canvas to preview a marquee and select
+  intersecting annotations. `Shift`-click toggles one annotation.
 - Rectangle, arrow, line, freehand, highlighter, blur, and redaction strokes
   preview live while you drag. `T` opens inline text editing immediately.
+- The Context Rail is hidden when Selection has no selection. A drawing tool
+  shows defaults for the next mark; one or more selected marks show editable
+  shared properties, with differing multi-selection values labeled `Mixed`.
+- The native toolbar order is Copy Image, Undo, Redo, flexible space, Save
+  Project, and Export PNG. After Copy Image successfully writes the PNG, the
+  editor window hides without closing the document; a failure keeps it visible.
+- The editor follows the document window's Light or Dark appearance. With
+  Reduce Motion enabled, Context Rail reflow is applied without animation.
 - Save feedback is truthful: `Saved` appears only after the native save
   finishes, and the editor reports when later edits leave the document needing
   another save.
@@ -119,12 +130,17 @@ quick-start above.
 
 Selection and editing shortcuts:
 
-- Duplicate selection: `Command-D`
-- Bring forward / send backward: `]` / `[`
+- Undo / redo: `Command-Z` / `Command-Shift-Z`
+- Copy / paste selected annotations: `Command-C` / `Command-V`
+- Duplicate selection: `Command-D` or `Option`-drag
+- Bring forward / send backward: `Command-]` / `Command-[`
 - Delete selection: `Delete` or `Backspace`
 - Nudge selection: Arrow keys (`Shift` for 10 px)
-- Zoom out / in / fit: `Shift-1` / `Shift-2` / `Command-0`
-- Pan temporarily: hold `Space`
+- Edit one selected text annotation: `Enter`
+- Toggle one annotation in the selection: `Shift`-click
+- 100% / Fit Image / Fit Selection: `Command-0` / `Shift-1` / `Shift-2`
+- Pan: `Space`-drag or scroll
+- Zoom around pointer: pinch or `Command`-scroll
 - Shortcut help: `?`
 
 Blur is a visual effect, not secure redaction. Use Redaction when pixels must

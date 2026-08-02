@@ -1,13 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 
 const CI_PATH = ".github/workflows/ci.yml";
 const RELEASE_PATH = ".github/workflows/release.yml";
@@ -43,82 +36,29 @@ git fetch --no-tags --prune origin \\
   "+refs/notes/myshottr-acceptance:refs/notes/myshottr-acceptance"
 TAG_COMMIT="$(git rev-parse --verify "\${TAG}^{commit}")"
 [[ "\${TAG_COMMIT}" == "\${EXPECTED_SHA}" ]]
+CHECKOUT_COMMIT="$(git rev-parse --verify "HEAD^{commit}")"
+[[ "\${CHECKOUT_COMMIT}" == "\${EXPECTED_SHA}" ]]
 MAIN_COMMIT="$(git rev-parse --verify "origin/main^{commit}")"
 [[ "\${MAIN_COMMIT}" == "\${EXPECTED_SHA}" ]]
-git notes --ref=myshottr-acceptance show "\${EXPECTED_SHA}" >/dev/null
+git notes --ref=myshottr-acceptance show "\${EXPECTED_SHA}" |
+  node Scripts/validate-release-evidence.mjs \\
+    acceptance \\
+    - \\
+    "\${EXPECTED_SHA}"
 printf 'version=%s\\n' "\${VERSION}" >> "\${GITHUB_OUTPUT}"
 `;
 
-const RELEASE_CHECKSUM_LOCK_RUN = `set -euo pipefail
+
+const RELEASE_NOTES_RUN = `set -euo pipefail
 [[ "\${TAG}" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]
 [[ "\${VERSION}" == "\${TAG#v}" ]]
-node --input-type=module - \\
-  "dist/release/\${VERSION}/SHA256SUMS.txt" \\
+node Scripts/render-release-notes.mjs \\
   "docs/releases/\${TAG}.md" \\
-  "MyShottr-\${VERSION}-macos.zip" \\
-  "MyShottr-Chrome-\${VERSION}.zip" <<'NODE'
-import { readFileSync } from "node:fs";
-
-const [checksumPath, notesPath, appName, extensionName] = process.argv.slice(2);
-const expectedNames = [appName, extensionName];
-const checksumLinePattern = /^([0-9a-f]{64})  ([A-Za-z0-9.-]+)$/;
-
-function fail(message) {
-  process.stderr.write("release-checksums: " + message + "\\n");
-  process.exit(1);
-}
-
-function parseExactEntries(content, label) {
-  const normalized = content.endsWith("\\n") ? content.slice(0, -1) : content;
-  const lines = normalized.split("\\n");
-  if (lines.length !== expectedNames.length) {
-    fail(label + " must contain exactly two checksum entries");
-  }
-  return lines.map((line, index) => {
-    const match = line.match(checksumLinePattern);
-    if (!match || match[2] !== expectedNames[index]) {
-      fail(label + " contains an unexpected checksum entry");
-    }
-    return line;
-  });
-}
-
-if (
-  !checksumPath ||
-  !notesPath ||
-  expectedNames.length !== 2 ||
-  expectedNames.some((name) => !name)
-) {
-  fail("expected checksum path, release notes path, and two artifact names");
-}
-
-const checksumLines = parseExactEntries(
-  readFileSync(checksumPath, "utf8"),
-  "SHA256SUMS.txt",
-);
-const notes = readFileSync(notesPath, "utf8");
-const checksumSections = [
-  ...notes.matchAll(
-    /^## SHA-256 checksums\\n\\n\`\`\`text\\n([\\s\\S]*?)\\n\`\`\`$/gm,
-  ),
-];
-if (checksumSections.length !== 1) {
-  fail("release notes must contain exactly one SHA-256 checksum section");
-}
-const notesLines = parseExactEntries(
-  checksumSections[0][1],
-  "release notes checksum section",
-);
-const allNotesChecksumLines = notes
-  .split("\\n")
-  .filter((line) => /^[0-9A-Fa-f]{64}  /.test(line));
-if (JSON.stringify(allNotesChecksumLines) !== JSON.stringify(notesLines)) {
-  fail("release notes contain an extra checksum entry");
-}
-if (JSON.stringify(notesLines) !== JSON.stringify(checksumLines)) {
-  fail("release notes checksums do not match SHA256SUMS.txt");
-}
-NODE
+  "dist/release/\${VERSION}/SHA256SUMS.txt" \\
+  "\${VERSION}" \\
+  "\${EXPECTED_SHA}" \\
+  > "\${NOTES_PATH}"
+test -s "\${NOTES_PATH}"
 `;
 
 const RELEASE_PUBLISH_RUN = `set -euo pipefail
@@ -134,7 +74,7 @@ gh release create "\${TAG}" \\
   "\${OUTPUT}/SHA256SUMS.txt" \\
   --repo "\${REPOSITORY}" \\
   --title "MyShottr \${TAG}" \\
-  --notes-file "docs/releases/\${TAG}.md" \\
+  --notes-file "\${NOTES_PATH}" \\
   --verify-tag
 `;
 
@@ -383,13 +323,15 @@ function validateRelease(releaseSource) {
       run: 'Scripts/verify-release-artifacts.sh "${VERSION}" "dist/release/${VERSION}"',
     },
     {
-      name: "Verify release notes checksums",
+      name: "Render release notes",
       shell: "zsh",
       env: {
         TAG: "${{ github.ref_name }}",
         VERSION: "${{ steps.release-contract.outputs.version }}",
+        EXPECTED_SHA: "${{ github.sha }}",
+        NOTES_PATH: "${{ runner.temp }}/myshottr-release-notes.md",
       },
-      run: RELEASE_CHECKSUM_LOCK_RUN,
+      run: RELEASE_NOTES_RUN,
     },
     {
       name: "Publish GitHub Release",
@@ -399,6 +341,7 @@ function validateRelease(releaseSource) {
         REPOSITORY: "${{ github.repository }}",
         TAG: "${{ github.ref_name }}",
         VERSION: "${{ steps.release-contract.outputs.version }}",
+        NOTES_PATH: "${{ runner.temp }}/myshottr-release-notes.md",
       },
       run: RELEASE_PUBLISH_RUN,
     },
@@ -464,131 +407,17 @@ function workflowStepBlock(source, name, nextName) {
   return source.slice(start, end);
 }
 
-function checksumNotes(lines) {
-  return [
-    "# Test release",
-    "",
-    "## SHA-256 checksums",
-    "",
-    "```text",
-    ...lines,
-    "```",
-    "",
-  ].join("\n");
-}
-
-function runChecksumVerifier(run, checksumSource, notesSource) {
-  const verifierMatch = run.match(/<<'NODE'\n([\s\S]*?)\nNODE\n?$/);
-  assert.ok(verifierMatch, "could not isolate the release checksum verifier");
-  const temporaryDirectory = mkdtempSync(
-    join(tmpdir(), "myshottr-release-checksums."),
-  );
-  const checksumPath = join(temporaryDirectory, "SHA256SUMS.txt");
-  const notesPath = join(temporaryDirectory, "v0.1.0.md");
-  writeFileSync(checksumPath, checksumSource, "utf8");
-  writeFileSync(notesPath, notesSource, "utf8");
-  try {
-    return spawnSync(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-",
-        checksumPath,
-        notesPath,
-        "MyShottr-0.1.0-macos.zip",
-        "MyShottr-Chrome-0.1.0.zip",
-      ],
-      {
-        input: verifierMatch[1],
-        encoding: "utf8",
-      },
-    );
-  } finally {
-    rmSync(temporaryDirectory, { recursive: true, force: true });
-  }
-}
-
 const ciSource = readFileSync(CI_PATH, "utf8");
 const releaseSource = readFileSync(RELEASE_PATH, "utf8");
 
 validateWorkflows(ciSource, releaseSource);
 
 const parsedRelease = parseYaml(releaseSource, "release workflow");
-const checksumStep = parsedRelease.jobs.release.steps.find(
-  (step) => step.name === "Verify release notes checksums",
+const releaseNotesStep = parsedRelease.jobs.release.steps.find(
+  (step) => step.name === "Render release notes",
 );
-assert.ok(checksumStep, "release checksum step is missing");
-
-const checksumLines = [
-  "2601c96dd5f8d3d674333c94754e522748a95bb88f051bfd26b2be1371c828f6  MyShottr-0.1.0-macos.zip",
-  "b5e8f91b31eaa3d5674954bcd1d63774be51f5a5ad595ee2542efed8458e2f3f  MyShottr-Chrome-0.1.0.zip",
-];
-const validChecksumSource = `${checksumLines.join("\n")}\n`;
-const validNotesSource = checksumNotes(checksumLines);
-const validChecksumResult = runChecksumVerifier(
-  checksumStep.run,
-  validChecksumSource,
-  validNotesSource,
-);
-assert.equal(
-  validChecksumResult.status,
-  0,
-  `valid release checksums must pass:\n${validChecksumResult.stderr}`,
-);
-
-const mismatchResult = runChecksumVerifier(
-  checksumStep.run,
-  validChecksumSource,
-  checksumNotes([
-    `0601c96dd5f8d3d674333c94754e522748a95bb88f051bfd26b2be1371c828f6  MyShottr-0.1.0-macos.zip`,
-    checksumLines[1],
-  ]),
-);
-assert.notEqual(mismatchResult.status, 0, "a checksum mismatch must fail closed");
-
-const removedChecksumResult = runChecksumVerifier(
-  checksumStep.run,
-  validChecksumSource,
-  checksumNotes([checksumLines[0]]),
-);
-assert.notEqual(
-  removedChecksumResult.status,
-  0,
-  "a removed checksum must fail closed",
-);
-
-const reorderedChecksumsResult = runChecksumVerifier(
-  checksumStep.run,
-  validChecksumSource,
-  checksumNotes([checksumLines[1], checksumLines[0]]),
-);
-assert.notEqual(
-  reorderedChecksumsResult.status,
-  0,
-  "reordered checksums must fail closed",
-);
-
-const duplicateChecksumResult = runChecksumVerifier(
-  checksumStep.run,
-  validChecksumSource,
-  checksumNotes([checksumLines[0], checksumLines[0]]),
-);
-assert.notEqual(
-  duplicateChecksumResult.status,
-  0,
-  "a duplicate checksum must fail closed",
-);
-
-const extraChecksumResult = runChecksumVerifier(
-  checksumStep.run,
-  validChecksumSource,
-  checksumNotes([...checksumLines, checksumLines[0]]),
-);
-assert.notEqual(
-  extraChecksumResult.status,
-  0,
-  "an extra checksum must fail closed",
-);
+assert.ok(releaseNotesStep, "release-note rendering step is missing");
+assert.equal(releaseNotesStep.run, RELEASE_NOTES_RUN);
 
 const extraReleaseUpload = replaceOnce(
   releaseSource,
@@ -613,9 +442,9 @@ expectRejected(
   swapBlocks(releaseSource, verifySourceBlock, packageBlock),
 );
 
-const checksumLockBlock = workflowStepBlock(
+const releaseNotesBlock = workflowStepBlock(
   releaseSource,
-  "Verify release notes checksums",
+  "Render release notes",
   "Publish GitHub Release",
 );
 const publishBlock = workflowStepBlock(
@@ -623,19 +452,35 @@ const publishBlock = workflowStepBlock(
   "Publish GitHub Release",
 );
 expectRejected(
-  "removing checksum verification must be rejected",
+  "removing release-note rendering must be rejected",
   ciSource,
   replaceOnce(
     releaseSource,
-    checksumLockBlock,
+    releaseNotesBlock,
     "",
-    "removed checksum verification",
+    "removed release-note rendering",
   ),
 );
 expectRejected(
-  "publishing before checksum verification must be rejected",
+  "publishing before release-note rendering must be rejected",
   ciSource,
-  swapBlocks(releaseSource, checksumLockBlock, publishBlock),
+  swapBlocks(releaseSource, releaseNotesBlock, publishBlock),
+);
+
+const acceptanceValidatorInvocation = `          git notes --ref=myshottr-acceptance show "\${EXPECTED_SHA}" |
+            node Scripts/validate-release-evidence.mjs \\
+              acceptance \\
+              - \\
+              "\${EXPECTED_SHA}"`;
+expectRejected(
+  "removing strict acceptance validation must be rejected",
+  ciSource,
+  replaceOnce(
+    releaseSource,
+    acceptanceValidatorInvocation,
+    `          git notes --ref=myshottr-acceptance show "\${EXPECTED_SHA}" >/dev/null`,
+    "removed acceptance validator",
+  ),
 );
 
 const mutableCheckout = replaceOnce(

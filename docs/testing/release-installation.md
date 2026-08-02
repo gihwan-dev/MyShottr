@@ -30,8 +30,8 @@ passing Git note.
 
 | Artifact | Expected SHA-256 | Downloaded size in bytes | Result |
 | --- | --- | --- | --- |
-| `MyShottr-0.1.0-macos.zip` | `2601c96dd5f8d3d674333c94754e522748a95bb88f051bfd26b2be1371c828f6` | `<bytes>` | `<PASS\|FAIL\|BLOCKED>` |
-| `MyShottr-Chrome-0.1.0.zip` | `b5e8f91b31eaa3d5674954bcd1d63774be51f5a5ad595ee2542efed8458e2f3f` | `<bytes>` | `<PASS\|FAIL\|BLOCKED>` |
+| `MyShottr-0.1.0-macos.zip` | `<from downloaded SHA256SUMS.txt>` | `<bytes>` | `<PASS\|FAIL\|BLOCKED>` |
+| `MyShottr-Chrome-0.1.0.zip` | `<from downloaded SHA256SUMS.txt>` | `<bytes>` | `<PASS\|FAIL\|BLOCKED>` |
 | `SHA256SUMS.txt` | `<published asset SHA-256>` | `<bytes>` | `<PASS\|FAIL\|BLOCKED>` |
 
 - Evidence:
@@ -78,8 +78,17 @@ tools, or extension popup.
 Save Project, close, and reopen preserve the original pixels, annotations, and
 `presentation: { "type": "none" }`. Copy Image and Export PNG also succeed at
 source dimensions. `R` must preview a rectangle while dragging, `T` must open
-inline text editing immediately, `Space` must pan, `?` must restore focus when
-closed, and `Option`-drag or `Command-D` must duplicate the current selection.
+inline text editing immediately, and an empty-canvas drag with Selection must
+preview a marquee. `Shift`-click toggles selection; `Option`-drag or
+`Command-D` duplicates it. Scroll and `Space`-drag pan, pinch or
+`Command`-scroll zooms around the pointer, `Command-0` sets 100%, `Shift-1`
+fits the image, and `Shift-2` fits the current selection.
+
+The Context Rail must cover hidden, creation-default, single-selection,
+multi-selection, and `Mixed` states. The native toolbar order must be Copy
+Image, Undo, Redo, flexible space, Save Project, Export PNG. Copy success hides
+without closing the document; `?` restores focus when closed. Light, Dark, and
+Reduce Motion behavior must match the accepted candidate.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
@@ -113,6 +122,7 @@ quarantine removal.
 - Reviewer:
 - Notes:
 
-Only a report with every required check marked `PASS`, complete evidence, and
-the same exact commit SHA across the tag, workflows, downloaded artifacts, and
-post-publication release-install Git note is passing release-install evidence.
+Only a report with every required check marked `PASS`, complete evidence, tag
+and workflow references resolving to the same exact commit SHA, and downloaded
+asset hashes matching the workflow-produced `SHA256SUMS.txt` may be attached as
+passing post-publication release-install evidence.

@@ -17,10 +17,8 @@
 - Comparison dimensions: `2974 × 1058`
 - Comparison SHA-256:
   `83b4d9a39ae5160b6fbf1576d69e30050cec9141be9a8b762c7e170879b2704e`
-- Implementation provenance: working tree based on
-  `a647f4eabe6fe9690445165fcc05663b8961a11c`; Task 16 is intentionally
-  uncommitted at this checkpoint, so a final implementation commit SHA does
-  not yet exist.
+- Implementation provenance: committed Task 16 visual and accessibility
+  baseline source `a1c1a69b943ce42a4008cc41e8a930a5bb383445`.
 
 The immutable approved reference remains the design authority. Generated
 screenshots never approve themselves; after the fixed-size comparison was
@@ -142,6 +140,7 @@ The two authorities remain intentionally distinct:
 The fixture is the Task 16 deterministic browser shell, not a second
 production `App`. It composes production workspace, canvas, palette, rail,
 dialog, feedback, zoom, bridge, and appearance units while owning only the
-closed fixture inputs. The production `App` remains covered by its unit suite;
-its real bundled lifecycle remains the responsibility of the pending WKWebView
-smoke test. No fixture-only forcing props were added to production `App`.
+closed fixture inputs. The real bundled editor lifecycle and Swift bridge are
+covered separately by `EditorWebViewRuntimeTests`; native window and capture
+flows remain interactive acceptance responsibilities. No fixture-only forcing
+props were added to production `App`.
