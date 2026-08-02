@@ -94,6 +94,8 @@ final class DocumentWindowController:
         canRedo: false
     )
     private var outputOperation: OutputOperation?
+    private var closeButtonEnabledBeforeOutput: Bool?
+    private var appearanceObservation: NSKeyValueObservation?
     var onClose: (() -> Void)?
 
     init(
@@ -241,6 +243,7 @@ final class DocumentWindowController:
         window.contentView = editorWebView.webView
         window.delegate = self
         window.toolbar = makeToolbar()
+        installAppearanceObservation(for: window)
         session.onModifiedStateChange = {
             [weak window] modified in
             window?.isDocumentEdited = modified
@@ -270,6 +273,7 @@ final class DocumentWindowController:
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard outputOperation == nil else { return false }
         if closeAfterPrompt || !session.isModified { return true }
         Task { @MainActor [weak self] in
             guard let self else {
@@ -288,7 +292,8 @@ final class DocumentWindowController:
     }
 
     func resolvePendingChangesForTermination() async -> Bool {
-        await terminationResolutionGate.resolve {
+        guard outputOperation == nil else { return false }
+        return await terminationResolutionGate.resolve {
             [weak self] in
             guard let self else {
                 return false
@@ -567,6 +572,60 @@ final class DocumentWindowController:
         window?.toolbar?.validateVisibleItems()
     }
 
+    private func installAppearanceObservation(
+        for window: NSWindow
+    ) {
+        appearanceObservation = window.observe(
+            \.effectiveAppearance,
+            options: [.new]
+        ) { [weak self, weak window] _, _ in
+            guard let self,
+                  let window
+            else { return }
+            Task { @MainActor [weak self, weak window] in
+                guard let self,
+                      let window
+                else { return }
+                self.syncAppearanceToEditor(for: window)
+            }
+        }
+    }
+
+    private func syncAppearanceToEditor(
+        for window: NSWindow
+    ) {
+        guard editorIsReady else {
+            return
+        }
+        editorWebView.setAppearance(
+            editorAppearanceColorScheme(for: window)
+        )
+    }
+
+    private func editorAppearanceColorScheme(
+        for window: NSWindow
+    ) -> EditorAppearanceColorScheme {
+        guard let matchedAppearance =
+                window.effectiveAppearance.bestMatch(
+                    from: [.darkAqua, .aqua]
+                )
+        else {
+            preconditionFailure(
+                "Window appearance has no light or dark match"
+            )
+        }
+        switch matchedAppearance {
+        case .darkAqua:
+            return .dark
+        case .aqua:
+            return .light
+        default:
+            preconditionFailure(
+                "Window appearance returned an unknown match"
+            )
+        }
+    }
+
     func receiveBridgeFailure(_ error: EditorBridgeError) {
         present(.editorBridge(error))
     }
@@ -589,13 +648,23 @@ final class DocumentWindowController:
         guard editorIsReady,
               outputOperation == nil
         else { return false }
+        let closeButton = window?.standardWindowButton(.closeButton)
+        closeButtonEnabledBeforeOutput = closeButton?.isEnabled
         outputOperation = operation
+        closeButton?.isEnabled = false
         window?.toolbar?.validateVisibleItems()
         return true
     }
 
     private func finishOutput() {
+        let closeButtonEnabledBeforeOutput =
+            closeButtonEnabledBeforeOutput
+        self.closeButtonEnabledBeforeOutput = nil
         outputOperation = nil
+        if let closeButtonEnabledBeforeOutput {
+            window?.standardWindowButton(.closeButton)?.isEnabled =
+                closeButtonEnabledBeforeOutput
+        }
         window?.toolbar?.validateVisibleItems()
     }
 
@@ -738,6 +807,7 @@ protocol EditorWindowControlling: AnyObject {
     var representedDocumentID: UUID { get }
     var representedProjectURL: URL? { get }
     var hasModifiedDocument: Bool { get }
+    var hasActiveOutputOperation: Bool { get }
     var modificationRevision: UInt64 { get }
     func presentWindow() throws
     func waitForEditorLoad() async throws
@@ -755,6 +825,10 @@ extension DocumentWindowController: EditorWindowControlling {
         session.isModified
     }
 
+    var hasActiveOutputOperation: Bool {
+        outputOperation != nil
+    }
+
     var modificationRevision: UInt64 {
         session.modificationRevision
     }
@@ -767,6 +841,9 @@ extension DocumentWindowController: EditorWindowControlling {
     func waitForEditorLoad() async throws {
         try await editorLoadOperation?.wait()
         editorIsReady = true
+        if let window {
+            syncAppearanceToEditor(for: window)
+        }
         window?.toolbar?.validateVisibleItems()
     }
 

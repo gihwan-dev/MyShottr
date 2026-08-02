@@ -3519,7 +3519,11 @@ export function useNativeAppearance(): void {
 }
 ```
 
-Call this hook from the production `App` and the visual fixture surface. Unit-test that only strict `setAppearance` envelopes change the root state.
+Call this hook from the production `App` and the visual fixture surface. The
+production native owner is `DocumentWindowController`, which mirrors the
+window’s effective AppKit appearance into the strict bridge on editor load and
+subsequent appearance changes. Unit-test that only strict `setAppearance`
+envelopes change the root state.
 
 In `EditorWebViewRuntimeTests.swift`, add one bundled-runtime smoke test with this exact sequence:
 
@@ -3527,7 +3531,7 @@ In `EditorWebViewRuntimeTests.swift`, add one bundled-runtime smoke test with th
 2. send Dark `setAppearance` through `EditorBridge` and assert the root dataset plus a representative computed token;
 3. use the existing `evaluateJavaScript` test seam to activate Rectangle and dispatch pointer-down/move/up on the real Stage container;
 4. await Editor→Native `historyStateChanged(canUndo: true, canRedo: false)`;
-5. call native `performHistoryAction(.undo)` and await one `documentChanged` plus the next false/false history state;
+5. call native `performHistoryAction(.undo)` and await one `documentChanged` plus the next false/true history state, preserving the single available redo;
 6. send Save `started` and `completed` with one request ID and assert the real DOM `role="status"` shows `Saved`;
 7. send Light `setAppearance` and assert the root/computed token returns to Light.
 
@@ -3548,9 +3552,12 @@ shortcut-help button   handled once      handled once handled once
 ```
 
 For each cell, create a fresh controller/window with immediate successful
-providers for only that command and make that window key. This prevents Copy's
-required hide-on-success behavior or an earlier output guard from influencing
-the next matrix cell. Then:
+providers for only that command. In the installed app the command routes
+through the real key window; in the Xcode unit-test host on macOS 26 the
+runtime suite uses a deterministic `commandWindowPredicate` seam because the
+backgrounded test host cannot reliably own an active key window. This still
+prevents Copy's required hide-on-success behavior or an earlier output guard
+from influencing the next matrix cell. Then:
 
 1. use the real bundled editor DOM to enter the named focus state and assert
    `document.activeElement` is the textarea or a control inside the modal;
@@ -3853,6 +3860,13 @@ pnpm --filter @myshottr/editor exec playwright install chromium
 pnpm --filter @myshottr/editor test:visual
 pnpm test:release
 ```
+
+Task 17 baseline-refresh correction candidate: when an intentional,
+review-authorized refresh is required, use
+`pnpm --filter @myshottr/editor test:visual --update-snapshots`. Do not insert
+an extra `--` before the Playwright option. The extra separator was verified to
+invoke `playwright test -- --update-snapshots`, which ran comparisons against
+the stale images instead of enabling snapshot updates.
 
 - [ ] **Step 5: Run all native tests and a Debug build**
 

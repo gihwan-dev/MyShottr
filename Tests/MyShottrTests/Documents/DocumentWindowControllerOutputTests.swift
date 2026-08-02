@@ -361,6 +361,279 @@ final class DocumentWindowControllerOutputTests:
         await waitUntil { hideCount == 2 }
     }
 
+    func testActiveSavePreventsClosingCleanWindowUntilOutputFinishesAndRestoresCloseButton()
+        async throws
+    {
+        let project = ProjectFixtures.project(
+            text: "Close blocked by active save"
+        )
+        let destination = temporaryDirectory.appendingPathComponent(
+            "Active Save.myshottr",
+            isDirectory: true
+        )
+        let session = DocumentSession()
+        try session.open(project: project)
+        var suspendedSnapshot: CheckedContinuation<Data, any Error>?
+        var statuses: [OutputStatusRecord] = []
+        let store = OutputProjectStoreSpy()
+        let presenter = OutputErrorPresenterSpy()
+        let controller = try DocumentWindowController(
+            project: project,
+            projectURL: destination,
+            projectStore: store,
+            errorPresenter: presenter,
+            testSession: session,
+            annotationSnapshotProvider: {
+                try await withCheckedThrowingContinuation { continuation in
+                    suspendedSnapshot = continuation
+                }
+            },
+            operationStatusSender: { requestID, status in
+                statuses.append(
+                    OutputStatusRecord(
+                        requestID: requestID,
+                        status: status
+                    )
+                )
+            },
+            commandWindowPredicate: { _ in true }
+        )
+        let window = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            window.standardWindowButton(.closeButton)
+        )
+        try await controller.waitForEditorLoad()
+
+        XCTAssertTrue(controller.saveProjectAction(nil))
+        await waitUntil {
+            suspendedSnapshot != nil && !closeButton.isEnabled
+        }
+
+        XCTAssertFalse(controller.windowShouldClose(window))
+        let canResolveSaveWhileActive =
+            await controller.resolvePendingChangesForTermination()
+        XCTAssertFalse(canResolveSaveWhileActive)
+        XCTAssertEqual(store.saveCount, 0)
+
+        suspendedSnapshot?.resume(returning: project.annotationJSON)
+        await waitUntil { closeButton.isEnabled }
+
+        XCTAssertEqual(
+            statuses.map(\.status),
+            [.started(.save), .saveCompleted]
+        )
+        XCTAssertEqual(Set(statuses.map(\.requestID)).count, 1)
+        XCTAssertEqual(store.saveCount, 1)
+        XCTAssertTrue(controller.windowShouldClose(window))
+        XCTAssertTrue(presenter.presentedViewModels.isEmpty)
+    }
+
+    func testActiveExportPreventsClosingCleanWindowUntilOutputFinishesAndRestoresCloseButton()
+        async throws
+    {
+        let project = ProjectFixtures.project(
+            text: "Close blocked by active export"
+        )
+        let destination = temporaryDirectory.appendingPathComponent(
+            "Active Export.png",
+            isDirectory: false
+        )
+        let session = DocumentSession()
+        try session.open(project: project)
+        let completed = try makeCompletedTransfer()
+        var suspendedTransfer:
+            CheckedContinuation<CompositeTransfer, any Error>?
+        var statuses: [OutputStatusRecord] = []
+        var hideCount = 0
+        let presenter = OutputErrorPresenterSpy()
+        let controller = try DocumentWindowController(
+            project: project,
+            projectURL: destination,
+            errorPresenter: presenter,
+            testSession: session,
+            compositeProvider: { _ in
+                try await withCheckedThrowingContinuation {
+                    continuation in
+                    suspendedTransfer = continuation
+                }
+            },
+            pngExportURLProvider: { destination },
+            operationStatusSender: { requestID, status in
+                statuses.append(
+                    OutputStatusRecord(
+                        requestID: requestID,
+                        status: status
+                    )
+                )
+            },
+            windowHider: { hideCount += 1 },
+            commandWindowPredicate: { _ in true }
+        )
+        let window = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            window.standardWindowButton(.closeButton)
+        )
+        try await controller.waitForEditorLoad()
+
+        XCTAssertTrue(controller.exportComposite(nil))
+        await waitUntil {
+            suspendedTransfer != nil && !closeButton.isEnabled
+        }
+
+        XCTAssertFalse(controller.windowShouldClose(window))
+        let canResolveExportWhileActive =
+            await controller.resolvePendingChangesForTermination()
+        XCTAssertFalse(canResolveExportWhileActive)
+        XCTAssertEqual(hideCount, 0)
+
+        suspendedTransfer?.resume(returning: completed.transfer)
+        await waitUntil { closeButton.isEnabled }
+
+        XCTAssertEqual(
+            statuses.map(\.status),
+            [
+                .started(.export),
+                .exportCompleted(
+                    displayName: destination.lastPathComponent
+                ),
+            ]
+        )
+        XCTAssertEqual(Set(statuses.map(\.requestID)).count, 1)
+        XCTAssertEqual(hideCount, 0)
+        XCTAssertTrue(controller.windowShouldClose(window))
+        XCTAssertTrue(presenter.presentedViewModels.isEmpty)
+    }
+
+    func testSaveRestoresPreviouslyDisabledCloseButtonState()
+        async throws
+    {
+        let project = ProjectFixtures.project(
+            text: "Save preserves disabled close button"
+        )
+        let destination = temporaryDirectory.appendingPathComponent(
+            "Preserve Close State.myshottr",
+            isDirectory: true
+        )
+        let session = DocumentSession()
+        try session.open(project: project)
+        let store = OutputProjectStoreSpy()
+        let controller = try DocumentWindowController(
+            project: project,
+            projectURL: destination,
+            projectStore: store,
+            errorPresenter: OutputErrorPresenterSpy(),
+            testSession: session,
+            annotationSnapshotProvider: {
+                project.annotationJSON
+            },
+            commandWindowPredicate: { _ in true }
+        )
+        let window = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            window.standardWindowButton(.closeButton)
+        )
+        try await controller.waitForEditorLoad()
+        closeButton.isEnabled = false
+
+        XCTAssertTrue(controller.saveProjectAction(nil))
+        await waitUntil { store.saveCount == 1 }
+
+        XCTAssertFalse(closeButton.isEnabled)
+    }
+
+    func testActiveCopyPreventsClosingCleanWindowUntilOutputFinishes()
+        async throws
+    {
+        let project = ProjectFixtures.project(
+            text: "Close blocked by active copy"
+        )
+        let session = DocumentSession()
+        try session.open(project: project)
+        let completed = try makeCompletedTransfer()
+        var suspendedContinuation:
+            CheckedContinuation<CompositeTransfer, any Error>?
+        var pendingDecisionCount = 0
+        var hideCount = 0
+        let presenter = OutputErrorPresenterSpy()
+        let controller = try DocumentWindowController(
+            project: project,
+            projectURL: nil,
+            errorPresenter: presenter,
+            testSession: session,
+            pendingChangesDecisionProvider: {
+                pendingDecisionCount += 1
+                return .discard
+            },
+            compositeProvider: { _ in
+                try await withCheckedThrowingContinuation {
+                    continuation in
+                    suspendedContinuation = continuation
+                }
+            },
+            clipboardWriter: { _ in },
+            windowHider: { hideCount += 1 },
+            commandWindowPredicate: { _ in true }
+        )
+        let window = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            window.standardWindowButton(.closeButton)
+        )
+        try await controller.waitForEditorLoad()
+
+        XCTAssertTrue(controller.copyComposite(nil))
+        await waitUntil {
+            suspendedContinuation != nil && !closeButton.isEnabled
+        }
+
+        XCTAssertFalse(controller.windowShouldClose(window))
+        let canResolveCopyWhileActive =
+            await controller.resolvePendingChangesForTermination()
+        XCTAssertFalse(canResolveCopyWhileActive)
+        XCTAssertEqual(pendingDecisionCount, 0)
+        XCTAssertEqual(hideCount, 0)
+        XCTAssertTrue(presenter.presentedViewModels.isEmpty)
+
+        suspendedContinuation?.resume(
+            returning: completed.transfer
+        )
+        await waitUntil {
+            hideCount == 1 && closeButton.isEnabled
+        }
+
+        XCTAssertTrue(controller.windowShouldClose(window))
+    }
+
+    func testOutputRestoresAnInitiallyDisabledCloseButtonExactly()
+        async throws
+    {
+        let project = ProjectFixtures.project(
+            text: "Preserve disabled close button"
+        )
+        let session = DocumentSession()
+        try session.open(project: project)
+        let completed = try makeCompletedTransfer()
+        var hideCount = 0
+        let controller = try makeController(
+            project: project,
+            session: session,
+            errorPresenter: OutputErrorPresenterSpy(),
+            compositeProvider: { _ in completed.transfer },
+            clipboardWriter: { _ in },
+            windowHider: { hideCount += 1 }
+        )
+        let window = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            window.standardWindowButton(.closeButton)
+        )
+        try await controller.waitForEditorLoad()
+        closeButton.isEnabled = false
+
+        XCTAssertTrue(controller.copyComposite(nil))
+        await waitUntil { hideCount == 1 }
+
+        XCTAssertFalse(closeButton.isEnabled)
+    }
+
     func testCopyFailureReleasesGuardForLaterCopy() async throws {
         let project = ProjectFixtures.project(text: "Guard failure")
         let session = DocumentSession()
@@ -706,6 +979,9 @@ final class DocumentWindowControllerOutputTests:
             commandWindowPredicate: { _ in true }
         )
         let originalWindow = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            originalWindow.standardWindowButton(.closeButton)
+        )
         let copyItem = try makeCopyToolbarItem(controller)
         try await controller.waitForEditorLoad()
 
@@ -742,6 +1018,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertTrue(presenter.presentedViewModels.isEmpty)
         XCTAssertEqual(hideCount, 0)
         XCTAssertTrue(controller.window === originalWindow)
+        XCTAssertTrue(closeButton.isEnabled)
     }
 
     func testExportFailureSendsSameUUIDFailedBeforeOneNativeErrorAndDiscards()
@@ -794,6 +1071,9 @@ final class DocumentWindowControllerOutputTests:
             commandWindowPredicate: { _ in true }
         )
         let originalWindow = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            originalWindow.standardWindowButton(.closeButton)
+        )
         let copyItem = try makeCopyToolbarItem(controller)
         try await controller.waitForEditorLoad()
 
@@ -840,6 +1120,7 @@ final class DocumentWindowControllerOutputTests:
         )
         XCTAssertEqual(hideCount, 0)
         XCTAssertTrue(controller.window === originalWindow)
+        XCTAssertTrue(closeButton.isEnabled)
     }
 
     func testUnsavedSaveDestinationCancellationHasNoStartedWorkAndReleasesGuard()
@@ -880,6 +1161,9 @@ final class DocumentWindowControllerOutputTests:
             commandWindowPredicate: { _ in true }
         )
         let copyItem = try makeCopyToolbarItem(controller)
+        let closeButton = try XCTUnwrap(
+            controller.window?.standardWindowButton(.closeButton)
+        )
         try await controller.waitForEditorLoad()
 
         let resolved = await controller
@@ -897,6 +1181,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertEqual(hideCount, 0)
         XCTAssertTrue(presenter.presentedViewModels.isEmpty)
         XCTAssertTrue(controller.validateToolbarItem(copyItem))
+        XCTAssertTrue(closeButton.isEnabled)
     }
 
     func testUnsavedSaveSelectsDestinationBeforeStartedAndUpdatesWindowIdentity()
@@ -1262,6 +1547,9 @@ final class DocumentWindowControllerOutputTests:
             commandWindowPredicate: { _ in true }
         )
         let copyItem = try makeCopyToolbarItem(controller)
+        let closeButton = try XCTUnwrap(
+            controller.window?.standardWindowButton(.closeButton)
+        )
         try await controller.waitForEditorLoad()
 
         XCTAssertTrue(controller.saveProjectAction(nil))
@@ -1289,6 +1577,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertEqual(hideCount, 0)
         XCTAssertEqual(closeCount, 0)
         XCTAssertTrue(controller.validateToolbarItem(copyItem))
+        XCTAssertTrue(closeButton.isEnabled)
     }
 
     func testSaveFailureSendsSameUUIDFailedBeforeOneNativeError()
@@ -1341,6 +1630,9 @@ final class DocumentWindowControllerOutputTests:
             commandWindowPredicate: { _ in true }
         )
         let copyItem = try makeCopyToolbarItem(controller)
+        let closeButton = try XCTUnwrap(
+            controller.window?.standardWindowButton(.closeButton)
+        )
         try await controller.waitForEditorLoad()
 
         XCTAssertTrue(controller.saveProjectAction(nil))
@@ -1371,6 +1663,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertEqual(hideCount, 0)
         XCTAssertEqual(closeCount, 0)
         XCTAssertTrue(controller.validateToolbarItem(copyItem))
+        XCTAssertTrue(closeButton.isEnabled)
     }
 
     func testClosePromptSaveContinuesCloseOnlyAfterFullySavedOutcome()
@@ -1412,6 +1705,9 @@ final class DocumentWindowControllerOutputTests:
             commandWindowPredicate: { _ in true }
         )
         let window = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            window.standardWindowButton(.closeButton)
+        )
         try await controller.waitForEditorLoad()
 
         XCTAssertFalse(controller.windowShouldClose(window))
@@ -1426,6 +1722,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertFalse(session.isModified)
         XCTAssertEqual(hideCount, 0)
         XCTAssertTrue(presenter.presentedViewModels.isEmpty)
+        XCTAssertTrue(closeButton.isEnabled)
     }
 
     func testClosePromptSupersededSaveKeepsWindowOpen()
@@ -1484,6 +1781,9 @@ final class DocumentWindowControllerOutputTests:
             commandWindowPredicate: { _ in true }
         )
         let window = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            window.standardWindowButton(.closeButton)
+        )
         try await controller.waitForEditorLoad()
 
         XCTAssertFalse(controller.windowShouldClose(window))
@@ -1504,6 +1804,7 @@ final class DocumentWindowControllerOutputTests:
         )
         XCTAssertTrue(session.isModified)
         XCTAssertTrue(presenter.presentedViewModels.isEmpty)
+        XCTAssertTrue(closeButton.isEnabled)
     }
 
     func testClosePromptDestinationCancellationKeepsWindowOpen()
@@ -1597,6 +1898,9 @@ final class DocumentWindowControllerOutputTests:
             commandWindowPredicate: { _ in true }
         )
         let window = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            window.standardWindowButton(.closeButton)
+        )
         try await controller.waitForEditorLoad()
 
         XCTAssertFalse(controller.windowShouldClose(window))
@@ -1610,6 +1914,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertEqual(store.saveCount, 0)
         XCTAssertTrue(session.isModified)
         XCTAssertTrue(presenter.presentedViewModels.isEmpty)
+        XCTAssertTrue(closeButton.isEnabled)
     }
 
     func testClosePromptFailedSaveKeepsWindowOpen()
@@ -1651,6 +1956,9 @@ final class DocumentWindowControllerOutputTests:
             commandWindowPredicate: { _ in true }
         )
         let window = try XCTUnwrap(controller.window)
+        let closeButton = try XCTUnwrap(
+            window.standardWindowButton(.closeButton)
+        )
         try await controller.waitForEditorLoad()
 
         XCTAssertFalse(controller.windowShouldClose(window))
@@ -1669,9 +1977,11 @@ final class DocumentWindowControllerOutputTests:
             presenter.presentedViewModels,
             [MyShottrUserFacingError.projectSave.viewModel]
         )
+        XCTAssertEqual(closeCount, 0)
+        XCTAssertTrue(closeButton.isEnabled)
     }
 
-    func testClosePromptSaveCannotBypassSuspendedOutputGuard()
+    func testActiveOutputRejectsCloseResolutionBeforePromptFlow()
         async throws
     {
         let project = ProjectFixtures.project(
@@ -1731,7 +2041,7 @@ final class DocumentWindowControllerOutputTests:
             .resolvePendingChangesForTermination()
 
         XCTAssertFalse(resolved)
-        XCTAssertEqual(decisionRequestCount, 1)
+        XCTAssertEqual(decisionRequestCount, 0)
         XCTAssertEqual(snapshotRequestCount, 0)
         XCTAssertEqual(store.saveCount, 0)
         XCTAssertEqual(statusSendCount, 0)

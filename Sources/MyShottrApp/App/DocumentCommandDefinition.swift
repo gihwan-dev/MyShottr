@@ -95,3 +95,30 @@ struct DocumentCommandDefinition {
         exportPNG,
     ]
 }
+
+@MainActor
+enum DocumentCommandDispatcher {
+    @discardableResult
+    static func performFromKeyWindow(
+        _ definition: DocumentCommandDefinition
+    ) -> Bool {
+        perform(
+            definition,
+            startingAt: NSApp.keyWindow?.firstResponder
+        )
+    }
+
+    @discardableResult
+    static func perform(
+        _ definition: DocumentCommandDefinition,
+        startingAt firstResponder: NSResponder?
+    ) -> Bool {
+        guard let firstResponder else {
+            return false
+        }
+        return firstResponder.tryToPerform(
+            definition.action,
+            with: nil
+        )
+    }
+}

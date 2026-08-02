@@ -5,9 +5,32 @@
   --coral: #ff6b5f;
   --coral-strong: #ed4f45;
   --border: rgb(32 27 26 / 12%);
+  --control-border: rgb(32 27 26 / 48%);
+  --control-surface: rgb(255 255 255 / 72%);
+  --control-surface-raised: rgb(255 255 255 / 82%);
+  --muted-ink: #5f5550;
+  --subtle-ink: #6a5f59;
+  --on-accent: #ffffff;
+  --tooltip-surface: #201b1a;
+  --tooltip-ink: #ffffff;
   --shadow: 0 16px 42px rgb(73 45 38 / 16%);
   color: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root[data-color-scheme="dark"] {
+  --ink: #f8eee9;
+  --canvas-surround: #1e1a18;
+  --panel: rgb(48 41 38 / 96%);
+  --coral: #ff8278;
+  --coral-strong: #ff8278;
+  --border: rgb(248 238 233 / 22%);
+  --control-border: rgb(248 238 233 / 58%);
+  --control-surface: rgb(25 21 20 / 78%);
+  --control-surface-raised: rgb(61 52 48 / 96%);
+  --muted-ink: #ddd0c9;
+  --subtle-ink: #c2b3ac;
+  --shadow: 0 18px 46px rgb(0 0 0 / 38%);
 }
 
 * {
@@ -33,8 +56,8 @@ input {
 }
 
 button {
-  border: 1px solid var(--border);
-  background: rgb(255 255 255 / 72%);
+  border: 1px solid var(--control-border);
+  background: var(--control-surface);
   cursor: pointer;
 }
 
@@ -117,8 +140,8 @@ input:focus-visible {
   bottom: 2px;
   min-width: 11px;
   border-radius: 3px;
-  background: rgb(255 255 255 / 78%);
-  color: rgb(32 27 26 / 72%);
+  background: var(--control-surface-raised);
+  color: var(--muted-ink);
   font-family: inherit;
   font-size: 9px;
   font-weight: 750;
@@ -128,14 +151,14 @@ input:focus-visible {
 
 .floating-tool-palette button[aria-pressed="true"] {
   border-color: var(--coral-strong);
-  background: var(--coral);
-  color: #ffffff;
+  background: var(--coral-strong);
+  color: var(--on-accent);
   box-shadow: 0 5px 12px rgb(237 79 69 / 24%);
 }
 
 .floating-tool-palette button[aria-pressed="true"] > kbd {
   background: rgb(255 255 255 / 22%);
-  color: #ffffff;
+  color: var(--on-accent);
 }
 
 .tool-palette-tooltip {
@@ -147,8 +170,8 @@ input:focus-visible {
   max-width: 180px;
   padding: 6px 8px;
   border-radius: 7px;
-  background: var(--ink);
-  color: #ffffff;
+  background: var(--tooltip-surface);
+  color: var(--tooltip-ink);
   font-size: 11px;
   font-weight: 650;
   line-height: 1.2;
@@ -195,7 +218,7 @@ input:focus-visible {
 }
 
 .context-rail-fixed {
-  color: rgb(32 27 26 / 68%);
+  color: var(--muted-ink);
   font-size: 12px;
 }
 
@@ -213,7 +236,7 @@ input:focus-visible {
 .context-rail-field legend {
   width: 100%;
   margin-block-end: 6px;
-  color: rgb(32 27 26 / 72%);
+  color: var(--muted-ink);
   font-size: 11px;
   font-weight: 700;
 }
@@ -221,7 +244,7 @@ input:focus-visible {
 .context-rail-mixed {
   display: block;
   margin-block-end: 5px;
-  color: rgb(32 27 26 / 66%);
+  color: var(--muted-ink);
   font-size: 11px;
   font-weight: 650;
 }
@@ -269,7 +292,7 @@ input:focus-visible {
   height: 12px;
   display: inline-block;
   margin-inline-end: 4px;
-  border: 1px solid rgb(32 27 26 / 22%);
+  border: 1px solid var(--control-border);
   border-radius: 50%;
   background: var(--swatch-color);
   content: "";
@@ -283,7 +306,7 @@ input:focus-visible {
 }
 
 .context-rail-slider-heading output {
-  color: rgb(32 27 26 / 68%);
+  color: var(--muted-ink);
   font-size: 11px;
   font-weight: 650;
 }
@@ -296,7 +319,7 @@ input:focus-visible {
 .context-rail-slider-scale {
   display: flex;
   justify-content: space-between;
-  color: rgb(32 27 26 / 58%);
+  color: var(--subtle-ink);
   font-size: 9px;
 }
 
@@ -342,7 +365,7 @@ input:focus-visible {
 
 .zoom-controls output {
   min-width: 44px;
-  color: rgb(32 27 26 / 72%);
+  color: var(--muted-ink);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: 650;
@@ -458,7 +481,7 @@ input:focus-visible {
 
 .shortcut-help-groups h3 {
   margin-bottom: 8px;
-  color: rgb(32 27 26 / 72%);
+  color: var(--muted-ink);
   font-size: 12px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -493,9 +516,9 @@ input:focus-visible {
   padding: 3px 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: rgb(255 255 255 / 82%);
-  box-shadow: 0 1px 0 rgb(32 27 26 / 12%);
-  color: rgb(32 27 26 / 76%);
+  background: var(--control-surface-raised);
+  box-shadow: 0 1px 0 var(--border);
+  color: var(--muted-ink);
   font-family: inherit;
   font-size: 11px;
   font-weight: 700;

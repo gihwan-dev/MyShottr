@@ -225,6 +225,31 @@ describe("NativeToEditorEnvelopeSchema", () => {
     })).toThrow();
   });
 
+  it.each(["light", "dark"] as const)("accepts the %s appearance", (colorScheme) => {
+    const message = {
+      protocolVersion: 1,
+      requestId: UUID,
+      type: "setAppearance",
+      payload: { colorScheme },
+    };
+
+    expect(NativeToEditorEnvelopeSchema.parse(message)).toEqual(message);
+  });
+
+  it.each([
+    ["a missing color scheme", {}],
+    ["the system color scheme", { colorScheme: "system" }],
+    ["a non-string color scheme", { colorScheme: 1 }],
+    ["an extra key", { colorScheme: "dark", extra: true }],
+  ])("rejects an appearance with %s", (_description, payload) => {
+    expect(() => NativeToEditorEnvelopeSchema.parse({
+      protocolVersion: 1,
+      requestId: UUID,
+      type: "setAppearance",
+      payload,
+    })).toThrow();
+  });
+
   it.each([
     ["save started", { operation: "save", phase: "started" }],
     ["export started", { operation: "export", phase: "started" }],

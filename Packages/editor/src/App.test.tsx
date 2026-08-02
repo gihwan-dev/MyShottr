@@ -236,9 +236,8 @@ type SentBridgeMessage = {
 };
 
 function createNativeBridgeHarness() {
-  let receiveNative: ((message: NativeMessage) => void) | undefined;
+  const nativeMessageHandlers = new Set<(message: NativeMessage) => void>();
   let onMessageSent: ((message: SentBridgeMessage) => void) | undefined;
-  let subscribeCalls = 0;
   const sent: SentBridgeMessage[] = [];
   const record = (message: SentBridgeMessage) => {
     sent.push(message);
@@ -250,20 +249,18 @@ function createNativeBridgeHarness() {
       record({ requestId, type, payload });
     },
     subscribe: (handler) => {
-      subscribeCalls += 1;
-      receiveNative = handler;
-      return () => { receiveNative = undefined; };
+      nativeMessageHandlers.add(handler);
+      return () => { nativeMessageHandlers.delete(handler); };
     },
   };
   return {
     bridge,
     sent,
-    get subscribeCalls() {
-      return subscribeCalls;
-    },
     receive(message: NativeMessage) {
-      if (!receiveNative) throw new Error("Native bridge is not subscribed");
-      receiveNative(message);
+      if (nativeMessageHandlers.size === 0) {
+        throw new Error("Native bridge is not subscribed");
+      }
+      for (const handler of nativeMessageHandlers) handler(message);
     },
     messages(type: string) {
       return sent.filter((message) => message.type === type);
@@ -2228,12 +2225,22 @@ describe("EditorApp", () => {
     ]);
   });
 
-  it("routes strict output feedback above document remounts through one bridge subscription", async () => {
+  it("keeps operation feedback and native appearance handling alive across document remounts", async () => {
     const harness = await renderAcceptedNativeEditor();
     const feedback = editorFeedbackStatus();
     expect(feedback).not.toBeNull();
     expect(feedback?.textContent).toBe("");
-    expect(harness.subscribeCalls).toBe(1);
+
+    act(() => {
+      harness.receive({
+        protocolVersion: 1,
+        requestId: "AAAAAAAA-1111-4222-8333-BBBBBBBBBBBB",
+        type: "setAppearance",
+        payload: { colorScheme: "dark" },
+      });
+    });
+    expect(document.documentElement.dataset.colorScheme).toBe("dark");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
 
     act(() => {
       harness.receive({
@@ -2274,9 +2281,32 @@ describe("EditorApp", () => {
     await vi.waitFor(() => expect(screen.getByTestId("canvas-positions").textContent)
       .toBe("line-1:15,20"));
 
+    act(() => {
+      harness.receive({
+        protocolVersion: 1,
+        requestId: "CCCCCCCC-DDDD-4EEE-8FFF-000000000000",
+        type: "setAppearance",
+        payload: { colorScheme: "light" },
+      });
+    });
+    expect(document.documentElement.dataset.colorScheme).toBe("light");
+    expect(document.documentElement.style.colorScheme).toBe("light");
+
+    const exportRequestId = "11111111-2222-4333-8444-555555555555";
+    act(() => {
+      harness.receive(nativeOperationStatusMessage(exportRequestId, {
+        operation: "export",
+        phase: "started",
+      }));
+      harness.receive(nativeOperationStatusMessage(exportRequestId, {
+        operation: "export",
+        phase: "completed",
+        displayName: "capture.png",
+      }));
+    });
+
     expect(editorFeedbackStatus()).toBe(feedback);
-    expect(feedback?.textContent).toBe("Saved");
-    expect(harness.subscribeCalls).toBe(1);
+    expect(feedback?.textContent).toBe("Exported capture.png");
   });
 
   it("returns total correlated outcomes and keeps history inert during the accepted-load remount gap", async () => {

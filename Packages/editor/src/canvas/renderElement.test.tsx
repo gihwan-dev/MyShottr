@@ -40,9 +40,13 @@ describe("renderElement", () => {
       ...interactionHandlers(),
       onPointerDown: vi.fn(),
     };
-    const container = document.createElement("div");
+    const outerContainer = document.createElement("div");
+    const content = document.createElement("div");
     const node = {
-      getStage: () => ({ container: () => container }),
+      getStage: () => ({
+        container: () => outerContainer,
+        getContent: () => content,
+      }),
     };
     const rendered = renderElement(fixtureRect(), handlers);
     if (!isValidElement(rendered)) throw new Error("Expected a rendered element");
@@ -62,7 +66,7 @@ describe("renderElement", () => {
     props.onTransformStart(lifecycleEvent);
     props.onTransformEnd(lifecycleEvent);
 
-    const owner = { pointerId: 7, container };
+    const owner = { pointerId: 7, container: content };
     expect(handlers.onPointerDown).toHaveBeenCalledWith("rect-1", node, owner);
     expect(handlers.onDragStart).toHaveBeenCalledWith("rect-1", node);
     expect(handlers.onDragEnd).toHaveBeenCalledWith("rect-1", node);

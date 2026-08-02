@@ -37,6 +37,7 @@ import {
   type EditorWorkspaceHandle,
 } from "./components/EditorWorkspace";
 import { useNativeBridge } from "./bridge/nativeBridge";
+import { useNativeAppearance } from "./appearance/useNativeAppearance";
 import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
 import { sendComposite } from "./export/sendComposite";
 import {
@@ -711,6 +712,7 @@ function measureTextBounds(text: string, fontSize: TextElement["fontSize"]): Pic
 
 export function App() {
   const bridge = useNativeBridge();
+  useNativeAppearance();
   const editorRef = useRef<EditorAppHandle>(null);
   const { state: feedbackState, receive: receiveOperationStatus } = useEditorFeedback();
   const [loadedDocument, setLoadedDocument] = useState<LoadedDocument>();
@@ -764,7 +766,6 @@ export function App() {
       }
       void bridge.sendCorrelated(event.detail.requestId, "annotationSnapshot", { document: currentDocument });
     };
-    void bridge.send("editorReady", {});
     const unsubscribe = bridge.subscribe((message) => {
       if (message.type === "operationStatus") {
         receiveOperationStatus({
@@ -801,6 +802,7 @@ export function App() {
       }
     });
     window.addEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
+    void bridge.send("editorReady", {});
     return () => {
       latestLoadRequestSequence.current += 1;
       unsubscribe();

@@ -4,6 +4,48 @@ import XCTest
 
 @MainActor
 final class EditorBridgeStateCommandTests: XCTestCase {
+    func testDocumentChangedInvokesOneTypedCallbackAfterSessionMutation()
+        throws
+    {
+        let session = DocumentSession()
+        try session.open(project: ProjectFixtures.project(text: "Changed"))
+        let bridge = EditorBridge(session: session)
+        var callbackCount = 0
+        bridge.onDocumentChanged = { callbackCount += 1 }
+
+        bridge.receive(
+            data: try EditorToNativeEnvelope(
+                type: .documentChanged,
+                payload: .object([:])
+            ).encodedData()
+        )
+
+        XCTAssertEqual(callbackCount, 1)
+        XCTAssertEqual(session.modificationRevision, 1)
+        XCTAssertTrue(session.isModified)
+        XCTAssertNil(bridge.lastError)
+        bridge.tearDown()
+    }
+
+    func testDocumentChangedDoesNotInvokeCallbackWhenSessionMutationFails()
+        throws
+    {
+        let bridge = EditorBridge(session: DocumentSession())
+        var callbackCount = 0
+        bridge.onDocumentChanged = { callbackCount += 1 }
+
+        bridge.receive(
+            data: try EditorToNativeEnvelope(
+                type: .documentChanged,
+                payload: .object([:])
+            ).encodedData()
+        )
+
+        XCTAssertEqual(callbackCount, 0)
+        XCTAssertEqual(bridge.lastError, .invalidDocument)
+        bridge.tearDown()
+    }
+
     func testHistoryStateChangedInvokesOneTypedCallback() throws {
         let bridge = EditorBridge(session: DocumentSession())
         var received: [EditorHistoryState] = []
@@ -131,6 +173,35 @@ final class EditorBridgeStateCommandTests: XCTestCase {
         XCTAssertEqual(outgoing.map(\.payload), [
             .object(["action": .string("undo")]),
             .object(["action": .string("redo")]),
+        ])
+        for envelope in outgoing {
+            XCTAssertNoThrow(
+                try NativeToEditorEnvelope.decode(
+                    from: envelope.encodedData()
+                )
+            )
+        }
+        bridge.tearDown()
+    }
+
+    func testSetAppearanceEmitsOneStrictEnvelopeForEachScheme() throws {
+        var outgoing: [NativeToEditorEnvelope] = []
+        let bridge = EditorBridge(
+            session: DocumentSession(),
+            outgoingMessageObserver: { outgoing.append($0) }
+        )
+
+        bridge.setAppearance(.light)
+        bridge.setAppearance(.dark)
+
+        XCTAssertEqual(outgoing.count, 2)
+        XCTAssertEqual(outgoing.map(\.type), [
+            .setAppearance,
+            .setAppearance,
+        ])
+        XCTAssertEqual(outgoing.map(\.payload), [
+            .object(["colorScheme": .string("light")]),
+            .object(["colorScheme": .string("dark")]),
         ])
         for envelope in outgoing {
             XCTAssertNoThrow(

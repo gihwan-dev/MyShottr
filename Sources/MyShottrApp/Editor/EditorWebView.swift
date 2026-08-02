@@ -17,6 +17,11 @@ final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
             bridge.onUncorrelatedError = onBridgeFailure
         }
     }
+    var onDocumentChanged: (() -> Void)? {
+        didSet {
+            bridge.onDocumentChanged = onDocumentChanged
+        }
+    }
     var onHistoryStateChanged: ((EditorHistoryState) -> Void)? {
         didSet {
             bridge.onHistoryStateChanged = onHistoryStateChanged
@@ -107,6 +112,10 @@ final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func performHistoryAction(_ action: EditorHistoryAction) {
         bridge.performHistoryAction(action)
+    }
+
+    func setAppearance(_ colorScheme: EditorAppearanceColorScheme) {
+        bridge.setAppearance(colorScheme)
     }
 
     func sendOperationStatus(

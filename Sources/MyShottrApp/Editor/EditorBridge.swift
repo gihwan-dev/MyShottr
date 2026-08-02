@@ -78,6 +78,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private(set) var lastProtocolError: EditorBridgeEnvelopeError?
     var onUncorrelatedError: ((EditorBridgeError) -> Void)?
     var onProtocolError: ((EditorBridgeEnvelopeError) -> Void)?
+    var onDocumentChanged: (() -> Void)?
     var onHistoryStateChanged: ((EditorHistoryState) -> Void)?
 
     init(
@@ -207,6 +208,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         }
     }
 
+    func setAppearance(_ colorScheme: EditorAppearanceColorScheme) {
+        sendFireAndForget {
+            try NativeToEditorEnvelope.setAppearance(colorScheme)
+        }
+    }
+
     func sendOperationStatus(
         requestID: UUID,
         status: EditorOperationStatus
@@ -294,6 +301,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         case .documentChanged:
             do {
                 try session.markModified()
+                onDocumentChanged?()
             } catch {
                 reportUncorrelatedError(.invalidDocument)
             }

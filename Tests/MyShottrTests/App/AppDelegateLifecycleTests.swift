@@ -549,6 +549,98 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(window.resolveCount, 0)
     }
 
+    func testActiveOutputWindowCancelsQuitImmediatelyWithoutPrompt()
+        async throws
+    {
+        let window = SpyEditorWindowController()
+        window.hasActiveOutputOperation = true
+        let delegate = AppDelegate(
+            documentWindowFactory: { _, _ in window },
+            nativeMessagingHostInstaller: {},
+            chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
+            terminationReply: { _ in
+                XCTFail("Immediate cancellation must not reply later")
+            },
+            hotKeyAPI: makeNoOpHotKeyAPI()
+        )
+        delegate.applicationDidFinishLaunching(
+            Notification(
+                name: NSApplication.didFinishLaunchingNotification
+            )
+        )
+        try await delegate.present(
+            project: ProjectFixtures.project(text: "active output")
+        )
+
+        XCTAssertEqual(
+            delegate.applicationShouldTerminate(
+                NSApplication.shared
+            ),
+            .terminateCancel
+        )
+
+        XCTAssertEqual(window.resolveCount, 0)
+    }
+
+    func testActiveOutputCancelsReentrantQuitWhileResolutionIsInFlight()
+        async throws
+    {
+        let window = SpyEditorWindowController()
+        window.hasModifiedDocument = true
+        window.pauseResolution = true
+        let resolveStartedExpectation = expectation(
+            description: "resolution started"
+        )
+        let replyExpectation = expectation(
+            description: "termination reply"
+        )
+        var replies: [Bool] = []
+        window.onResolve = { count in
+            if count == 1 {
+                resolveStartedExpectation.fulfill()
+            }
+        }
+        let delegate = AppDelegate(
+            documentWindowFactory: { _, _ in window },
+            nativeMessagingHostInstaller: {},
+            chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
+            terminationReply: {
+                replies.append($0)
+                replyExpectation.fulfill()
+            },
+            hotKeyAPI: makeNoOpHotKeyAPI()
+        )
+        delegate.applicationDidFinishLaunching(
+            Notification(
+                name: NSApplication.didFinishLaunchingNotification
+            )
+        )
+        try await delegate.present(
+            project: ProjectFixtures.project(text: "modified")
+        )
+
+        XCTAssertEqual(
+            delegate.applicationShouldTerminate(
+                NSApplication.shared
+            ),
+            .terminateLater
+        )
+        await fulfillment(of: [resolveStartedExpectation], timeout: 1)
+        XCTAssertEqual(window.resolveCount, 1)
+
+        window.hasActiveOutputOperation = true
+        XCTAssertEqual(
+            delegate.applicationShouldTerminate(
+                NSApplication.shared
+            ),
+            .terminateCancel
+        )
+
+        window.resumeResolution()
+        await fulfillment(of: [replyExpectation], timeout: 1, enforceOrder: false)
+        XCTAssertEqual(replies, [false])
+    }
+
     func testCancelQuitRepliesFalse()
         async throws
     {
@@ -1106,6 +1198,7 @@ private final class SpyEditorWindowController: EditorWindowControlling {
     var representedDocumentID = ProjectFixtures.documentID
     var representedProjectURL: URL?
     var hasModifiedDocument = false
+    var hasActiveOutputOperation = false
     var modificationRevision: UInt64 = 0
     var resolutionResult = true
     var resolutionLabel = "approved"

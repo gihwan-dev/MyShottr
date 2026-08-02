@@ -223,6 +223,12 @@ final class AppDelegate:
     func applicationShouldTerminate(
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {
+        guard !documentWindows.contains(
+            where: \.hasActiveOutputOperation
+        ) else {
+            return .terminateCancel
+        }
+
         switch terminationResolutionState {
         case .approved:
             return .terminateNow
@@ -477,6 +483,11 @@ final class AppDelegate:
             }
 
             let liveWindows = documentWindows
+            guard !liveWindows.contains(
+                where: \.hasActiveOutputOperation
+            ) else {
+                return false
+            }
             guard Set(
                 liveWindows.map(windowIdentity)
             ) == cycleIdentities else {

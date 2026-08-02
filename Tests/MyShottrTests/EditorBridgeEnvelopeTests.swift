@@ -241,6 +241,85 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         }
     }
 
+    func testSetAppearanceAcceptsOnlyLightDarkWithExactKeys() throws {
+        for colorScheme in ["light", "dark"] {
+            let envelope = try NativeToEditorEnvelope.decode(
+                from: bridgeEnvelopeData(
+                    type: "setAppearance",
+                    payload: ["colorScheme": colorScheme]
+                )
+            )
+
+            XCTAssertEqual(envelope.type, .setAppearance)
+            XCTAssertEqual(
+                envelope.payload,
+                .object(["colorScheme": .string(colorScheme)])
+            )
+        }
+
+        for payload: [String: Any] in [
+            [:],
+            ["colorScheme": "system"],
+            ["colorScheme": 1],
+            ["colorScheme": "dark", "extra": true],
+        ] {
+            XCTAssertThrowsError(
+                try NativeToEditorEnvelope.decode(
+                    from: bridgeEnvelopeData(
+                        type: "setAppearance",
+                        payload: payload
+                    )
+                )
+            )
+        }
+    }
+
+    func testSetAppearanceRejectsInvalidOutboundPayloadsAtConstructionAndEncoding()
+        throws
+    {
+        for payload: [String: Any] in [
+            [:],
+            ["colorScheme": "system"],
+            ["colorScheme": 1],
+            ["colorScheme": "light", "extra": true],
+        ] {
+            try assertNativeOutboundPayloadRejected(
+                type: .setAppearance,
+                payload: payload
+            )
+        }
+    }
+
+    func testTypedSetAppearanceFactoryBuildsExactValidatedEnvelopes()
+        throws
+    {
+        for colorScheme in [
+            EditorAppearanceColorScheme.light,
+            .dark,
+        ] {
+            let requestID = UUID()
+            let envelope = try NativeToEditorEnvelope.setAppearance(
+                colorScheme,
+                requestId: requestID
+            )
+
+            XCTAssertEqual(envelope.requestId, requestID)
+            XCTAssertEqual(envelope.type, .setAppearance)
+            XCTAssertEqual(
+                envelope.payload,
+                .object([
+                    "colorScheme": .string(colorScheme.rawValue),
+                ])
+            )
+            let decoded = try NativeToEditorEnvelope.decode(
+                from: envelope.encodedData()
+            )
+            XCTAssertEqual(decoded.requestId, requestID)
+            XCTAssertEqual(decoded.type, .setAppearance)
+            XCTAssertEqual(decoded.payload, envelope.payload)
+        }
+    }
+
     func testOperationStatusAcceptsOnlyTheExactOperationPhaseMatrix()
         throws
     {

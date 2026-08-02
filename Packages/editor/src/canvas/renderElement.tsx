@@ -124,6 +124,6 @@ export function pointerOwnerFor(
   if (!stage) throw new Error("Annotation interaction stage is unavailable");
   return {
     pointerId,
-    container: stage.container(),
+    container: stage.getContent(),
   };
 }

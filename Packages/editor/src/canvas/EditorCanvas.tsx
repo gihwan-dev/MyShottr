@@ -377,7 +377,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
             spaceHeld: spacePanReady,
             zoom: viewport.zoom,
           });
-          const container = stage.container();
+          const container = stage.getContent();
           container.setPointerCapture(event.evt.pointerId);
           captureContainer.current = container;
           capturedPointerId.current = event.evt.pointerId;

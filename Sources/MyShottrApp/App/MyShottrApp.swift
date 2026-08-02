@@ -13,10 +13,8 @@ struct MyShottrApp: App {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .saveItem) {
                 Button(DocumentCommandDefinition.saveProject.title) {
-                    NSApp.sendAction(
-                        DocumentCommandDefinition.saveProject.action,
-                        to: nil,
-                        from: nil
+                    DocumentCommandDispatcher.performFromKeyWindow(
+                        .saveProject
                     )
                 }
                 .keyboardShortcut(
@@ -27,10 +25,8 @@ struct MyShottrApp: App {
             }
             CommandMenu("Image") {
                 Button(DocumentCommandDefinition.copyImage.title) {
-                    NSApp.sendAction(
-                        DocumentCommandDefinition.copyImage.action,
-                        to: nil,
-                        from: nil
+                    DocumentCommandDispatcher.performFromKeyWindow(
+                        .copyImage
                     )
                 }
                 .keyboardShortcut(
@@ -40,10 +36,8 @@ struct MyShottrApp: App {
                 )
 
                 Button(DocumentCommandDefinition.exportPNG.title) {
-                    NSApp.sendAction(
-                        DocumentCommandDefinition.exportPNG.action,
-                        to: nil,
-                        from: nil
+                    DocumentCommandDispatcher.performFromKeyWindow(
+                        .exportPNG
                     )
                 }
                 .keyboardShortcut(

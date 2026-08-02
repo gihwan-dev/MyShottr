@@ -22,13 +22,24 @@ const konvaControl = vi.hoisted(() => ({
   preventDefault: vi.fn(),
   setPointerCapture: vi.fn(),
   releasePointerCapture: vi.fn(),
+  outerSetPointerCapture: vi.fn(),
+  outerReleasePointerCapture: vi.fn(),
+  contentSetPointerCapture: vi.fn(),
+  contentReleasePointerCapture: vi.fn(),
   capturedPointers: new Set<number>(),
+  outerCapturedPointers: new Set<number>(),
+  contentCapturedPointers: new Set<number>(),
   annotationStartPointerId: 1,
   annotationEndPointerId: 1,
   annotationLifecyclePointerId: 1 as number | undefined,
   stage: undefined as {
     getPointerPosition: () => { x: number; y: number };
     container: () => {
+      setPointerCapture: (pointerId: number) => void;
+      releasePointerCapture: (pointerId: number) => void;
+      hasPointerCapture: (pointerId: number) => boolean;
+    };
+    getContent: () => {
       setPointerCapture: (pointerId: number) => void;
       releasePointerCapture: (pointerId: number) => void;
       hasPointerCapture: (pointerId: number) => boolean;
@@ -198,25 +209,45 @@ vi.mock("react-konva", async () => {
     onWheel?: (event: unknown) => void;
   }) => {
     const pointer = React.useRef({ x: 0, y: 0 });
-    const container = React.useMemo(() => ({
+    const outerContainer = React.useMemo(() => ({
       setPointerCapture: (pointerId: number) => {
         konvaControl.capturedPointers.add(pointerId);
+        konvaControl.outerCapturedPointers.add(pointerId);
+        konvaControl.outerSetPointerCapture(pointerId);
         konvaControl.setPointerCapture(pointerId);
       },
       releasePointerCapture: (pointerId: number) => {
         konvaControl.capturedPointers.delete(pointerId);
+        konvaControl.outerCapturedPointers.delete(pointerId);
+        konvaControl.outerReleasePointerCapture(pointerId);
         konvaControl.releasePointerCapture(pointerId);
       },
-      hasPointerCapture: (pointerId: number) => konvaControl.capturedPointers.has(pointerId),
+      hasPointerCapture: (pointerId: number) => konvaControl.outerCapturedPointers.has(pointerId),
+    }), []);
+    const content = React.useMemo(() => ({
+      setPointerCapture: (pointerId: number) => {
+        konvaControl.capturedPointers.add(pointerId);
+        konvaControl.contentCapturedPointers.add(pointerId);
+        konvaControl.contentSetPointerCapture(pointerId);
+        konvaControl.setPointerCapture(pointerId);
+      },
+      releasePointerCapture: (pointerId: number) => {
+        konvaControl.capturedPointers.delete(pointerId);
+        konvaControl.contentCapturedPointers.delete(pointerId);
+        konvaControl.contentReleasePointerCapture(pointerId);
+        konvaControl.releasePointerCapture(pointerId);
+      },
+      hasPointerCapture: (pointerId: number) => konvaControl.contentCapturedPointers.has(pointerId),
     }), []);
     const stage = React.useMemo(() => {
       const value = {
         getPointerPosition: () => ({ ...pointer.current }),
-        container: () => container,
+        container: () => outerContainer,
+        getContent: () => content,
         getStage: () => value,
       };
       return value;
-    }, [container]);
+    }, [content, outerContainer]);
     konvaControl.stage = stage;
     const eventFor = (event: React.PointerEvent | React.WheelEvent) => {
       pointer.current.x = event.clientX;
@@ -316,6 +347,8 @@ afterEach(() => {
   konvaControl.annotationLifecyclePointerId = 1;
   konvaControl.stage = undefined;
   konvaControl.capturedPointers.clear();
+  konvaControl.outerCapturedPointers.clear();
+  konvaControl.contentCapturedPointers.clear();
   animationFrames.clear();
   vi.unstubAllGlobals();
 });
@@ -806,6 +839,23 @@ describe("EditorCanvas gesture terminals", () => {
     expect(konvaControl.releasePointerCapture).toHaveBeenCalledOnce();
     expect(onCommand).toHaveBeenCalledOnce();
     expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true, false]);
+  });
+
+  it("captures main Stage creation gestures on the Konva event content", () => {
+    const onCommand = vi.fn();
+    renderCreationCanvas("rectangle", { onCommand });
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { clientX: 10, clientY: 20, pointerId: 7 });
+
+    expect(konvaControl.contentSetPointerCapture).toHaveBeenCalledWith(7);
+    expect(konvaControl.outerSetPointerCapture).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(stage, { clientX: 40, clientY: 50, pointerId: 7 });
+
+    expect(konvaControl.contentReleasePointerCapture).toHaveBeenCalledWith(7);
+    expect(konvaControl.outerReleasePointerCapture).not.toHaveBeenCalled();
+    expect(onCommand).toHaveBeenCalledOnce();
   });
 
   it("does not treat window mouseup as a competing terminal", () => {
@@ -1430,6 +1480,8 @@ describe("EditorCanvas gesture terminals", () => {
 
     konvaControl.annotationStartPointerId = 1;
     startAnnotationMove(annotation, 1);
+    expect(konvaControl.contentSetPointerCapture).toHaveBeenCalledWith(1);
+    expect(konvaControl.outerSetPointerCapture).not.toHaveBeenCalled();
     fireEvent.drag(annotation);
     fireEvent.pointerUp(stage, { pointerId: 2 });
     fireEvent.pointerCancel(stage, { pointerId: 2 });
@@ -1445,6 +1497,8 @@ describe("EditorCanvas gesture terminals", () => {
     expect(history.document.elements).toEqual(initial.elements);
     expect(onCancelTransaction).toHaveBeenCalledOnce();
     expect(konvaControl.releasePointerCapture).toHaveBeenCalledOnce();
+    expect(konvaControl.contentReleasePointerCapture).toHaveBeenCalledWith(1);
+    expect(konvaControl.outerReleasePointerCapture).not.toHaveBeenCalled();
   });
 
   it("cancels an active annotation move through the same handle exactly once", () => {

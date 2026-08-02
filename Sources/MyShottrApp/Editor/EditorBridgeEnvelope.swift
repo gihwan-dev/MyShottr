@@ -20,6 +20,11 @@ enum EditorHistoryAction: String, Equatable, Sendable {
     case redo
 }
 
+enum EditorAppearanceColorScheme: String, Equatable, Sendable {
+    case light
+    case dark
+}
+
 enum EditorOutputOperation: String, Equatable, Sendable {
     case save
     case export
@@ -36,6 +41,7 @@ enum EditorOperationStatus: Equatable, Sendable {
 
 private enum NativePayloadKey {
     static let action = "action"
+    static let colorScheme = "colorScheme"
     static let operation = "operation"
     static let phase = "phase"
     static let displayName = "displayName"
@@ -149,6 +155,21 @@ extension EditorBridgeEnvelope where MessageType == NativeToEditorMessageType, P
         )
     }
 
+    static func setAppearance(
+        _ colorScheme: EditorAppearanceColorScheme,
+        requestId: UUID = UUID()
+    ) throws -> Self {
+        try Self(
+            requestId: requestId,
+            type: .setAppearance,
+            payload: .object([
+                NativePayloadKey.colorScheme: .string(
+                    colorScheme.rawValue
+                ),
+            ])
+        )
+    }
+
     static func operationStatus(
         requestId: UUID,
         status: EditorOperationStatus
@@ -233,9 +254,20 @@ extension EditorBridgeEnvelope where MessageType == NativeToEditorMessageType, P
             .loadDocument,
             .saveCompleted,
             .saveFailed,
-            .requestComposite,
-            .setAppearance:
+            .requestComposite:
             return
+        case .setAppearance:
+            guard
+                exact([NativePayloadKey.colorScheme]),
+                case let .string(colorScheme)? = payload[
+                    NativePayloadKey.colorScheme
+                ],
+                EditorAppearanceColorScheme(
+                    rawValue: colorScheme
+                ) != nil
+            else {
+                throw EditorBridgeEnvelopeError.malformedMessage
+            }
         case .performHistoryAction:
             guard
                 exact([NativePayloadKey.action]),

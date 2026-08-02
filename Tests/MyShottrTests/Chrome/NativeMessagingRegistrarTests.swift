@@ -30,7 +30,7 @@ final class NativeMessagingRegistrarTests: TemporaryDirectoryTestCase {
 
         XCTAssertEqual(
             manifest.path,
-            Bundle.main.bundleURL
+            Bundle.main.bundleURL.standardizedFileURL
                 .appendingPathComponent("Contents", isDirectory: true)
                 .appendingPathComponent("Helpers", isDirectory: true)
                 .appendingPathComponent("MyShottrNativeHost")
