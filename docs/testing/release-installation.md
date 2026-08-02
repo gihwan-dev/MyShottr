@@ -77,7 +77,9 @@ tools, or extension popup.
 
 Save Project, close, and reopen preserve the original pixels, annotations, and
 `presentation: { "type": "none" }`. Copy Image and Export PNG also succeed at
-source dimensions.
+source dimensions. `R` must preview a rectangle while dragging, `T` must open
+inline text editing immediately, `Space` must pan, `?` must restore focus when
+closed, and `Option`-drag or `Command-D` must duplicate the current selection.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
@@ -113,4 +115,4 @@ quarantine removal.
 
 Only a report with every required check marked `PASS`, complete evidence, and
 the same exact commit SHA across the tag, workflows, downloaded artifacts, and
-Git note is passing release-install evidence.
+post-publication release-install Git note is passing release-install evidence.

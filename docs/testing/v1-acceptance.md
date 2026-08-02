@@ -63,18 +63,21 @@ Chrome `Option-Shift-2` runs the same visible-viewport capture flow.
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
 
-### 7. Annotation tools
+### 7. Drawing tools and live preview
 
 Selection, rectangle, arrow, line, text, freehand, highlighter, blur, opaque
-redaction, and number-marker tools work.
+redaction, and number-marker tools work, and drag-created marks preview live
+before pointer-up.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
 
-### 8. Annotation editing
+### 8. Annotation editing and shortcut ownership
 
 Move, resize, rotate, duplicate, delete, reorder, multi-select, undo, and redo
-work.
+work. `R`, `T`, `?`, `Space`, `Command-D`, `Shift-1`, and `Shift-2` must
+behave in the editor exactly as documented, including inline text editing,
+shortcut-help focus restore, and temporary pan.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
@@ -96,7 +99,7 @@ Exported PNG dimensions equal the source image dimensions.
 ### 11. Project round trip and migration
 
 `.myshottr` Save, close, and reopen preserve source pixels, element JSON, and
-`presentation: { "type": "none" }`; a schema-1 fixture migrates to schema 2.
+`presentation: { "type": "none" }`; a schema-1 fixture migrates to schema 3.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
@@ -146,10 +149,11 @@ A failed export leaves the document modified and the destination untouched.
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:
 
-### 18. Exact-artifact privacy gate
+### 18. Save terminal truthfulness and exact-artifact privacy gate
 
-`Scripts/verify-privacy.sh` passes on the exact artifacts built from the tested
-commit SHA.
+Completed Save shows `Saved` only after the native operation finishes, later
+edits surface the superseded-save message, and `Scripts/verify-privacy.sh`
+passes on the exact artifacts built from the tested commit SHA.
 
 - Result: `<PASS|FAIL|BLOCKED>`
 - Evidence:

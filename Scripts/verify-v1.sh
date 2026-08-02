@@ -127,6 +127,8 @@ run_step "Run Chrome extension integration tests" \
   pnpm --filter @myshottr/chrome-extension exec playwright test
 run_step "Verify local-only runtime and extension permissions" \
   "${REPO_ROOT}/Scripts/verify-privacy.sh"
+run_step "Run release workflow, packaging, and documentation contracts" \
+  pnpm test:release
 
 run_step "Generate the Xcode project" xcodegen generate
 

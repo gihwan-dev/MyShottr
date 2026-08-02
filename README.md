@@ -81,11 +81,26 @@ quick-start above.
   native region.
 - Click the Chrome extension or press `Option-Shift-2` for the active tab's
   visible viewport.
+- Captures open directly in the editor. MyShottr does not restore unfinished
+  documents or show a recovery chooser in `v0.1.0`.
 - Press `Command-Shift-C` to copy the complete composited image.
 - Press `Command-S` to save an editable `.myshottr` project.
 - Press `Command-E` to export a source-resolution PNG.
 - Press `Command-C` and `Command-V` to copy and paste selected annotations
   inside the editor.
+- Press `?` to open shortcut help. `Escape` closes it and returns focus to the
+  invoking control.
+- Hold `Space` and drag to pan. Use `Command-0` to fit the capture, `Shift-1`
+  to zoom out, and `Shift-2` to zoom in around the pointer.
+- Hold `Shift` while drawing to constrain rectangles, arrows, and lines. Hold
+  `Shift` while selecting to toggle an element into the current selection.
+- Use `Command-D` to duplicate the current selection, or hold `Option` while
+  dragging a selection to duplicate in one gesture.
+- Rectangle, arrow, line, freehand, highlighter, blur, and redaction strokes
+  preview live while you drag. `T` opens inline text editing immediately.
+- Save feedback is truthful: `Saved` appears only after the native save
+  finishes, and the editor reports when later edits leave the document needing
+  another save.
 
 ## Annotation shortcuts
 
@@ -101,6 +116,16 @@ quick-start above.
 | Blur | `B` |
 | Redaction | `X` |
 | Number marker | `N` |
+
+Selection and editing shortcuts:
+
+- Duplicate selection: `Command-D`
+- Bring forward / send backward: `]` / `[`
+- Delete selection: `Delete` or `Backspace`
+- Nudge selection: Arrow keys (`Shift` for 10 px)
+- Zoom out / in / fit: `Shift-1` / `Shift-2` / `Command-0`
+- Pan temporarily: hold `Space`
+- Shortcut help: `?`
 
 Blur is a visual effect, not secure redaction. Use Redaction when pixels must
 be fully covered in the exported image.

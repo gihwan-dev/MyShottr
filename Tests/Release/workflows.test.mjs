@@ -39,10 +39,13 @@ const RELEASE_VALIDATION_RUN = `set -euo pipefail
 VERSION="\${TAG#v}"
 [[ -f "docs/releases/\${TAG}.md" ]]
 git fetch --no-tags --prune origin \\
-  "+refs/heads/main:refs/remotes/origin/main"
+  "+refs/heads/main:refs/remotes/origin/main" \\
+  "+refs/notes/myshottr-acceptance:refs/notes/myshottr-acceptance"
 TAG_COMMIT="$(git rev-parse --verify "\${TAG}^{commit}")"
 [[ "\${TAG_COMMIT}" == "\${EXPECTED_SHA}" ]]
-git merge-base --is-ancestor "\${EXPECTED_SHA}" "origin/main"
+MAIN_COMMIT="$(git rev-parse --verify "origin/main^{commit}")"
+[[ "\${MAIN_COMMIT}" == "\${EXPECTED_SHA}" ]]
+git notes --ref=myshottr-acceptance show "\${EXPECTED_SHA}" >/dev/null
 printf 'version=%s\\n' "\${VERSION}" >> "\${GITHUB_OUTPUT}"
 `;
 
@@ -315,7 +318,7 @@ function validateRelease(releaseSource) {
   );
   assert.equal(release.name, "Release");
   assert.deepEqual(release.on, {
-    push: { tags: ["v[0-9]+.[0-9]+.[0-9]+"] },
+    push: { tags: ["v*.*.*"] },
   });
   assert.deepEqual(release.permissions, { contents: "write" });
   assertExactKeys(release.jobs, ["release"], "release must expose one job");
