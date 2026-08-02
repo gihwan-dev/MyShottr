@@ -142,7 +142,7 @@ final class MenuBarControllerTests: XCTestCase {
     }
 }
 
-private final class GlobalHotKeyAPIHarness {
+final class GlobalHotKeyAPIHarness {
     private let registrationStatus: OSStatus
     private(set) var keyCode: UInt32?
     private(set) var modifiers: UInt32?

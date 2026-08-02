@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 
 const CI_PATH = ".github/workflows/ci.yml";
 const RELEASE_PATH = ".github/workflows/release.yml";
+const XCODE_DEVELOPER_DIR =
+  "/Applications/Xcode_26.3.app/Contents/Developer";
 
 const AUDITED_ACTIONS = Object.freeze({
   "actions/checkout": Object.freeze({
@@ -214,11 +216,14 @@ function validateCI(ciSource) {
   assertExactKeys(ci.jobs, ["verify"], "CI must expose one blocking job");
   assertExactKeys(
     ci.jobs.verify,
-    ["runs-on", "timeout-minutes", "steps"],
+    ["runs-on", "timeout-minutes", "env", "steps"],
     "CI verify job schema changed",
   );
   assert.equal(ci.jobs.verify["runs-on"], "macos-15");
   assert.equal(ci.jobs.verify["timeout-minutes"], 45);
+  assert.deepEqual(ci.jobs.verify.env, {
+    DEVELOPER_DIR: XCODE_DEVELOPER_DIR,
+  });
   assert.deepEqual(ci.jobs.verify.steps, [
     actionStep("Check out source", "actions/checkout", {
       "persist-credentials": false,
@@ -264,11 +269,14 @@ function validateRelease(releaseSource) {
   assertExactKeys(release.jobs, ["release"], "release must expose one job");
   assertExactKeys(
     release.jobs.release,
-    ["runs-on", "timeout-minutes", "steps"],
+    ["runs-on", "timeout-minutes", "env", "steps"],
     "release job schema changed",
   );
   assert.equal(release.jobs.release["runs-on"], "macos-15");
   assert.equal(release.jobs.release["timeout-minutes"], 60);
+  assert.deepEqual(release.jobs.release.env, {
+    DEVELOPER_DIR: XCODE_DEVELOPER_DIR,
+  });
 
   const expectedSteps = [
     actionStep("Check out tagged source", "actions/checkout", {

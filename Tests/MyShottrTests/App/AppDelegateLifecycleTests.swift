@@ -98,6 +98,53 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(application.activationCount, 0)
     }
 
+    func testCommandShift2HotKeyRequestsExactlyOneAreaCaptureAfterLaunch()
+        async throws
+    {
+        let application = SpyApplicationLifecycle()
+        let selector = SuspendingRegionSelector()
+        let hotKeyHarness = GlobalHotKeyAPIHarness()
+        let artifact = try CaptureArtifact(
+            id: ProjectFixtures.documentID,
+            sourceKind: .screenRegion,
+            pngData: ProjectFixtures.pngData,
+            scale: 2
+        )
+        let delegate = AppDelegate(
+            dependencies: AppDependencies(
+                selector: selector,
+                capturer: FakeScreenCapturer(result: artifact),
+                projectFactory: StubNewProjectFactory()
+            ),
+            applicationLifecycle: application.lifecycle,
+            nativeMessagingHostInstaller: {},
+            chromeCaptureCoordinatorFactory:
+                makeEmptyChromeCoordinator,
+            hotKeyAPI: hotKeyHarness.api
+        )
+
+        delegate.applicationDidFinishLaunching(
+            Notification(
+                name: NSApplication.didFinishLaunchingNotification
+            )
+        )
+        hotKeyHarness.invokeEventHandler(
+            signature: 0x4D_53_48_54,
+            id: 1
+        )
+        await selector.waitUntilStarted()
+
+        XCTAssertEqual(hotKeyHarness.keyCode, UInt32(kVK_ANSI_2))
+        XCTAssertEqual(
+            hotKeyHarness.modifiers,
+            UInt32(cmdKey | shiftKey)
+        )
+        XCTAssertEqual(selector.selectionCount, 1)
+        selector.finish(with: .cancelled)
+        await Task.yield()
+        withExtendedLifetime(delegate) {}
+    }
+
     func testGlobalShortcutConflictReportsTypedErrorAndKeepsAccessoryPolicy() {
         let application = SpyApplicationLifecycle()
         var reportedErrors: [MyShottrUserFacingError] = []

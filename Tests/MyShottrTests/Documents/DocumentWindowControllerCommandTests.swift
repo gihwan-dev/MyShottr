@@ -6,7 +6,9 @@ import XCTest
 final class DocumentWindowControllerCommandTests:
     TemporaryDirectoryTestCase
 {
-    func testDocumentCommandsAreInstalledOnTheWindowResponderChain() throws {
+    func testDocumentCommandsAreInstalledOnAnAcyclicWindowResponderChain()
+        throws
+    {
         let controller = try DocumentWindowController(
             project: ProjectFixtures.project(text: "Command routing"),
             projectURL: nil
@@ -14,6 +16,24 @@ final class DocumentWindowControllerCommandTests:
         let window = try XCTUnwrap(controller.window)
 
         XCTAssertTrue(window.nextResponder === controller)
+
+        var visitedResponders = Set<ObjectIdentifier>()
+        var controllerOccurrences = 0
+        var responder: NSResponder? = window
+        while let currentResponder = responder {
+            guard visitedResponders.insert(
+                ObjectIdentifier(currentResponder)
+            ).inserted else {
+                XCTFail("Window responder chain contains a cycle")
+                break
+            }
+            if currentResponder === controller {
+                controllerOccurrences += 1
+            }
+            responder = currentResponder.nextResponder
+        }
+        XCTAssertEqual(controllerOccurrences, 1)
+
         XCTAssertTrue(controller.responds(to: #selector(DocumentWindowController.copyComposite(_:))))
         XCTAssertTrue(controller.responds(to: #selector(DocumentWindowController.saveProjectAction(_:))))
         XCTAssertTrue(controller.responds(to: #selector(DocumentWindowController.exportComposite(_:))))

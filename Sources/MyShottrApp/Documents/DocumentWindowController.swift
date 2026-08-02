@@ -234,8 +234,6 @@ final class DocumentWindowController:
             project.manifest.documentId
         self.projectURL = projectURL
         super.init(window: window)
-        self.nextResponder = window.nextResponder
-        window.nextResponder = self
         window.title = projectURL?
             .deletingPathExtension()
             .lastPathComponent
