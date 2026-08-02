@@ -213,14 +213,11 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
     func testAppKitOwnedOutputShortcutsRemainAvailableWhileWebKitOwnsFocusedControls()
         async throws
     {
-        let previousActivationPolicy = NSApp.activationPolicy()
         let previousMainMenu = NSApp.mainMenu
         let commandTarget = RuntimeOutputCommandTarget()
         NSApp.mainMenu = makeOutputCommandMenu(target: commandTarget)
-        XCTAssertTrue(NSApp.setActivationPolicy(.regular))
         defer {
             NSApp.mainMenu = previousMainMenu
-            _ = NSApp.setActivationPolicy(previousActivationPolicy)
         }
 
         for focusOwner in RuntimeFocusOwner.allCases {
@@ -715,7 +712,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
     }
 
     private func makeOutputCommandMenu(
-        target: AnyObject
+        target: RuntimeOutputCommandTarget
     ) -> NSMenu {
         let menu = NSMenu(title: "MyShottr Test Main Menu")
         let documentItem = NSMenuItem(

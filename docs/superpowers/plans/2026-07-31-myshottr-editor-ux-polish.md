@@ -3424,6 +3424,7 @@ git commit -m "feat(editor): 저장과 내보내기 피드백 추가"
 
 - Modify: `Packages/editor/package.json`
 - Modify: `pnpm-lock.yaml`
+- Create: `Packages/editor/.gitignore`
 - Create: `Packages/editor/playwright.config.ts`
 - Create: `Packages/editor/tests/visual/visual.html`
 - Create: `Packages/editor/tests/visual/entry.tsx`
@@ -3432,9 +3433,29 @@ git commit -m "feat(editor): 저장과 내보내기 피드백 추가"
 - Create: generated Darwin screenshot baselines under `Packages/editor/tests/visual/*-snapshots/`
 - Create: `Packages/editor/src/appearance/useNativeAppearance.ts`
 - Create: `Packages/editor/src/appearance/useNativeAppearance.test.ts`
+- Modify: `Packages/editor/src/App.test.tsx`
 - Modify: `Packages/editor/src/App.tsx`
+- Modify: `Packages/editor/src/bridge/protocol.test.ts`
+- Modify: `Packages/editor/src/canvas/EditorCanvas.test.tsx`
+- Modify: `Packages/editor/src/canvas/EditorCanvas.tsx`
+- Modify: `Packages/editor/src/canvas/renderElement.test.tsx`
+- Modify: `Packages/editor/src/canvas/renderElement.tsx`
 - Modify: `Packages/editor/src/styles.css`
+- Modify: `Packages/editor/vite.config.ts`
+- Modify: `Sources/MyShottrApp/App/AppDelegate.swift`
+- Modify: `Sources/MyShottrApp/App/DocumentCommandDefinition.swift`
+- Modify: `Sources/MyShottrApp/App/MyShottrApp.swift`
+- Modify: `Sources/MyShottrApp/Documents/DocumentWindowController.swift`
+- Modify: `Sources/MyShottrApp/Editor/EditorBridge.swift`
+- Modify: `Sources/MyShottrApp/Editor/EditorBridgeEnvelope.swift`
+- Modify: `Sources/MyShottrApp/Editor/EditorWebView.swift`
+- Modify: `Tests/MyShottrTests/App/AppDelegateLifecycleTests.swift`
+- Modify: `Tests/MyShottrTests/Chrome/NativeMessagingRegistrarTests.swift`
+- Modify: `Tests/MyShottrTests/Documents/DocumentWindowControllerOutputTests.swift`
+- Modify: `Tests/MyShottrTests/Editor/EditorBridgeStateCommandTests.swift`
+- Modify: `Tests/MyShottrTests/EditorBridgeEnvelopeTests.swift`
 - Modify: `Tests/MyShottrTests/EditorWebViewRuntimeTests.swift`
+- Create: `Tests/MyShottrTests/Support/WebKitPointerEventHarness.swift`
 - Create: `docs/images/editor-context-rail-approved-reference.png`
 - Create: `docs/images/editor-context-rail-implementation-comparison.png`
 - Create: `docs/testing/editor-visual-reference.md`
@@ -3442,7 +3463,7 @@ git commit -m "feat(editor): 저장과 내보내기 피드백 추가"
 
 **Outcome:** Seven deterministic editor states are compared in light and dark appearance, while actual browser focus, semantics, contrast, reduced motion, and native output key-equivalent routing are regression-tested without adding a production bridge fallback.
 
-- [ ] **Step 1: Add the editor-local Playwright dependency and script**
+- [x] **Step 1: Add the editor-local Playwright dependency and script**
 
 Run:
 
@@ -3465,7 +3486,7 @@ Set:
 
 Keep the version range aligned with the Chrome-extension package.
 
-- [ ] **Step 2: Create a deterministic, test-only browser entry**
+- [x] **Step 2: Create a deterministic, test-only browser entry**
 
 Before implementing the harness, promote the approved local reference:
 
@@ -3497,7 +3518,7 @@ The entry maps the enumerated fixture state to controlled props on those existin
 
 `save-success` still feeds `EditorFeedback` a strict Save-completed envelope shape, and appearance still arrives through the real bridge subscription described in Step 3.
 
-- [ ] **Step 3: Route appearance through the strict native message**
+- [x] **Step 3: Route appearance through the strict native message**
 
 Extract:
 
@@ -3552,12 +3573,15 @@ shortcut-help button   handled once      handled once handled once
 ```
 
 For each cell, create a fresh controller/window with immediate successful
-providers for only that command. In the installed app the command routes
-through the real key window; in the Xcode unit-test host on macOS 26 the
-runtime suite uses a deterministic `commandWindowPredicate` seam because the
-backgrounded test host cannot reliably own an active key window. This still
-prevents Copy's required hide-on-success behavior or an earlier output guard
-from influencing the next matrix cell. Then:
+providers for only that command. Production SwiftUI commands call the shared
+`DocumentCommandDispatcher`, which starts at the real key window's first
+responder. The macOS 26 Xcode unit-test host cannot reliably own an active key
+window, so the runtime menu target invokes that same dispatcher with the
+test window's actual WebKit first responder and uses the deterministic
+`commandWindowPredicate` seam for the key-window guard. The installed-app pass
+in Task 17 verifies the remaining real-key-window boundary. This separation
+also prevents Copy's required hide-on-success behavior or an earlier output
+guard from influencing the next matrix cell. Then:
 
 1. use the real bundled editor DOM to enter the named focus state and assert
    `document.activeElement` is the textarea or a control inside the modal;
@@ -3574,7 +3598,7 @@ This is a responder-chain test, not a direct selector call. It proves the
 native-owned shortcuts remain available while WebKit owns first responder,
 including both inline text editing and the modal help surface.
 
-- [ ] **Step 4: Configure a fixed local Playwright server**
+- [x] **Step 4: Configure a fixed local Playwright server**
 
 Create:
 
@@ -3600,7 +3624,7 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 5: Write the 14-state visual test before baselines exist**
+- [x] **Step 5: Write the 14-state visual test before baselines exist**
 
 Use:
 
@@ -3660,7 +3684,7 @@ for (const appearance of ["light", "dark"] as const) {
 
 Run once and observe missing-snapshot failures. This is only the red test; do not run `--update-snapshots` yet.
 
-- [ ] **Step 6: Add real-browser accessibility and reduced-motion assertions**
+- [x] **Step 6: Add real-browser accessibility and reduced-motion assertions**
 
 Test both light and dark:
 
@@ -3687,7 +3711,7 @@ Sample every core token pairing in both appearances rather than one arbitrary bu
 
 The reduced-motion assertion runs before screenshot normalization and does not set `animations: "disabled"`. Screenshot animation suppression validates only the final pixels; it is not accepted as evidence that reduced-motion behavior works.
 
-- [ ] **Step 7: Fix visual/accessibility failures in production CSS and semantics**
+- [x] **Step 7: Fix visual/accessibility failures in production CSS and semantics**
 
 Keep:
 
@@ -3701,7 +3725,7 @@ Keep:
 
 Do not add a DOM annotation tree for Konva elements; that remains out of scope.
 
-- [ ] **Step 8: Compare against the approved reference before creating baselines**
+- [x] **Step 8: Compare against the approved reference before creating baselines**
 
 Generate `docs/images/editor-context-rail-implementation-comparison.png` with the immutable approved reference on the left and the fixed-size `selected-rectangle` implementation screenshot on the right. Record in `docs/testing/editor-visual-reference.md`:
 
@@ -3717,7 +3741,7 @@ Generate `docs/images/editor-context-rail-implementation-comparison.png` with th
 
 Any material mismatch is fixed in product code first. The comparison artifact and checklist must be reviewed before baseline generation.
 
-- [ ] **Step 9: Create and re-run the inspected baseline screenshots**
+- [x] **Step 9: Create and re-run the inspected baseline screenshots**
 
 Run:
 
@@ -3729,7 +3753,7 @@ pnpm --filter @myshottr/editor test:visual
 
 Open every generated image and compare it against the approved Context Rail reference at the same size/state. Baselines are accepted only after manual inspection; never approve a failing layout by blindly updating screenshots.
 
-- [ ] **Step 10: Add the visual gate to repository verification**
+- [x] **Step 10: Add the visual gate to repository verification**
 
 After the existing Chromium install step in `Scripts/verify-v1.sh`, add:
 
@@ -3740,7 +3764,7 @@ run_step "Run editor visual and accessibility tests" \
 
 The existing pinned Chromium installation is shared; do not add another CI job or browser download.
 
-- [ ] **Step 11: Run editor, runtime, and visual gates, then commit**
+- [x] **Step 11: Run editor, runtime, and visual gates, then commit**
 
 Run:
 
@@ -3757,14 +3781,34 @@ xcodebuild test \
   -only-testing:MyShottrTests/EditorWebViewRuntimeTests
 git diff --check
 git add \
+  Packages/editor/.gitignore \
   Packages/editor/package.json \
   Packages/editor/playwright.config.ts \
   Packages/editor/tests \
-  Packages/editor/src/appearance/useNativeAppearance.ts \
-  Packages/editor/src/appearance/useNativeAppearance.test.ts \
+  Packages/editor/src/appearance \
+  Packages/editor/src/App.test.tsx \
   Packages/editor/src/App.tsx \
+  Packages/editor/src/bridge/protocol.test.ts \
+  Packages/editor/src/canvas/EditorCanvas.test.tsx \
+  Packages/editor/src/canvas/EditorCanvas.tsx \
+  Packages/editor/src/canvas/renderElement.test.tsx \
+  Packages/editor/src/canvas/renderElement.tsx \
   Packages/editor/src/styles.css \
+  Packages/editor/vite.config.ts \
+  Sources/MyShottrApp/App/AppDelegate.swift \
+  Sources/MyShottrApp/App/DocumentCommandDefinition.swift \
+  Sources/MyShottrApp/App/MyShottrApp.swift \
+  Sources/MyShottrApp/Documents/DocumentWindowController.swift \
+  Sources/MyShottrApp/Editor/EditorBridge.swift \
+  Sources/MyShottrApp/Editor/EditorBridgeEnvelope.swift \
+  Sources/MyShottrApp/Editor/EditorWebView.swift \
+  Tests/MyShottrTests/App/AppDelegateLifecycleTests.swift \
+  Tests/MyShottrTests/Chrome/NativeMessagingRegistrarTests.swift \
+  Tests/MyShottrTests/Documents/DocumentWindowControllerOutputTests.swift \
+  Tests/MyShottrTests/Editor/EditorBridgeStateCommandTests.swift \
+  Tests/MyShottrTests/EditorBridgeEnvelopeTests.swift \
   Tests/MyShottrTests/EditorWebViewRuntimeTests.swift \
+  Tests/MyShottrTests/Support/WebKitPointerEventHarness.swift \
   docs/images/editor-context-rail-approved-reference.png \
   docs/images/editor-context-rail-implementation-comparison.png \
   docs/testing/editor-visual-reference.md \
