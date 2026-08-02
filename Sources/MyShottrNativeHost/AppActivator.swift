@@ -12,12 +12,22 @@ enum AppActivationError: Error {
 
 struct AppActivator: AppActivating {
     private let executableURL: URL
+    private let runningApplicationURLs: () -> [URL]
     private let openApplication: (URL) -> Bool
     private let postCaptureReady: (UUID) -> Void
 
     init(
         executableURL: URL = Bundle.main.executableURL
             ?? URL(fileURLWithPath: CommandLine.arguments[0]),
+        runningApplicationURLs: @escaping () -> [URL] = {
+            NSWorkspace.shared.runningApplications.compactMap {
+                runningApplication in
+                guard !runningApplication.isTerminated else {
+                    return nil
+                }
+                return runningApplication.bundleURL
+            }
+        },
         openApplication: @escaping (URL) -> Bool = {
             NSWorkspace.shared.open($0)
         },
@@ -31,6 +41,7 @@ struct AppActivator: AppActivating {
         }
     ) {
         self.executableURL = executableURL
+        self.runningApplicationURLs = runningApplicationURLs
         self.openApplication = openApplication
         self.postCaptureReady = postCaptureReady
     }
@@ -39,10 +50,23 @@ struct AppActivator: AppActivating {
         guard let applicationURL = containingApplicationURL() else {
             throw AppActivationError.containingApplicationNotFound
         }
-        guard openApplication(applicationURL) else {
-            throw AppActivationError.activationFailed
+        if !applicationIsRunning(at: applicationURL) {
+            guard openApplication(applicationURL) else {
+                throw AppActivationError.activationFailed
+            }
         }
         postCaptureReady(captureID)
+    }
+
+    private func applicationIsRunning(at applicationURL: URL) -> Bool {
+        let expectedURL = canonicalURL(applicationURL)
+        return runningApplicationURLs().contains {
+            canonicalURL($0) == expectedURL
+        }
+    }
+
+    private func canonicalURL(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
     }
 
     private func containingApplicationURL() -> URL? {

@@ -310,8 +310,12 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         var openedURL: URL?
         var notifiedCaptureID: UUID?
         var events: [String] = []
+        let otherAppURL = temporaryDirectory
+            .appendingPathComponent("Other", isDirectory: true)
+            .appendingPathComponent("MyShottr.app", isDirectory: true)
         let activator = AppActivator(
             executableURL: executableURL,
+            runningApplicationURLs: { [otherAppURL] },
             openApplication: {
                 events.append("open")
                 openedURL = $0
@@ -328,6 +332,59 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(openedURL, appURL)
         XCTAssertEqual(notifiedCaptureID, captureID)
         XCTAssertEqual(events, ["open", "notify"])
+    }
+
+    func testAppActivatorNotifiesRunningContainingApplicationWithoutReopening() throws {
+        let appURL = temporaryDirectory.appendingPathComponent(
+            "MyShottr.app",
+            isDirectory: true
+        )
+        let contentsURL = appURL.appendingPathComponent(
+            "Contents",
+            isDirectory: true
+        )
+        let helpersURL = contentsURL.appendingPathComponent(
+            "Helpers",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: helpersURL,
+            withIntermediateDirectories: true
+        )
+        try Data("plist".utf8).write(
+            to: contentsURL.appendingPathComponent("Info.plist")
+        )
+        let executableURL = helpersURL.appendingPathComponent(
+            "MyShottrNativeHost"
+        )
+        var openedURL: URL?
+        var notifiedCaptureID: UUID?
+        var events: [String] = []
+        let otherAppURL = temporaryDirectory
+            .appendingPathComponent("Other", isDirectory: true)
+            .appendingPathComponent("MyShottr.app", isDirectory: true)
+        let activator = AppActivator(
+            executableURL: executableURL,
+            runningApplicationURLs: {
+                events.append("inspect")
+                return [otherAppURL, appURL]
+            },
+            openApplication: {
+                events.append("open")
+                openedURL = $0
+                return true
+            },
+            postCaptureReady: {
+                events.append("notify")
+                notifiedCaptureID = $0
+            }
+        )
+
+        try activator.activateContainingApp(captureID: captureID)
+
+        XCTAssertNil(openedURL)
+        XCTAssertEqual(notifiedCaptureID, captureID)
+        XCTAssertEqual(events, ["inspect", "notify"])
     }
 
     private func assertRejected(
