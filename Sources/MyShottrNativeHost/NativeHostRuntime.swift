@@ -10,7 +10,7 @@ enum NativeHostTestEnvironment {
 private struct NativeHostTestActivator: AppActivating {
     let shouldFail: Bool
 
-    func activateContainingApp(captureID _: UUID) throws {
+    func activateContainingApp(captureID _: UUID) async throws {
         if shouldFail {
             throw AppActivationError.activationFailed
         }

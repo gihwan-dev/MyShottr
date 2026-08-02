@@ -6,13 +6,13 @@ import XCTest
 final class HostRunnerTests: TemporaryDirectoryTestCase {
     private let captureID = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
 
-    func testStagesValidatedPNGBeforeActivatingApp() throws {
+    func testStagesValidatedPNGBeforeActivatingApp() async throws {
         let events = EventRecorder()
         let staging = StagingSpy(result: .success(captureID), events: events)
         let activator = ActivationSpy(events: events)
         let runner = HostRunner(staging: staging, activator: activator)
 
-        let output = try HostFixtures.run(
+        let output = try await HostFixtures.run(
             runner,
             inputData: HostFixtures.framed(try HostFixtures.protocolMessage()),
             in: temporaryDirectory
@@ -27,21 +27,21 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(activator.captureIDs, [captureID])
     }
 
-    func testRejectsUnsupportedProtocolVersionWithoutStaging() throws {
-        try assertRejected(
+    func testRejectsUnsupportedProtocolVersionWithoutStaging() async throws {
+        try await assertRejected(
             message: HostFixtures.protocolMessage(protocolVersion: 2),
             code: .invalidMessage
         )
     }
 
-    func testRejectsDuplicateJSONMemberWithoutStaging() throws {
-        try assertRejected(
+    func testRejectsDuplicateJSONMemberWithoutStaging() async throws {
+        try await assertRejected(
             message: HostFixtures.duplicateProtocolVersionMessage(),
             code: .invalidMessage
         )
     }
 
-    func testRejectsExcessiveJSONNestingWithoutStagingOrActivation() throws {
+    func testRejectsExcessiveJSONNestingWithoutStagingOrActivation() async throws {
         let depth = 256
         let message = Data(
             (
@@ -51,21 +51,21 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
             ).utf8
         )
 
-        try assertRejected(
+        try await assertRejected(
             message: message,
             code: .invalidMessage
         )
     }
 
-    func testRejectsUnexpectedMessageTypeWithoutStaging() throws {
-        try assertRejected(
+    func testRejectsUnexpectedMessageTypeWithoutStaging() async throws {
+        try await assertRejected(
             message: HostFixtures.protocolMessage(type: "ping"),
             code: .invalidMessage
         )
     }
 
-    func testRejectsFullPageBeforeDecodingImageData() throws {
-        try assertRejected(
+    func testRejectsFullPageBeforeDecodingImageData() async throws {
+        try await assertRejected(
             message: HostFixtures.protocolMessage(
                 captureMode: "fullPage",
                 dataBase64: "not valid base64"
@@ -74,30 +74,30 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         )
     }
 
-    func testRejectsNonPNGMIMEWithoutStaging() throws {
-        try assertRejected(
+    func testRejectsNonPNGMIMEWithoutStaging() async throws {
+        try await assertRejected(
             message: HostFixtures.protocolMessage(mimeType: "image/jpeg"),
             code: .invalidImage
         )
     }
 
-    func testRejectsMalformedBase64WithoutStaging() throws {
-        try assertRejected(
+    func testRejectsMalformedBase64WithoutStaging() async throws {
+        try await assertRejected(
             message: HostFixtures.protocolMessage(dataBase64: "%%%="),
             code: .invalidImage
         )
     }
 
-    func testRejectsNoncanonicalBase64WithoutStaging() throws {
+    func testRejectsNoncanonicalBase64WithoutStaging() async throws {
         let noncanonicalPNG = String(HostFixtures.validPNGBase64.dropLast(2)) + "J="
 
-        try assertRejected(
+        try await assertRejected(
             message: HostFixtures.protocolMessage(dataBase64: noncanonicalPNG),
             code: .invalidImage
         )
     }
 
-    func testRejectsDecodedImageAboveFortyFiveMiBWithoutStaging() throws {
+    func testRejectsDecodedImageAboveFortyFiveMiBWithoutStaging() async throws {
         let decodedByteCount = 45 * 1024 * 1024 + 1
         let base64CharacterCount = ((decodedByteCount + 2) / 3) * 4
         var oversizedBase64 = String(repeating: "A", count: base64CharacterCount)
@@ -109,14 +109,14 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
             )
         }
 
-        try assertRejected(
+        try await assertRejected(
             message: HostFixtures.protocolMessage(dataBase64: oversizedBase64),
             code: .imageTooLarge
         )
     }
 
-    func testRejectsImageWhoseImageIOTypeIsNotPNGWithoutStaging() throws {
-        try assertRejected(
+    func testRejectsImageWhoseImageIOTypeIsNotPNGWithoutStaging() async throws {
+        try await assertRejected(
             message: HostFixtures.protocolMessage(
                 dataBase64: HostFixtures.validGIFBase64
             ),
@@ -124,7 +124,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         )
     }
 
-    func testRejectsHighlyCompressiblePNGWithOversizedWidthBeforeStaging() throws {
+    func testRejectsHighlyCompressiblePNGWithOversizedWidthBeforeStaging() async throws {
         let png = try HostFixtures.compressibleGrayscalePNG(
             width: 100_000,
             height: 1
@@ -139,7 +139,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         )
         XCTAssertLessThan(png.count, 1_024)
 
-        try assertRejected(
+        try await assertRejected(
             message: HostFixtures.protocolMessage(
                 dataBase64: png.base64EncodedString()
             ),
@@ -147,8 +147,8 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         )
     }
 
-    func testRejectsUnexpectedMetadataFieldsWithoutStaging() throws {
-        try assertRejected(
+    func testRejectsUnexpectedMetadataFieldsWithoutStaging() async throws {
+        try await assertRejected(
             message: HostFixtures.protocolMessage(
                 extraFields: [
                     "url": "https://example.com",
@@ -160,19 +160,19 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         )
     }
 
-    func testReturnsBoundedInvalidMessageReplyForMalformedJSON() throws {
-        try assertRejected(
+    func testReturnsBoundedInvalidMessageReplyForMalformedJSON() async throws {
+        try await assertRejected(
             message: Data("not-json".utf8),
             code: .invalidMessage
         )
     }
 
-    func testDoesNotActivateAppWhenStagingFails() throws {
+    func testDoesNotActivateAppWhenStagingFails() async throws {
         let staging = StagingSpy(result: .failure(HostTestError.staging))
         let activator = ActivationSpy()
         let runner = HostRunner(staging: staging, activator: activator)
 
-        let output = try HostFixtures.run(
+        let output = try await HostFixtures.run(
             runner,
             inputData: HostFixtures.framed(try HostFixtures.protocolMessage()),
             in: temporaryDirectory
@@ -186,7 +186,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(activator.activationCount, 0)
     }
 
-    func testStagingFailureRemovesPartialCaptureAndDoesNotActivateApp() throws {
+    func testStagingFailureRemovesPartialCaptureAndDoesNotActivateApp() async throws {
         let inbox = temporaryDirectory.appendingPathComponent(
             "StagingFailureInbox",
             isDirectory: true
@@ -205,7 +205,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         let activator = ActivationSpy()
         let runner = HostRunner(staging: staging, activator: activator)
 
-        let output = try HostFixtures.run(
+        let output = try await HostFixtures.run(
             runner,
             inputData: HostFixtures.framed(try HostFixtures.protocolMessage()),
             in: temporaryDirectory
@@ -224,7 +224,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         XCTAssertTrue(activator.captureIDs.isEmpty)
     }
 
-    func testActivationFailurePreservesOneOwnerOnlyPendingPNG() throws {
+    func testActivationFailurePreservesOneOwnerOnlyPendingPNG() async throws {
         let inbox = temporaryDirectory.appendingPathComponent(
             "ActivationFailureInbox",
             isDirectory: true
@@ -238,7 +238,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         )
         let runner = HostRunner(staging: staging, activator: activator)
 
-        let output = try HostFixtures.run(
+        let output = try await HostFixtures.run(
             runner,
             inputData: HostFixtures.framed(try HostFixtures.protocolMessage()),
             in: temporaryDirectory
@@ -276,14 +276,14 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(try Data(contentsOf: capture), HostFixtures.validPNG)
     }
 
-    func testProcessesOnlyFirstFramedMessage() throws {
+    func testProcessesOnlyFirstFramedMessage() async throws {
         let staging = StagingSpy(result: .success(captureID))
         let activator = ActivationSpy()
         let runner = HostRunner(staging: staging, activator: activator)
         let first = HostFixtures.framed(try HostFixtures.protocolMessage())
         let second = HostFixtures.framed(try HostFixtures.protocolMessage())
 
-        let output = try HostFixtures.run(
+        let output = try await HostFixtures.run(
             runner,
             inputData: first + second,
             in: temporaryDirectory
@@ -297,7 +297,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(activator.activationCount, 1)
     }
 
-    func testAppActivatorFindsAndOpensContainingApplication() throws {
+    func testAppActivatorFindsAndOpensContainingApplication() async throws {
         let appURL = temporaryDirectory.appendingPathComponent("MyShottr.app", isDirectory: true)
         let contentsURL = appURL.appendingPathComponent("Contents", isDirectory: true)
         let helpersURL = contentsURL.appendingPathComponent("Helpers", isDirectory: true)
@@ -316,7 +316,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         let activator = AppActivator(
             executableURL: executableURL,
             runningApplicationURLs: { [otherAppURL] },
-            openApplication: {
+            launchApplication: {
                 events.append("open")
                 openedURL = $0
                 return true
@@ -327,14 +327,66 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
             }
         )
 
-        try activator.activateContainingApp(captureID: captureID)
+        try await activator.activateContainingApp(captureID: captureID)
 
         XCTAssertEqual(openedURL, appURL)
         XCTAssertEqual(notifiedCaptureID, captureID)
         XCTAssertEqual(events, ["open", "notify"])
     }
 
-    func testAppActivatorNotifiesRunningContainingApplicationWithoutReopening() throws {
+    func testAppActivatorAwaitsAsynchronousColdLaunchBeforeNotifying() async throws {
+        let appURL = temporaryDirectory.appendingPathComponent(
+            "MyShottr.app",
+            isDirectory: true
+        )
+        let contentsURL = appURL.appendingPathComponent(
+            "Contents",
+            isDirectory: true
+        )
+        let helpersURL = contentsURL.appendingPathComponent(
+            "Helpers",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: helpersURL,
+            withIntermediateDirectories: true
+        )
+        try Data("plist".utf8).write(
+            to: contentsURL.appendingPathComponent("Info.plist")
+        )
+        let executableURL = helpersURL.appendingPathComponent(
+            "MyShottrNativeHost"
+        )
+        var launchedURL: URL?
+        var notifiedCaptureID: UUID?
+        var events: [String] = []
+        let activator = AppActivator(
+            executableURL: executableURL,
+            runningApplicationURLs: {
+                events.append("inspect")
+                return []
+            },
+            launchApplication: {
+                events.append("launch")
+                launchedURL = $0
+                await Task.yield()
+                events.append("launched")
+                return true
+            },
+            postCaptureReady: {
+                events.append("notify")
+                notifiedCaptureID = $0
+            }
+        )
+
+        try await activator.activateContainingApp(captureID: captureID)
+
+        XCTAssertEqual(launchedURL, appURL)
+        XCTAssertEqual(notifiedCaptureID, captureID)
+        XCTAssertEqual(events, ["inspect", "launch", "launched", "notify"])
+    }
+
+    func testAppActivatorNotifiesRunningContainingApplicationWithoutReopening() async throws {
         let appURL = temporaryDirectory.appendingPathComponent(
             "MyShottr.app",
             isDirectory: true
@@ -369,7 +421,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
                 events.append("inspect")
                 return [otherAppURL, appURL]
             },
-            openApplication: {
+            launchApplication: {
                 events.append("open")
                 openedURL = $0
                 return true
@@ -380,7 +432,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
             }
         )
 
-        try activator.activateContainingApp(captureID: captureID)
+        try await activator.activateContainingApp(captureID: captureID)
 
         XCTAssertNil(openedURL)
         XCTAssertEqual(notifiedCaptureID, captureID)
@@ -392,12 +444,12 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
         code: NativeHostErrorCode,
         file: StaticString = #filePath,
         line: UInt = #line
-    ) throws {
+    ) async throws {
         let staging = StagingSpy(result: .success(captureID))
         let activator = ActivationSpy()
         let runner = HostRunner(staging: staging, activator: activator)
 
-        let output = try HostFixtures.run(
+        let output = try await HostFixtures.run(
             runner,
             inputData: HostFixtures.framed(message),
             in: temporaryDirectory

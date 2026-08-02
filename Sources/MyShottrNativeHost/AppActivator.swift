@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 protocol AppActivating {
-    func activateContainingApp(captureID: UUID) throws
+    func activateContainingApp(captureID: UUID) async throws
 }
 
 enum AppActivationError: Error {
@@ -13,7 +13,7 @@ enum AppActivationError: Error {
 struct AppActivator: AppActivating {
     private let executableURL: URL
     private let runningApplicationURLs: () -> [URL]
-    private let openApplication: (URL) -> Bool
+    private let launchApplication: (URL) async -> Bool
     private let postCaptureReady: (UUID) -> Void
 
     init(
@@ -28,8 +28,22 @@ struct AppActivator: AppActivating {
                 return runningApplication.bundleURL
             }
         },
-        openApplication: @escaping (URL) -> Bool = {
-            NSWorkspace.shared.open($0)
+        launchApplication: @escaping (URL) async -> Bool = { applicationURL in
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            configuration.createsNewApplicationInstance = false
+            configuration.allowsRunningApplicationSubstitution = false
+
+            return await withCheckedContinuation { continuation in
+                NSWorkspace.shared.openApplication(
+                    at: applicationURL,
+                    configuration: configuration
+                ) { runningApplication, error in
+                    continuation.resume(
+                        returning: runningApplication != nil && error == nil
+                    )
+                }
+            }
         },
         postCaptureReady: @escaping (UUID) -> Void = { captureID in
             DistributedNotificationCenter.default().postNotificationName(
@@ -42,16 +56,16 @@ struct AppActivator: AppActivating {
     ) {
         self.executableURL = executableURL
         self.runningApplicationURLs = runningApplicationURLs
-        self.openApplication = openApplication
+        self.launchApplication = launchApplication
         self.postCaptureReady = postCaptureReady
     }
 
-    func activateContainingApp(captureID: UUID) throws {
+    func activateContainingApp(captureID: UUID) async throws {
         guard let applicationURL = containingApplicationURL() else {
             throw AppActivationError.containingApplicationNotFound
         }
         if !applicationIsRunning(at: applicationURL) {
-            guard openApplication(applicationURL) else {
+            guard await launchApplication(applicationURL) else {
                 throw AppActivationError.activationFailed
             }
         }

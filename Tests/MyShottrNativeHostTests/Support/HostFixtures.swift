@@ -120,7 +120,7 @@ enum HostFixtures {
         _ runner: HostRunner,
         inputData: Data,
         in directory: URL
-    ) throws -> Data {
+    ) async throws -> Data {
         let inputURL = directory.appendingPathComponent("input-\(UUID().uuidString)")
         let outputURL = directory.appendingPathComponent("output-\(UUID().uuidString)")
         try inputData.write(to: inputURL)
@@ -128,7 +128,7 @@ enum HostFixtures {
 
         let input = try FileHandle(forReadingFrom: inputURL)
         let output = try FileHandle(forWritingTo: outputURL)
-        runner.run(input: input, output: output)
+        await runner.run(input: input, output: output)
         try output.synchronize()
         try input.close()
         try output.close()
@@ -202,7 +202,7 @@ final class ActivationSpy: AppActivating {
         self.events = events
     }
 
-    func activateContainingApp(captureID: UUID) throws {
+    func activateContainingApp(captureID: UUID) async throws {
         events?.values.append("activate")
         activationCount += 1
         captureIDs.append(captureID)

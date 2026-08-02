@@ -20,11 +20,11 @@ struct HostRunner {
         self.activator = activator
     }
 
-    func run(input: FileHandle, output: FileHandle) {
+    func run(input: FileHandle, output: FileHandle) async {
         let reply: NativeHostReply
         do {
             let messageData = try NativeMessageFraming.read(from: input)
-            reply = handle(messageData)
+            reply = await handle(messageData)
         } catch {
             reply = failure(.invalidMessage)
         }
@@ -37,7 +37,7 @@ struct HostRunner {
         }
     }
 
-    private func handle(_ messageData: Data) -> NativeHostReply {
+    private func handle(_ messageData: Data) async -> NativeHostReply {
         guard
             DuplicateRejectingJSONValidator.isValid(messageData),
             let object = try? JSONSerialization.jsonObject(with: messageData),
@@ -90,7 +90,7 @@ struct HostRunner {
         }
 
         do {
-            try activator.activateContainingApp(captureID: captureID)
+            try await activator.activateContainingApp(captureID: captureID)
         } catch {
             return failure(.appActivationFailed)
         }

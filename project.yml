@@ -84,6 +84,9 @@ targets:
         buildPhase: resources
     dependencies:
       - target: MyShottr
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
   MyShottrNativeHost:
     type: tool
     platform: macOS
@@ -104,6 +107,9 @@ targets:
       - Sources/MyShottrShared
     dependencies:
       - target: MyShottrNativeHost
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   MyShottr:
     build:

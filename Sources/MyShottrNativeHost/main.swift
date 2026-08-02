@@ -1,4 +1,9 @@
+import Dispatch
 import Foundation
 
-let runner = NativeHostRuntime.makeRunner()
-runner.run(input: .standardInput, output: .standardOutput)
+Task {
+    let runner = NativeHostRuntime.makeRunner()
+    await runner.run(input: .standardInput, output: .standardOutput)
+    exit(EXIT_SUCCESS)
+}
+dispatchMain()
