@@ -1021,17 +1021,23 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertTrue(closeButton.isEnabled)
     }
 
-    func testExportFailureSendsSameUUIDFailedBeforeOneNativeErrorAndDiscards()
+    func testExportFailurePreservesDirtyDocumentAndDestinationBeforeReporting()
         async throws
     {
         let project = ProjectFixtures.project(
             text: "Export failure"
         )
         let session = DocumentSession()
-        try session.open(project: project)
+        try session.openUnsaved(project: project)
+        let initialRevision = session.modificationRevision
         let unfinished = try makeUnfinishedTransfer()
         let destinationURL = temporaryDirectory
             .appendingPathComponent("Failed.png")
+        let originalDestination = Data("existing destination".utf8)
+        try originalDestination.write(
+            to: destinationURL,
+            options: .atomic
+        )
         var events: [String] = []
         var statuses: [OutputStatusRecord] = []
         var hideCount = 0
@@ -1113,10 +1119,14 @@ final class DocumentWindowControllerOutputTests:
                 includingPropertiesForKeys: nil
             ).isEmpty
         )
-        XCTAssertFalse(
-            FileManager.default.fileExists(
-                atPath: destinationURL.path
-            )
+        XCTAssertEqual(
+            try Data(contentsOf: destinationURL),
+            originalDestination
+        )
+        XCTAssertTrue(session.isModified)
+        XCTAssertEqual(
+            session.modificationRevision,
+            initialRevision
         )
         XCTAssertEqual(hideCount, 0)
         XCTAssertTrue(controller.window === originalWindow)
