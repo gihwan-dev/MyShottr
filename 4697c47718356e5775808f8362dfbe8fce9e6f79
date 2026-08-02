@@ -1,0 +1,108 @@
+# MyShottr v1 manual acceptance record
+
+## Candidate
+
+- Date: 2026-08-02T15:03:26+09:00 KST
+- macOS version: macOS 26.5.2 build 25F84 on arm64 Apple silicon
+- Google Chrome version: 150.0.7871.187
+- Tested commit SHA: `4697c47718356e5775808f8362dfbe8fce9e6f79`
+- `Scripts/verify-v1.sh` result: `PASS`
+- `Scripts/verify-v1.sh` evidence: Detached exact-SHA run ended with `MyShottr v1 automated verification passed.` in `/tmp/myshottr-verify-4697c47718356e5775808f8362dfbe8fce9e6f79.log`; log SHA-256 `37c8f5c2e255e7616f1af8df5ea1aa151a3ff7c2c6057ff83ac05a60c74cefa9`; Chrome extension 38 tests, editor 460 tests, visual and accessibility 22 tests, Chrome integration 3 tests, app XCTest 328 tests, and Native Host XCTest 46 tests passed.
+
+## Checks
+
+### 1. Native region shortcut
+
+- Result: `PASS`
+- Evidence: The exact Release app registered the Command-Shift-2 Carbon hot key on launch, and exact-SHA `GlobalHotKeyRegistrarTests` plus `AppDelegateLifecycleTests` passed in the 328-test app suite. The packaged macOS ZIP SHA-256 is `4d1f84ec31a9f4e293e545a5c142e2618f2054b1a6885b1e7b6a657d5e7c6e0c`, byte-for-byte identical to the prior interactive runtime candidate on which the region selector was opened.
+
+### 2. Capture cancellation
+
+- Result: `PASS`
+- Evidence: Escape cancellation and post-cancel coordinator behavior passed in exact-SHA `RegionSelectionStateTests` and `RegionCaptureCoordinatorTests`; cancellation leaves the menu app running and does not deliver a document to the editor. This session also sent Escape while the Release app owned the selection flow and observed no newly created standard document window.
+
+### 3. Retina source dimensions
+
+- Result: `PASS`
+- Evidence: Exact-SHA `DisplayGeometryTests` verified 300 by 200 logical points become 600 by 400 source pixels at 2x scale, and `ScreenCaptureClientTests` verified that same physical-pixel request and result. The complete 328-test app suite passed against the tested build.
+
+### 4. Overlay exclusion
+
+- Result: `PASS`
+- Evidence: Exact-SHA `RegionSelectionStateTests` verified every region-selection panel is ordered out before the continuation returns, and `ScreenCaptureClientTests` begin pixel capture only afterward. The tested package is byte-identical to the runtime candidate and the complete app suite passed this ordering contract.
+
+### 5. Chrome visible viewport
+
+- Result: `PASS`
+- Evidence: The exact extracted Release app opened a Chrome capture whose screenshot `/tmp/myshottr-acceptance-4697c47.5LGoOT/evidence/01-chrome-visible-viewport.jpeg` has SHA-256 `332a0570d74c5873154d3994b3214f5f20dffecace85ee115bdc8b5de4dcd7db` and shows only the Tistory page pixels, without tabs, address bar, bookmarks, extension toolbar, or popup. The saved project manifest records `sourceKind` as `chromeVisibleViewport` with a 2560 by 2792 original PNG.
+
+### 6. Chrome keyboard command
+
+- Result: `PASS`
+- Evidence: Chrome Option-Shift-2 was exercised both with the exact app already running and after exact-process termination. Each invocation opened one `Untitled MyShottr Project` using the visible viewport; the extension title became `Captured visible viewport in MyShottr`, the helper exited, and the Inbox was empty.
+
+### 7. Drawing tools and live preview
+
+- Result: `PASS`
+- Evidence: On the exact Release WKWebView, R created a visible rectangle by drag, T immediately focused the inline text area, Command-Return committed `MyShottr v0.1.0`, and arrow, line, freehand, highlighter, blur, opaque redaction, and number marker all produced visible marks. Evidence is in `02-rectangle-text-draft.jpeg`, `03-rectangle-text-committed.jpeg`, and `10-all-drawing-tools.jpeg` under `/tmp/myshottr-acceptance-4697c47.5LGoOT/evidence`; exact-SHA `EditorCanvasTests` and `InteractionControllerTests` additionally passed the requestAnimationFrame live-preview, pointer-up single-commit, and Shift-constrained rectangle, arrow, and line contracts that an atomic drag driver cannot sample mid-gesture.
+
+### 8. Annotation editing and shortcut ownership
+
+- Result: `PASS`
+- Evidence: V selected the saved rectangle by its stroke and exposed Rectangle properties plus Duplicate and Delete actions in the Context Rail; Command-D created a duplicate, Backspace deleted it, Command-Z enabled Redo, and Command-Shift-Z reapplied deletion. Screenshots `09-selected-rectangle-context-rail.jpeg` and `10-duplicate-selection.jpeg` preserve the runtime state. Exact-SHA editor and app suites also passed move, resize, rotate, marquee, Shift-click, Option-drag, reorder, multi-select Mixed values, scroll and Space pan, pointer zoom, 100 percent and fit commands, toolbar order, native shortcut ownership, help-focus restoration, Light and Dark synchronization, and Reduce Motion contracts.
+
+### 9. Clipboard PNG
+
+- Result: `PASS`
+- Evidence: Copy Image on the annotated Release document hid the editor only after writing the pasteboard, and Command-V in macOS Notes produced one image attachment. Screenshot `/tmp/myshottr-acceptance-4697c47.5LGoOT/evidence/04-notes-pasted-png.jpeg` has SHA-256 `6de27f3b201cf8e2ad4127cf9651463c313c021fd0031abef2ae4e9b45369d36`; exact-SHA `PNGClipboardWriterTests` and `DocumentWindowControllerOutputTests` passed the PNG type, composite bytes, hide-after-success, no-close, and same-session preservation ordering.
+
+### 10. Export dimensions
+
+- Result: `PASS`
+- Evidence: Runtime export created `/tmp/myshottr-acceptance-4697c47.5LGoOT/MyShottr-v0.1.0-elements.png` at exactly 2560 by 2792 pixels, matching its project `original.png`; exported SHA-256 is `42196d94b47fc69ce3c64090c5ddc19a296a882fa9225eda9748b30025cb893c`. The editor stayed visible and feedback was exactly `Exported MyShottr-v0.1.0-elements.png`, captured in `06-exported-basename-feedback.jpeg` with no destination path exposure.
+
+### 11. Project round trip and migration
+
+- Result: `PASS`
+- Evidence: `MyShottr-v0.1.0-elements.myshottr` contains exactly `document.json`, `manifest.json`, and `original.png`; its document is schema 3 with `presentation: { "type": "none" }`, two elements of types rectangle and text, and original PNG SHA-256 `48565565c549269668ea641607efe3f2aab383a2260ca176a7972e414d762d78`. Closing and reopening restored both marks as shown in `07-project-roundtrip-elements.jpeg`. A runtime schema-1 fixture saved back as schema 3 with presentation none, rectangle fill null, highlighter opacity 0.5, and the unchanged original hash.
+
+### 12. Modified-document close
+
+- Result: `PASS`
+- Evidence: Closing a modified Release document displayed `Save changes before closing?` with Save, Discard, and Cancel buttons. Screenshot `/tmp/myshottr-acceptance-4697c47.5LGoOT/evidence/09-modified-close-prompt.jpeg` has SHA-256 `70397481c686379079b5e863816969e3777ea6c095f7874ac8f9854939f4ee9a`.
+
+### 13. Direct capture launch
+
+- Result: `PASS`
+- Evidence: The exact Release process was resolved to PID 93532, terminated with SIGTERM, and verified absent before Chrome Option-Shift-2. The shortcut cold-launched the exact full-SHA app path directly into one editor with no recovery prompt; `11-cold-launch-editor.jpeg` records the result, the Native Host had exited, and `~/Library/Application Support/MyShottr/Inbox` contained no files.
+
+### 14. Screen Recording denial
+
+- Result: `PASS`
+- Evidence: Exact-SHA `ScreenCapturePermissionTests.testDeniedPermissionReturnsActionableError` verified denial becomes `screenRecordingPermissionDenied`, while `UserFacingErrorPresenterTests` verified the `Screen Recording Permission Required` action invokes `openScreenRecordingSettings` and the production action targets the macOS `Privacy_ScreenCapture` settings page. All 328 app tests passed; live TCC state was not mutated during the user session.
+
+### 15. Missing Chrome host
+
+- Result: `PASS`
+- Evidence: The exact Native Messaging manifest was moved to the explicit `.acceptance-disabled` path, Chrome Option-Shift-2 changed the extension title to exactly `Open MyShottr once, then retry.`, and no alternate native capture or editor opened. The manifest was immediately restored with mode 600, size 344 bytes, SHA-256 `1542d2a54f9899cdbc64c9b5e3d10bcaab161aa210a07deff27148f10e9d6b16`, and its helper path still pointed to the full-SHA Release app.
+
+### 16. Unsupported project version
+
+- Result: `PASS`
+- Evidence: Opening a schema-4 fixture showed `Project Version Is Not Supported` and `Editor document version 4 is not supported. The project was not opened.` without an editor window or partial import. Screenshot `08-unsupported-schema-alert.jpeg` has SHA-256 `a3d1fb44effcde212832bef5e2c0342d681959b206e2c9a079a6df67cc2e1d4a`; fixture document SHA-256 remained `f7f08376a401d6978e97a53608323085bb0da84e13094c8f0033140376e705f0` and original PNG hash remained unchanged.
+
+### 17. Failed export
+
+- Result: `PASS`
+- Evidence: A sentinel `Protected.png` was made immutable with `uchg`, hashed as `5dd2650cbf7f2e6005415d6fddd3ebe633f0f6db662c89953838b7f65801aa19`, and selected as the replace destination. Release UI reported `Image Transfer Failed`; the destination hash stayed identical, no `.myshottr-composite-*` file remained, and closing still presented the modified-document prompt before Cancel. Screenshots `08-export-failure-alert.jpeg` and `09-modified-close-prompt.jpeg` record the flow; the immutable flag was removed afterward.
+
+### 18. Save terminal truthfulness and exact-artifact privacy gate
+
+- Result: `PASS`
+- Evidence: Saving the annotated runtime package completed before the editor displayed exactly `Saved`, preserved in `05-project-saved-feedback.jpeg` with SHA-256 `be93aa5081d8b3ec10f55b979b3409c44d9db436fb7b03d2ac267d79379bf525`. Exact-SHA `DocumentWindowControllerOutputTests` and `EditorFeedbackTests` passed completed, superseded, cancelled, and error terminal states, while the detached `Scripts/verify-v1.sh` run passed `Scripts/verify-privacy.sh` and release artifact verification against the tested commit.
+
+## Final decision
+
+- Overall result: `PASS`
+- Reviewer: Codex with user-supervised local macOS and Chrome session
+- Notes: The exact packaged artifacts passed automated and runtime acceptance. The computer driver exposes atomic drag rather than separate pointer-down and pointer-move frames, so continuous preview, modifier-constrained gestures, and the non-mutated TCC denial branch are supported by exact-SHA interaction tests in addition to visible post-gesture runtime evidence. The GitHub ZIP remains intentionally Developer-ID unsigned and unnotarized for v0.1.0.
