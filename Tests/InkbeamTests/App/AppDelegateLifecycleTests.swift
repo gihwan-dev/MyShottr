@@ -78,6 +78,31 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(window.presentationCount, 1)
     }
 
+    func testNonInkbeamFileOpenIsRejectedBeforeProjectStoreAccess() {
+        let project = ProjectFixtures.project(text: "Rejected Open")
+        let projectURL = URL(
+            fileURLWithPath: "/tmp/rejected-open.myshottr"
+        )
+        let store = SequentialProjectStore(projects: [project])
+        var reportedErrors: [InkbeamUserFacingError] = []
+        var factoryCallCount = 0
+        let delegate = AppDelegate(
+            dependencies: AppDependencies(projectStore: store),
+            documentWindowFactory: { _, _ in
+                factoryCallCount += 1
+                return SpyEditorWindowController()
+            },
+            launchErrorReporter: { reportedErrors.append($0) }
+        )
+
+        delegate.application(NSApplication.shared, open: [projectURL])
+
+        XCTAssertEqual(store.loadCount, 0)
+        XCTAssertEqual(factoryCallCount, 0)
+        XCTAssertEqual(delegate.activeDocumentWindowCount, 0)
+        XCTAssertEqual(reportedErrors.count, 1)
+    }
+
     func testMenuBarColdLaunchUsesAccessoryPolicy() {
         let application = SpyApplicationLifecycle()
         let delegate = AppDelegate(

@@ -1,6 +1,17 @@
 import AppKit
 import UniformTypeIdentifiers
 
+extension UTType {
+    static let inkbeamProject = UTType(
+        exportedAs: "dev.gihwan.inkbeam.project",
+        conformingTo: .package
+    )
+}
+
+enum InkbeamProjectURLValidationError: Error {
+    case invalidExtension
+}
+
 @MainActor
 struct ApplicationLifecycle {
     let setActivationPolicy: (
@@ -24,6 +35,8 @@ final class AppDelegate:
     NSApplicationDelegate,
     DocumentWindowPresenting
 {
+    static let editableProjectExtension = "inkbeam"
+
     typealias DocumentWindowFactory = (
         _ project: InkbeamProject,
         _ projectURL: URL?
@@ -291,9 +304,7 @@ final class AppDelegate:
 
     private func chooseProject() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [
-            UTType(filenameExtension: "inkbeam")!,
-        ]
+        panel.allowedContentTypes = [.inkbeamProject]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -308,6 +319,15 @@ final class AppDelegate:
     }
 
     private func openProject(at url: URL) {
+        guard Self.isEditableProjectURL(url) else {
+            launchErrorReporter(
+                InkbeamUserFacingError.wrapping(
+                    InkbeamProjectURLValidationError.invalidExtension,
+                    context: .projectOpen
+                )
+            )
+            return
+        }
         do {
             let project = try dependencies.projectStore.load(from: url)
             _ = try openDocument(
@@ -322,6 +342,10 @@ final class AppDelegate:
                 )
             )
         }
+    }
+
+    static func isEditableProjectURL(_ url: URL) -> Bool {
+        url.pathExtension == editableProjectExtension
     }
 
     @discardableResult

@@ -285,10 +285,6 @@ final class UserFacingErrorPresenterTests: XCTestCase {
                 .unsupportedFormatVersion(2),
                 "Project Version Is Not Supported"
             ),
-            (
-                .unsupportedAnnotationSchemaVersion(3),
-                "Project Version Is Not Supported"
-            ),
             (.invalidAnnotationJSON, "Project Could Not Be Opened"),
             (.invalidPNG, "Project Could Not Be Opened"),
             (.sourceDimensionsMismatch, "Project Could Not Be Opened"),

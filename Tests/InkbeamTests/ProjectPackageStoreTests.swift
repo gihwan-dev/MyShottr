@@ -59,14 +59,14 @@ final class ProjectPackageStoreTests: TemporaryDirectoryTestCase {
         }
     }
 
-    func testLoadRejectsFutureSchemaWithExplicitUnsupportedVersionError() throws {
+    func testLoadRejectsFutureSchemaAsInvalidAnnotationJSON() throws {
         let url = try ProjectFixtures.package()
         defer { try? FileManager.default.removeItem(at: url) }
         try ProjectFixtures.futureAnnotationJSON()
             .write(to: url.appendingPathComponent("document.json"))
 
         XCTAssertThrowsError(try ProjectPackageStore().load(from: url)) {
-            XCTAssertEqual($0 as? ProjectPackageError, .unsupportedAnnotationSchemaVersion(4))
+            XCTAssertEqual($0 as? ProjectPackageError, .invalidAnnotationJSON)
         }
     }
 
@@ -91,55 +91,27 @@ final class ProjectPackageStoreTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(try ProjectPackageStore().load(from: url), replacementProject)
     }
 
-    func testLoadMigratesSchemaOneToSchemaThreeWithoutRewritingThePackage() throws {
+    func testLoadRejectsSchemaOneInsteadOfMigrating() throws {
         let packageURL = try ProjectFixtures.package()
         defer { try? FileManager.default.removeItem(at: packageURL) }
-        let schemaOne = try ProjectFixtures.schemaOneAnnotationJSON()
-        try schemaOne
+        try ProjectFixtures.schemaOneAnnotationJSON()
             .write(to: packageURL.appendingPathComponent("document.json"))
 
-        let loaded = try ProjectPackageStore().load(from: packageURL)
-
-        XCTAssertEqual(try annotationSchemaVersion(loaded.annotationJSON), 3)
-        XCTAssertEqual(
-            try Data(contentsOf: packageURL.appendingPathComponent("document.json")),
-            schemaOne
-        )
+        XCTAssertThrowsError(
+            try ProjectPackageStore().load(from: packageURL)
+        ) {
+            XCTAssertEqual(
+                $0 as? ProjectPackageError,
+                .invalidAnnotationJSON
+            )
+        }
     }
 
-    func testLoadMigratesSchemaTwoToSchemaThreeWithoutRewritingThePackage() throws {
+    func testLoadRejectsSchemaTwoInsteadOfMigrating() throws {
         let packageURL = try ProjectFixtures.package()
         defer { try? FileManager.default.removeItem(at: packageURL) }
-        let schemaTwo = try ProjectFixtures.schemaTwoAnnotationJSON()
-        try schemaTwo
+        try ProjectFixtures.schemaTwoAnnotationJSON()
             .write(to: packageURL.appendingPathComponent("document.json"))
-
-        let loaded = try ProjectPackageStore().load(from: packageURL)
-
-        XCTAssertEqual(try annotationSchemaVersion(loaded.annotationJSON), 3)
-        XCTAssertEqual(
-            try Data(contentsOf: packageURL.appendingPathComponent("document.json")),
-            schemaTwo
-        )
-    }
-
-    func testLoadValidatesMigratedDocumentAgainstManifestDimensions()
-        throws
-    {
-        let packageURL = try ProjectFixtures.package()
-        defer { try? FileManager.default.removeItem(at: packageURL) }
-        var schemaTwo = try XCTUnwrap(
-            JSONSerialization.jsonObject(
-                with: ProjectFixtures.schemaTwoAnnotationJSON()
-            ) as? [String: Any]
-        )
-        schemaTwo["sourcePixelWidth"] = 3
-        try JSONSerialization.data(
-            withJSONObject: schemaTwo,
-            options: [.sortedKeys]
-        ).write(
-            to: packageURL.appendingPathComponent("document.json")
-        )
 
         XCTAssertThrowsError(
             try ProjectPackageStore().load(from: packageURL)

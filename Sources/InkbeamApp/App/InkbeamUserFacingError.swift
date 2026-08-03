@@ -719,14 +719,6 @@ enum InkbeamUserFacingError: Error {
                     + "The project was not opened.",
                 primaryAction: .dismiss
             )
-        case .unsupportedAnnotationSchemaVersion(let version):
-            return UserFacingErrorViewModel(
-                title: "Project Version Is Not Supported",
-                message:
-                    "Editor document version \(version) is not supported. "
-                    + "The project was not opened.",
-                primaryAction: .dismiss
-            )
         case .notDirectoryPackage,
              .invalidMemberSet,
              .invalidManifest,

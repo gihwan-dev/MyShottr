@@ -1194,6 +1194,50 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertTrue(closeButton.isEnabled)
     }
 
+    func testNonInkbeamSaveDestinationIsRejectedBeforeProjectStoreAccess()
+        async throws
+    {
+        let project = ProjectFixtures.project(text: "Rejected Save")
+        let destination = temporaryDirectory.appendingPathComponent(
+            "Rejected Save.myshottr",
+            isDirectory: true
+        )
+        let session = DocumentSession()
+        try session.openUnsaved(project: project)
+        let store = OutputProjectStoreSpy()
+        let presenter = OutputErrorPresenterSpy()
+        var snapshotRequestCount = 0
+        var statusSendCount = 0
+        let controller = try DocumentWindowController(
+            project: project,
+            projectURL: nil,
+            projectStore: store,
+            errorPresenter: presenter,
+            testSession: session,
+            annotationSnapshotProvider: {
+                snapshotRequestCount += 1
+                return project.annotationJSON
+            },
+            projectSaveURLProvider: { destination },
+            operationStatusSender: { _, _ in
+                statusSendCount += 1
+            },
+            commandWindowPredicate: { _ in true }
+        )
+        try await controller.waitForEditorLoad()
+
+        XCTAssertTrue(controller.saveProjectAction(nil))
+        await waitUntil {
+            presenter.presentedViewModels.count == 1
+        }
+
+        XCTAssertEqual(store.saveCount, 0)
+        XCTAssertEqual(snapshotRequestCount, 0)
+        XCTAssertEqual(statusSendCount, 0)
+        XCTAssertNil(controller.representedProjectURL)
+        XCTAssertTrue(session.isModified)
+    }
+
     func testUnsavedSaveSelectsDestinationBeforeStartedAndUpdatesWindowIdentity()
         async throws
     {

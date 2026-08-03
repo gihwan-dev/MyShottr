@@ -1,8 +1,7 @@
 import Foundation
 
 struct EditorPreferences: Codable, Equatable, Sendable {
-    static let storageKey = "editorPreferences.v2"
-    static let legacyStorageKey = "editorPreferences.v1"
+    static let storageKey = "inkbeam.editorPreferences.v1"
     static let approvedDefaults = EditorPreferences(
         tool: "selection",
         color: "#1677FF",
@@ -69,24 +68,6 @@ struct EditorPreferences: Codable, Equatable, Sendable {
     }
 }
 
-private struct LegacyEditorPreferences: Codable {
-    var tool: String
-    var color: String
-    var strokeWidth: Int
-    var textSize: Int
-    var roughness: Int
-    var opacity: Double
-
-    var isValid: Bool {
-        ["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "blur", "redaction", "numberMarker"].contains(tool)
-            && ["#000000", "#FF4D4F", "#1677FF", "#FADB14"].contains(color)
-            && [2, 4, 8].contains(strokeWidth)
-            && [16, 24, 36].contains(textSize)
-            && [0, 1, 2].contains(roughness)
-            && [0.25, 0.5, 0.75, 1].contains(opacity)
-    }
-}
-
 protocol EditorPreferencesStoring: Sendable {
     func load() -> EditorPreferences
     func save(_ preferences: EditorPreferences) throws
@@ -104,38 +85,9 @@ struct UserDefaultsEditorPreferencesStore: EditorPreferencesStoring, @unchecked 
     }
 
     func load() -> EditorPreferences {
-        if defaults.object(forKey: EditorPreferences.storageKey) != nil {
-            guard
-                let data = defaults.data(
-                    forKey: EditorPreferences.storageKey
-                ),
-                hasExactKeys(
-                    data,
-                    expected: [
-                        "tool",
-                        "color",
-                        "strokeWidth",
-                        "textSize",
-                        "roughness",
-                        "opacity",
-                        "rectangleFillColor",
-                        "highlighterOpacity",
-                    ]
-                ),
-                let preferences = try? JSONDecoder().decode(
-                    EditorPreferences.self,
-                    from: data
-                ),
-                preferences.isValid
-            else {
-                return .approvedDefaults
-            }
-            return preferences
-        }
-
         guard
             let data = defaults.data(
-                forKey: EditorPreferences.legacyStorageKey
+                forKey: EditorPreferences.storageKey
             ),
             hasExactKeys(
                 data,
@@ -146,33 +98,19 @@ struct UserDefaultsEditorPreferencesStore: EditorPreferencesStoring, @unchecked 
                     "textSize",
                     "roughness",
                     "opacity",
+                    "rectangleFillColor",
+                    "highlighterOpacity",
                 ]
             ),
-            let legacy = try? JSONDecoder().decode(
-                LegacyEditorPreferences.self,
+            let preferences = try? JSONDecoder().decode(
+                EditorPreferences.self,
                 from: data
             ),
-            legacy.isValid
+            preferences.isValid
         else {
             return .approvedDefaults
         }
-
-        let migrated = EditorPreferences(
-            tool: legacy.tool,
-            color: legacy.color,
-            strokeWidth: legacy.strokeWidth,
-            textSize: legacy.textSize,
-            roughness: legacy.roughness,
-            opacity: legacy.opacity,
-            rectangleFillColor: nil,
-            highlighterOpacity: 0.5
-        )
-        do {
-            try save(migrated)
-        } catch {
-            return .approvedDefaults
-        }
-        return migrated
+        return preferences
     }
 
     func save(_ preferences: EditorPreferences) throws {

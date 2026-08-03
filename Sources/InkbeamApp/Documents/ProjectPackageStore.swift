@@ -44,17 +44,9 @@ struct ProjectPackageStore: ProjectPackageStoring {
         }
 
         let documentURL = url.appendingPathComponent("document.json")
-        let storedAnnotationJSON: Data
-        do {
-            storedAnnotationJSON = try Data(contentsOf: documentURL)
-        } catch {
-            throw ProjectPackageError.invalidAnnotationJSON
-        }
         let annotationJSON: Data
         do {
-            annotationJSON = try EditorDocumentMigrator.migrate(storedAnnotationJSON)
-        } catch EditorDocumentMigrationError.unsupportedVersion(let version) {
-            throw ProjectPackageError.unsupportedAnnotationSchemaVersion(version)
+            annotationJSON = try Data(contentsOf: documentURL)
         } catch {
             throw ProjectPackageError.invalidAnnotationJSON
         }

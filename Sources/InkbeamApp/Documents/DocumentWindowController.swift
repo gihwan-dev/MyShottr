@@ -687,6 +687,16 @@ final class DocumentWindowController:
             url = selectedURL
         }
 
+        guard AppDelegate.isEditableProjectURL(url) else {
+            present(
+                .wrapping(
+                    InkbeamProjectURLValidationError.invalidExtension,
+                    context: .projectSave
+                )
+            )
+            return .failed
+        }
+
         let modificationRevision =
             session.modificationRevision
         let requestID = UUID()
@@ -748,7 +758,7 @@ final class DocumentWindowController:
 
     private static func chooseProjectSaveURL() -> URL? {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "inkbeam")!]
+        panel.allowedContentTypes = [.inkbeamProject]
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = "Untitled.inkbeam"
         return panel.runModal() == .OK ? panel.url : nil

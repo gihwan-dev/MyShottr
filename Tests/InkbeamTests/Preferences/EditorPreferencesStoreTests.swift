@@ -32,51 +32,30 @@ final class EditorPreferencesStoreTests: XCTestCase {
         XCTAssertEqual(store.load(), .approvedDefaults)
     }
 
-    func testMigratesValidVersionOnePreferencesAndPersistsVersionTwo() throws {
-        let legacyData = try validVersionOneData()
-        defaults.set(legacyData, forKey: EditorPreferences.legacyStorageKey)
-
-        let result = store.load()
-
-        XCTAssertEqual(result.tool, "rectangle")
-        XCTAssertEqual(result.color, "#FF4D4F")
-        XCTAssertEqual(result.strokeWidth, 8)
-        XCTAssertEqual(result.textSize, 36)
-        XCTAssertEqual(result.roughness, 2)
-        XCTAssertEqual(result.opacity, 0.75)
-        XCTAssertNil(result.rectangleFillColor)
-        XCTAssertEqual(result.highlighterOpacity, 0.5)
-        XCTAssertNotNil(defaults.data(forKey: EditorPreferences.storageKey))
-        XCTAssertEqual(
-            defaults.data(forKey: EditorPreferences.legacyStorageKey),
-            legacyData
-        )
-
+    func testPreferencesIgnorePreInkbeamStorage() throws {
         defaults.set(
-            try JSONSerialization.data(withJSONObject: [
-                "tool": "arrow",
-                "color": "#1677FF",
-                "strokeWidth": 2,
-                "textSize": 16,
-                "roughness": 0,
-                "opacity": 0.25,
-            ]),
-            forKey: EditorPreferences.legacyStorageKey
+            try JSONEncoder().encode(validCurrentPreferences()),
+            forKey: "editorPreferences.v2"
         )
-        XCTAssertEqual(store.load(), result)
-    }
-
-    func testInvalidVersionTwoDoesNotFallBackToVersionOne() throws {
-        defaults.set(Data("{}".utf8), forKey: EditorPreferences.storageKey)
         defaults.set(
             try validVersionOneData(),
-            forKey: EditorPreferences.legacyStorageKey
+            forKey: "editorPreferences.v1"
         )
 
         XCTAssertEqual(store.load(), .approvedDefaults)
     }
 
-    func testVersionTwoRequiresExactJSONKeys() throws {
+    func testInvalidCurrentPreferencesDoNotFallBackToPreInkbeamStorage() throws {
+        defaults.set(Data("{}".utf8), forKey: EditorPreferences.storageKey)
+        defaults.set(
+            try JSONEncoder().encode(validCurrentPreferences()),
+            forKey: "editorPreferences.v2"
+        )
+
+        XCTAssertEqual(store.load(), .approvedDefaults)
+    }
+
+    func testCurrentPreferencesRequireExactJSONKeys() throws {
         let valid: [String: Any] = [
             "tool": "rectangle",
             "color": "#FF4D4F",
@@ -99,21 +78,6 @@ final class EditorPreferencesStoreTests: XCTestCase {
             )
             XCTAssertEqual(store.load(), .approvedDefaults)
         }
-    }
-
-    func testVersionOneRequiresExactJSONKeys() throws {
-        var invalid = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: validVersionOneData())
-                as? [String: Any]
-        )
-        invalid["extra"] = true
-        defaults.set(
-            try JSONSerialization.data(withJSONObject: invalid),
-            forKey: EditorPreferences.legacyStorageKey
-        )
-
-        XCTAssertEqual(store.load(), .approvedDefaults)
-        XCTAssertNil(defaults.data(forKey: EditorPreferences.storageKey))
     }
 
     func testEncodingNilRectangleFillColorWritesExplicitNull() throws {
@@ -209,5 +173,18 @@ final class EditorPreferencesStoreTests: XCTestCase {
             "roughness": 2,
             "opacity": 0.75,
         ])
+    }
+
+    private func validCurrentPreferences() -> EditorPreferences {
+        EditorPreferences(
+            tool: "rectangle",
+            color: "#FF4D4F",
+            strokeWidth: 8,
+            textSize: 36,
+            roughness: 2,
+            opacity: 0.75,
+            rectangleFillColor: nil,
+            highlighterOpacity: 0.25
+        )
     }
 }
