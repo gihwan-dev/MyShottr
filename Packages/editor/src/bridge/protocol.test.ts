@@ -208,6 +208,18 @@ describe("NativeToEditorEnvelopeSchema", () => {
     expect(NativeToEditorEnvelopeSchema.parse(loadDocumentFixture)).toEqual(loadDocumentFixture);
   });
 
+  it("rejects a lowercase document ID even when its source PNG URL matches", () => {
+    const documentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    expect(() => NativeToEditorEnvelopeSchema.parse({
+      ...loadDocumentFixture,
+      payload: {
+        ...loadDocumentFixture.payload,
+        documentId,
+        sourceImageURL: `inkbeam-editor://editor/document/${documentId}/original.png`,
+      },
+    })).toThrow();
+  });
+
   it.each([
     "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
     "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
