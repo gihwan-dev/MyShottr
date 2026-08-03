@@ -249,7 +249,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "myshottr",
+        guard message.name == EditorWebKitRuntimeContract.bridgeName,
               JSONSerialization.isValidJSONObject(message.body),
               let data = try? JSONSerialization.data(withJSONObject: message.body)
         else {
@@ -447,7 +447,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         let annotationDocument = try JSONDecoder().decode(BridgeJSONValue.self, from: project.annotationJSON)
         let payload: BridgeJSONValue = .object([
             "documentId": .string(project.manifest.documentId.uuidString),
-            "sourceImageURL": .string("myshottr-editor://editor/document/\(project.manifest.documentId.uuidString)/original.png"),
+            "sourceImageURL": .string("\(EditorWebKitRuntimeContract.editorScheme)://editor/document/\(project.manifest.documentId.uuidString)/original.png"),
             "annotationDocument": annotationDocument,
             "initialTool": .string(preferences.load().tool),
         ])
@@ -477,7 +477,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         let payload = try JSONSerialization.data(withJSONObject: ["requestId": requestID.uuidString])
         guard let json = String(data: payload, encoding: .utf8) else { throw EditorBridgeError.invalidMessage }
         webView.evaluateJavaScript(
-            "window.dispatchEvent(new CustomEvent('myshottr:request-annotation-snapshot', { detail: \(json) }));"
+            "window.dispatchEvent(new CustomEvent('\(EditorWebKitRuntimeContract.snapshotRequestEvent)', { detail: \(json) }));"
         ) { [weak self] _, error in
             guard let self, let error else { return }
             self.failSnapshotRequest(requestID, error: error)
@@ -598,7 +598,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             return
         }
         webView?.evaluateJavaScript(
-            "window.dispatchEvent(new CustomEvent('myshottr:native-message', { detail: \(json) }));"
+            "window.dispatchEvent(new CustomEvent('\(EditorWebKitRuntimeContract.nativeMessageEvent)', { detail: \(json) }));"
         ) { [weak self] _, error in
             guard let self, let error else { return }
             self.failPendingRequest(requestID, error: error)
@@ -632,7 +632,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 return
             }
             webView?.evaluateJavaScript(
-                "window.dispatchEvent(new CustomEvent('myshottr:native-message', { detail: \(json) }));"
+                "window.dispatchEvent(new CustomEvent('\(EditorWebKitRuntimeContract.nativeMessageEvent)', { detail: \(json) }));"
             ) { [weak self] _, error in
                 guard let self, error != nil else {
                     return

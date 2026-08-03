@@ -132,7 +132,7 @@ final class EditorBundleSchemeHandler: NSObject, WKURLSchemeHandler {
         let registration = lookupRegistry.register(taskID)
         guard let requestURL = urlSchemeTask.request.url,
               urlSchemeTask.request.httpMethod == "GET",
-              requestURL.scheme == "myshottr-editor",
+              requestURL.scheme == EditorWebKitRuntimeContract.editorScheme,
               requestURL.host == "editor",
               requestURL.port == nil,
               requestURL.user == nil,

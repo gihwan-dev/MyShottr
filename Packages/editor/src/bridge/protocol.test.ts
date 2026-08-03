@@ -45,7 +45,7 @@ describe("EditorToNativeEnvelopeSchema", () => {
       type: "loadDocument",
       payload: {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
         initialTool: "line",
       },
@@ -144,7 +144,8 @@ describe("EditorToNativeEnvelopeSchema", () => {
 
   it("sends INVALID_DOCUMENT when native attempts to load an unknown element type", () => {
     const sent: unknown[] = [];
-    window.webkit = { messageHandlers: { myshottr: { postMessage: (message) => sent.push(message) } } };
+    window.webkit = { messageHandlers: { inkbeam: { postMessage: (message) => sent.push(message) } } };
+    expect(window.webkit!.messageHandlers!.inkbeam).toBeDefined();
     const unsubscribe = createNativeBridge().subscribe(() => {});
 
     window.dispatchEvent(new CustomEvent("myshottr:native-message", {
@@ -154,7 +155,24 @@ describe("EditorToNativeEnvelopeSchema", () => {
         type: "loadDocument",
         payload: {
           documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-          sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+          sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+          annotationDocument: fixtureDocument({
+            elements: [{ ...fixtureDocument().elements[0], type: "video" } as never],
+          }),
+          initialTool: "selection",
+        },
+      },
+    }));
+    expect(sent).toHaveLength(0);
+
+    window.dispatchEvent(new CustomEvent("inkbeam:native-message", {
+      detail: {
+        protocolVersion: 1,
+        requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        type: "loadDocument",
+        payload: {
+          documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+          sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
           annotationDocument: fixtureDocument({
             elements: [{ ...fixtureDocument().elements[0], type: "video" } as never],
           }),
@@ -180,7 +198,7 @@ describe("NativeToEditorEnvelopeSchema", () => {
     type: "loadDocument",
     payload: {
       documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-      sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+      sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
       annotationDocument: fixtureDocument(),
       initialTool: "selection",
     },
@@ -192,8 +210,9 @@ describe("NativeToEditorEnvelopeSchema", () => {
 
   it.each([
     "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
-    "myshottr-editor://editor/document/FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB/original.png",
-    "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png/extra",
+    "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+    "inkbeam-editor://editor/document/FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB/original.png",
+    "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png/extra",
   ])("rejects a source PNG URL outside the exact document route: %s", (sourceImageURL) => {
     expect(() => NativeToEditorEnvelopeSchema.parse({
       ...loadDocumentFixture,

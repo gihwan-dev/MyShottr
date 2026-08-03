@@ -3,6 +3,9 @@ import WebKit
 
 @MainActor
 final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
+    static let editorScheme = EditorWebKitRuntimeContract.editorScheme
+    static let bridgeName = EditorWebKitRuntimeContract.bridgeName
+
     let webView: WKWebView
     private let bridge: EditorBridge
     private let configuration: WKWebViewConfiguration
@@ -55,7 +58,7 @@ final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
     private convenience init(session: DocumentSession, editorBundleRootURL: URL, preferences: any EditorPreferencesStoring) {
         self.init(
             session: session,
-            editorURL: URL(string: "myshottr-editor://editor/index.html")!,
+            editorURL: URL(string: "\(Self.editorScheme)://editor/index.html")!,
             editorBundleRootURL: editorBundleRootURL,
             preferences: preferences
         )
@@ -72,9 +75,9 @@ final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
                     session.sourcePNG(for: documentID)
                 }
             ),
-            forURLScheme: "myshottr-editor"
+            forURLScheme: Self.editorScheme
         )
-        configuration.userContentController.add(bridge, name: "myshottr")
+        configuration.userContentController.add(bridge, name: Self.bridgeName)
 
         self.bridge = bridge
         self.configuration = configuration
@@ -93,7 +96,7 @@ final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard !didTearDown else { return }
         didTearDown = true
         bridge.tearDown()
-        configuration.userContentController.removeScriptMessageHandler(forName: "myshottr")
+        configuration.userContentController.removeScriptMessageHandler(forName: Self.bridgeName)
     }
 
     func load(
@@ -186,4 +189,11 @@ final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
         navigationError = error
         onNavigationFailure?(error)
     }
+}
+
+enum EditorWebKitRuntimeContract {
+    static let editorScheme = "inkbeam-editor"
+    static let bridgeName = "inkbeam"
+    static let nativeMessageEvent = "inkbeam:native-message"
+    static let snapshotRequestEvent = "inkbeam:request-annotation-snapshot"
 }

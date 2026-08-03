@@ -12,7 +12,7 @@ struct EditorNavigationPolicy: Sendable {
         case documentPNG
     }
 
-    private static let scheme = "myshottr-editor"
+    private static let scheme = EditorWebKitRuntimeContract.editorScheme
     private static let host = "editor"
 
     private let allowedAssetPaths: Set<String>

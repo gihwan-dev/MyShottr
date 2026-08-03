@@ -74,7 +74,7 @@ const LoadDocumentPayloadSchema = z.object({
   annotationDocument: EditorDocumentSchema,
   initialTool: z.enum(["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "blur", "redaction", "numberMarker"]),
 }).strict().superRefine((payload, context) => {
-  const expectedURL = `myshottr-editor://editor/document/${payload.documentId}/original.png`;
+  const expectedURL = `inkbeam-editor://editor/document/${payload.documentId}/original.png`;
   if (payload.sourceImageURL !== expectedURL) {
     context.addIssue({
       code: z.ZodIssueCode.custom,

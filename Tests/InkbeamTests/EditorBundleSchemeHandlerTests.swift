@@ -41,11 +41,12 @@ final class EditorBundleSchemeHandlerTests: XCTestCase {
             request(url: editorURL("/assets/other.js"), method: "GET"),
             request(url: editorURL("/assets/index-Unreferenced.js"), method: "GET"),
             request(url: editorURL("/assets/index-AbC_12.js/extra"), method: "GET"),
-            request(url: URL(string: "myshottr-editor://editor/assets/%69ndex-AbC_12.js")!, method: "GET"),
-            request(url: URL(string: "myshottr-editor://editor/assets/%2E%2E/index-AbC_12.js")!, method: "GET"),
-            request(url: URL(string: "myshottr-editor://editor/index%2Ehtml")!, method: "GET"),
+            request(url: URL(string: "inkbeam-editor://editor/assets/%69ndex-AbC_12.js")!, method: "GET"),
+            request(url: URL(string: "inkbeam-editor://editor/assets/%2E%2E/index-AbC_12.js")!, method: "GET"),
+            request(url: URL(string: "inkbeam-editor://editor/index%2Ehtml")!, method: "GET"),
             request(url: editorURL("/index.html"), method: "POST"),
-            request(url: URL(string: "myshottr-editor://other/index.html")!, method: "GET"),
+            request(url: URL(string: "myshottr-editor://editor/index.html")!, method: "GET"),
+            request(url: URL(string: "inkbeam-editor://other/index.html")!, method: "GET"),
             request(url: editorURL("/assets/index-AbC_12.png"), method: "GET"),
         ]
         let tasks = invalidRequests.map { SchemeTask(request: $0) }
@@ -119,7 +120,7 @@ final class EditorBundleSchemeHandlerTests: XCTestCase {
     }
 
     private func editorURL(_ path: String) -> URL {
-        URL(string: "myshottr-editor://editor\(path)")!
+        URL(string: "inkbeam-editor://editor\(path)")!
     }
 
     private func request(url: URL, method: String) -> URLRequest {

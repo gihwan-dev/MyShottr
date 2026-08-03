@@ -728,7 +728,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         XCTAssertEqual(load.type, .loadDocument)
         XCTAssertEqual(
             sourceImageURL(from: load),
-            "myshottr-editor://editor/document/\(project.manifest.documentId.uuidString)/original.png"
+            "inkbeam-editor://editor/document/\(project.manifest.documentId.uuidString)/original.png"
         )
 
         let wrongSnapshot = try EditorToNativeEnvelope(

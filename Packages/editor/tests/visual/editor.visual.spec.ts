@@ -21,7 +21,7 @@ async function sendNativeMessage(
 ): Promise<void> {
   await page.evaluate((detail) => {
     window.dispatchEvent(
-      new CustomEvent("myshottr:native-message", { detail }),
+      new CustomEvent("inkbeam:native-message", { detail }),
     );
   }, message);
 }

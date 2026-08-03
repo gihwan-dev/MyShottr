@@ -11,6 +11,11 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
     private static let runtimeSourcePixelWidth = 320
     private static let runtimeSourcePixelHeight = 200
 
+    func testUsesInkbeamWebKitRuntimeContract() {
+        XCTAssertEqual(EditorWebView.editorScheme, "inkbeam-editor")
+        XCTAssertEqual(EditorWebView.bridgeName, "inkbeam")
+    }
+
     func testBundledEditorLoadsValidProjectMountsCompositesTheSessionPNGAndSurfacesNavigationFailure() async throws {
         let session = DocumentSession()
         let editor = EditorWebView(session: session)

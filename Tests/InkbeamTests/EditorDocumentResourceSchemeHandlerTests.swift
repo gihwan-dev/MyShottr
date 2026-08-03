@@ -49,10 +49,10 @@ final class EditorDocumentResourceSchemeHandlerTests: XCTestCase {
         )
         let invalidRequests = [
             URLRequest(url: resourceURL(documentID: UUID())),
-            URLRequest(url: URL(string: "myshottr-editor://editor/document/\(activeDocumentID.uuidString)/original.png/extra")!),
-            URLRequest(url: URL(string: "myshottr-editor://editor/document/../original.png")!),
+            URLRequest(url: URL(string: "inkbeam-editor://editor/document/\(activeDocumentID.uuidString)/original.png/extra")!),
+            URLRequest(url: URL(string: "inkbeam-editor://editor/document/../original.png")!),
             URLRequest(url: try XCTUnwrap(URL(
-                string: "myshottr-editor://editor/document/\(encodedUUIDAlias)/original.png"
+                string: "inkbeam-editor://editor/document/\(encodedUUIDAlias)/original.png"
             ))),
             URLRequest(url: URL(string: "myshottr-resource://document/\(activeDocumentID.uuidString)/original.png")!),
             request(url: resourceURL(documentID: activeDocumentID), method: "POST"),
@@ -218,7 +218,7 @@ final class EditorDocumentResourceSchemeHandlerTests: XCTestCase {
     }
 
     private func resourceURL(documentID: UUID) -> URL {
-        URL(string: "myshottr-editor://editor/document/\(documentID.uuidString)/original.png")!
+        URL(string: "inkbeam-editor://editor/document/\(documentID.uuidString)/original.png")!
     }
 
     private var emptyBundleRoot: URL {

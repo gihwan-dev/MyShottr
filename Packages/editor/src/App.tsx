@@ -801,12 +801,12 @@ export function App() {
         return;
       }
     });
-    window.addEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
+    window.addEventListener("inkbeam:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
     void bridge.send("editorReady", {});
     return () => {
       latestLoadRequestSequence.current += 1;
       unsubscribe();
-      window.removeEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
+      window.removeEventListener("inkbeam:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
     };
   }, [bridge, receiveOperationStatus]);
 
