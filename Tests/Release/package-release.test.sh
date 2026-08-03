@@ -6,7 +6,7 @@ REPO_ROOT="${SCRIPT_PATH:h:h:h}"
 PACKAGE_SCRIPT="${REPO_ROOT}/Scripts/package-release.sh"
 VERIFY_SCRIPT="${REPO_ROOT}/Scripts/verify-release-artifacts.sh"
 TEST_ROOT="$(
-  mktemp -d -t myshottr-release-contract
+  mktemp -d -t inkbeam-release-contract
 )"
 [[ -d "${TEST_ROOT}" && ! -L "${TEST_ROOT}" ]] \
   || {
@@ -14,7 +14,7 @@ TEST_ROOT="$(
     exit 1
   }
 TEST_ROOT="${TEST_ROOT:A}"
-[[ "${TEST_ROOT:t}" == myshottr-release-contract.* ]] \
+[[ "${TEST_ROOT:t}" == inkbeam-release-contract.* ]] \
   || {
     echo "package-release.test: mktemp returned an unexpected directory" >&2
     exit 1
@@ -28,7 +28,7 @@ fail() {
 
 cleanup() {
   case "${TEST_ROOT:t}" in
-    myshottr-release-contract.*)
+    inkbeam-release-contract.*)
       [[ "${TEST_ROOT:h}" == "${TEST_ROOT_PARENT}" ]] \
         || {
           echo "package-release.test: refusing to clean moved directory" >&2
@@ -223,7 +223,7 @@ cat >"${APP_STAGING}/Contents/Resources/Editor/index.html" <<'HTML'
 HTML
 printf 'body { color: black; }\n' \
   >"${APP_STAGING}/Contents/Resources/Editor/assets/index-fixture.css"
-printf 'globalThis.myshottr = true;\n' \
+printf 'globalThis.inkbeam = true;\n' \
   >"${APP_STAGING}/Contents/Resources/Editor/assets/index-fixture.js"
 cat >"${APP_STAGING}/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -250,9 +250,9 @@ cat >"${APP_STAGING}/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-xattr -w com.myshottr.release-fixture custom \
+xattr -w dev.gihwan.inkbeam.release-fixture custom \
   "${APP_STAGING}/Contents/Resources/AppIcon.icns"
-xattr -w com.apple.quarantine '0081;00000000;MyShottrReleaseTest;' \
+xattr -w com.apple.quarantine '0081;00000000;InkbeamReleaseTest;' \
   "${APP_STAGING}/Contents/Resources/Assets.car"
 
 PUBLIC_KEY="$(
@@ -266,7 +266,7 @@ import { writeFileSync } from "node:fs";
 const [manifestPath, key] = process.argv.slice(2);
 const manifest = {
   manifest_version: 3,
-  name: "MyShottr Web Capture",
+  name: "Inkbeam Web Capture",
   version: "0.1.0",
   permissions: ["activeTab", "nativeMessaging"],
   content_security_policy: {
@@ -401,7 +401,7 @@ expect_failure \
 
 APP_XATTR_ROOT="${TEST_ROOT}/app-xattr"
 ditto -x -k "${TEST_ROOT}/valid-app.zip" "${APP_XATTR_ROOT}"
-xattr -w com.myshottr.release-mutation custom \
+xattr -w dev.gihwan.inkbeam.release-mutation custom \
   "${APP_XATTR_ROOT}/Inkbeam.app/Contents/Resources/AppIcon.icns"
 rm "${APP_ARCHIVE}"
 ditto -c -k --sequesterRsrc --keepParent \
@@ -430,7 +430,7 @@ expect_failure \
 
 APP_TEST_SEAM_ROOT="${TEST_ROOT}/app-test-seam"
 ditto -x -k "${TEST_ROOT}/valid-app.zip" "${APP_TEST_SEAM_ROOT}"
-printf '\n__myshottrE2E\n' \
+printf '\n__inkbeamE2E\n' \
   >>"${APP_TEST_SEAM_ROOT}/Inkbeam.app/Contents/Resources/Assets.car"
 repack_app_without_metadata "${APP_TEST_SEAM_ROOT}"
 expect_failure \
@@ -466,7 +466,7 @@ const worker = path.join(
   "Inkbeam-Chrome-0.1.0",
   "service-worker.js",
 );
-fs.appendFileSync(worker, "\nglobalThis.__myshottrE2E = {};\n");
+fs.appendFileSync(worker, "\nglobalThis.__inkbeamE2E = {};\n");
 fs.unlinkSync(archive);
 execFileSync(
   "ditto",

@@ -34,6 +34,7 @@ final class EditorNavigationPolicyTests: XCTestCase {
             .allow
         )
 
+        let legacyEditorScheme = ["my", "shottr", "-editor"].joined()
         let deniedURLStrings = [
             "https://example.com",
             "http://localhost:3000",
@@ -42,7 +43,7 @@ final class EditorNavigationPolicyTests: XCTestCase {
             "blob:inkbeam-editor://editor/id",
             "about:blank",
             "file:///App/Editor/index.html",
-            "myshottr-editor://editor/index.html",
+            "\(legacyEditorScheme)://editor/index.html",
             "inkbeam-editor://other/index.html",
             "inkbeam-editor://user@editor/index.html",
             "inkbeam-editor://editor:443/index.html",

@@ -84,7 +84,7 @@ TEMP_ROOT_PARENT=""
 cleanup() {
   [[ -n "${TEMP_ROOT}" ]] || return 0
   case "${TEMP_ROOT:t}" in
-    myshottr-release-verify.*)
+    inkbeam-release-verify.*)
       [[ "${TEMP_ROOT:h}" == "${TEMP_ROOT_PARENT}" ]] \
         || {
           echo "verify-release-artifacts: refusing to clean moved path: ${TEMP_ROOT}" >&2
@@ -256,12 +256,12 @@ inspect_archive \
   "${EXTENSION_ARCHIVE}" "Inkbeam-Chrome-${VERSION}" "extension"
 
 TEMP_ROOT="$(
-  mktemp -d -t myshottr-release-verify
+  mktemp -d -t inkbeam-release-verify
 )" || fail "could not create a temporary verification root"
 [[ -d "${TEMP_ROOT}" && ! -L "${TEMP_ROOT}" ]] \
   || fail "mktemp did not create a safe temporary verification root"
 TEMP_ROOT="${TEMP_ROOT:A}"
-[[ "${TEMP_ROOT:t}" == myshottr-release-verify.* ]] \
+[[ "${TEMP_ROOT:t}" == inkbeam-release-verify.* ]] \
   || fail "mktemp returned an unexpected temporary verification root"
 TEMP_ROOT_PARENT="${TEMP_ROOT:h}"
 trap cleanup EXIT
@@ -363,7 +363,7 @@ function scanSensitiveFile(entry) {
     fail("release artifact contains private key material");
   }
   if (
-    /__myshottrE2E|MYSHOTTR_E2E|E2E seam|TEST_PNG_DATA_URL/.test(text)
+    /__inkbeamE2E|INKBEAM_E2E|E2E seam|TEST_PNG_DATA_URL/.test(text)
   ) {
     fail("release artifact contains a test seam");
   }
@@ -666,7 +666,7 @@ if (!sourceKey || manifest.key !== sourceKey || appKey !== sourceKey) {
   fail("extension identity key mismatch");
 }
 if (
-  /__myshottrE2E|MYSHOTTR_E2E|E2E seam|TEST_PNG_DATA_URL/.test(worker)
+  /__inkbeamE2E|INKBEAM_E2E|E2E seam|TEST_PNG_DATA_URL/.test(worker)
 ) {
   fail("production extension contains a test seam");
 }

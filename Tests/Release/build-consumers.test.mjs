@@ -11,7 +11,7 @@ const readSwiftTree = (directory) => fs.readdirSync(directory, { recursive: true
 
 test("executable build consumers use Inkbeam project products and test module", () => {
   const packageRelease = read("Scripts/package-release.sh");
-  const verifier = read("Scripts/verify-v1.sh");
+  const verifier = read("Scripts/verify-inkbeam.sh");
   const artifactVerifier = read("Scripts/verify-release-artifacts.sh");
   const appTests = readSwiftTree("Tests/InkbeamTests");
   const nativeHostProcessTests = read("Tests/InkbeamNativeHostTests/NativeHostProcessTests.swift");
@@ -22,10 +22,24 @@ test("executable build consumers use Inkbeam project products and test module", 
     assert.match(script, /-scheme Inkbeam/);
     assert.match(script, /Inkbeam\.app/);
     assert.match(script, /InkbeamNativeHost/);
-    assert.doesNotMatch(script, /MyShottr\.xcodeproj|scheme MyShottr|MyShottr\.app|MyShottrNativeHost/);
   }
   assert.match(packageRelease, /Config\/Inkbeam-Info\.plist/);
-  assert.doesNotMatch(packageRelease, /Config\/MyShottr-Info\.plist/);
+  assert.match(
+    verifier,
+    /SOURCE_EXTENSION_KEY="\$\{REPO_ROOT\}\/Config\/chrome-extension-key\.b64"/,
+  );
+  assert.match(
+    verifier,
+    /APP_EXTENSION_KEY="\$\{APP\}\/Contents\/Resources\/chrome-extension-key\.b64"/,
+  );
+  assert.match(
+    verifier,
+    /cmp -s "\$\{SOURCE_EXTENSION_KEY\}" "\$\{APP_EXTENSION_KEY\}"/,
+  );
+  assert.match(
+    verifier,
+    /manifest\.version === "0\.2\.0", "built extension version is not 0\.2\.0"/,
+  );
   assert.match(artifactVerifier, /inspect_archive "\$\{APP_ARCHIVE\}" "Inkbeam\.app" "app"/);
   assert.match(artifactVerifier, /Contents\/Helpers\/InkbeamNativeHost/);
   assert.match(artifactVerifier, /Contents\/MacOS\/Inkbeam/);
@@ -33,14 +47,7 @@ test("executable build consumers use Inkbeam project products and test module", 
     artifactVerifier,
     /\)" == "dev\.gihwan\.inkbeam" \]\] \|\| fail "unexpected app bundle identifier"/,
   );
-  assert.doesNotMatch(
-    artifactVerifier,
-    /MyShottr-\$\{VERSION\}|MyShottr-Chrome|MyShottr\.app|Contents\/MacOS\/MyShottr|MyShottrNativeHost|com\.myshottr\.app/,
-  );
-  assert.doesNotMatch(appTests, /@testable import MyShottr/);
   assert.match(appTests, /@testable import Inkbeam/);
   assert.match(appConfigurationTests, /extensions\.contains\("inkbeam"\)/);
-  assert.doesNotMatch(appConfigurationTests, /extensions\.contains\("myshottr"\)/);
   assert.match(nativeHostProcessTests, /appendingPathComponent\("InkbeamNativeHost"\)/);
-  assert.doesNotMatch(nativeHostProcessTests, /appendingPathComponent\("MyShottrNativeHost"\)/);
 });

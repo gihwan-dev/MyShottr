@@ -546,7 +546,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
   return (
     <main
       className="editor-app"
-      aria-label="MyShottr editor"
+      aria-label="Inkbeam editor"
       style={{ cursor: cursorForTool(tool) }}
     >
       <EditorWorkspace
@@ -836,7 +836,7 @@ export function App() {
               void bridge.send("editorPreferencesChanged", { tool, defaults });
             }}
           />
-        : <main aria-label="MyShottr editor">Waiting for document</main>}
+        : <main aria-label="Inkbeam editor">Waiting for document</main>}
       <EditorFeedback state={feedbackState} />
     </>
   );

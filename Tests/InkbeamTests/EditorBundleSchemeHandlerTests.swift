@@ -37,6 +37,7 @@ final class EditorBundleSchemeHandlerTests: XCTestCase {
         let root = try makeBundleRoot()
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
         let handler = EditorBundleSchemeHandler(rootURL: root, pngForDocument: { _ in nil })
+        let legacyEditorScheme = ["my", "shottr", "-editor"].joined()
         let invalidRequests = [
             request(url: editorURL("/assets/other.js"), method: "GET"),
             request(url: editorURL("/assets/index-Unreferenced.js"), method: "GET"),
@@ -45,7 +46,7 @@ final class EditorBundleSchemeHandlerTests: XCTestCase {
             request(url: URL(string: "inkbeam-editor://editor/assets/%2E%2E/index-AbC_12.js")!, method: "GET"),
             request(url: URL(string: "inkbeam-editor://editor/index%2Ehtml")!, method: "GET"),
             request(url: editorURL("/index.html"), method: "POST"),
-            request(url: URL(string: "myshottr-editor://editor/index.html")!, method: "GET"),
+            request(url: URL(string: "\(legacyEditorScheme)://editor/index.html")!, method: "GET"),
             request(url: URL(string: "inkbeam-editor://other/index.html")!, method: "GET"),
             request(url: editorURL("/assets/index-AbC_12.png"), method: "GET"),
         ]

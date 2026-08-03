@@ -3,12 +3,12 @@ set -euo pipefail
 
 SCRIPT_PATH="${0:A}"
 REPO_ROOT="${SCRIPT_PATH:h:h}"
-SIGNED_DERIVED_DATA="${REPO_ROOT}/DerivedData/VerifyV1"
-APP_TEST_DERIVED_DATA="${REPO_ROOT}/DerivedData/VerifyV1-AppTests"
+SIGNED_DERIVED_DATA="${REPO_ROOT}/DerivedData/VerifyInkbeam"
+APP_TEST_DERIVED_DATA="${REPO_ROOT}/DerivedData/VerifyInkbeam-AppTests"
 TEST_BUILD_ROOT=""
 
 fail() {
-  echo "verify-v1: $*" >&2
+  echo "verify-inkbeam: $*" >&2
   exit 1
 }
 
@@ -36,8 +36,8 @@ clean_derived_data() {
   local target_path="$1"
 
   case "${target_path}" in
-    "${REPO_ROOT}/DerivedData/VerifyV1"|\
-    "${REPO_ROOT}/DerivedData/VerifyV1-AppTests")
+    "${REPO_ROOT}/DerivedData/VerifyInkbeam"|\
+    "${REPO_ROOT}/DerivedData/VerifyInkbeam-AppTests")
       ;;
     *)
       fail "refusing to clean unexpected DerivedData path: ${target_path}"
@@ -49,11 +49,11 @@ clean_derived_data() {
 cleanup_test_build_root() {
   [[ -n "${TEST_BUILD_ROOT}" ]] || return 0
   case "${TEST_BUILD_ROOT}" in
-    "${TEMP_PARENT%/}/myshottr-verify-v1."*)
+    "${TEMP_PARENT%/}/inkbeam-verify."*)
       rm -rf "${TEST_BUILD_ROOT}"
       ;;
     *)
-      echo "verify-v1: refusing to clean unexpected temporary path: ${TEST_BUILD_ROOT}" >&2
+      echo "verify-inkbeam: refusing to clean unexpected temporary path: ${TEST_BUILD_ROOT}" >&2
       return 1
       ;;
   esac
@@ -93,19 +93,19 @@ require_minimum_major "pnpm" "${PNPM_VERSION}" 10
 require_minimum_major "Xcode" "${XCODE_VERSION}" 26
 require_minimum_major "macOS" "${MACOS_VERSION}" 15
 
-if RUNNING_MYSHOTTR_PIDS="$(pgrep -x Inkbeam)"; then
-  RUNNING_MYSHOTTR_PIDS="${RUNNING_MYSHOTTR_PIDS//$'\n'/, }"
-  fail "quit every running Inkbeam app before verification (PIDs: ${RUNNING_MYSHOTTR_PIDS})."
+if RUNNING_INKBEAM_PIDS="$(pgrep -x Inkbeam)"; then
+  RUNNING_INKBEAM_PIDS="${RUNNING_INKBEAM_PIDS//$'\n'/, }"
+  fail "quit every running Inkbeam app before verification (PIDs: ${RUNNING_INKBEAM_PIDS})."
 fi
 
 TEMP_PARENT="${TMPDIR:-/tmp}"
 TEST_BUILD_ROOT="$(
-  mktemp -d "${TEMP_PARENT%/}/myshottr-verify-v1.XXXXXX"
+  mktemp -d "${TEMP_PARENT%/}/inkbeam-verify.XXXXXX"
 )" || fail "could not create the temporary test build root."
 HOST_TEST_DERIVED_DATA="${TEST_BUILD_ROOT}/HostTests"
 trap cleanup_test_build_root EXIT
 
-echo "Inkbeam v1 verification"
+echo "Inkbeam automated verification"
 echo "Repository: ${REPO_ROOT}"
 echo "Node.js: ${NODE_VERSION}"
 echo "pnpm: ${PNPM_VERSION}"
@@ -127,6 +127,8 @@ run_step "Run Chrome extension integration tests" \
   pnpm --filter @inkbeam/chrome-extension exec playwright test
 run_step "Verify local-only runtime and extension permissions" \
   "${REPO_ROOT}/Scripts/verify-privacy.sh"
+run_step "Verify the Inkbeam clean cutover" \
+  node "${REPO_ROOT}/Scripts/verify-clean-cutover.mjs"
 run_step "Run release workflow, packaging, and documentation contracts" \
   pnpm test:release
 
@@ -214,7 +216,7 @@ function assert(condition, message) {
 }
 
 assert(manifest.manifest_version === 3, "built extension is not Manifest V3");
-assert(manifest.version === "0.1.0", "built extension version is not 0.1.0");
+assert(manifest.version === "0.2.0", "built extension version is not 0.2.0");
 assert(
   JSON.stringify(manifest.permissions) ===
     JSON.stringify(["activeTab", "nativeMessaging"]),
@@ -242,5 +244,5 @@ codesign --display --verbose=2 "${APP}" >/dev/null
 codesign --display --verbose=2 "${HELPER}" >/dev/null
 
 echo
-echo "Inkbeam v1 automated verification passed."
+echo "Inkbeam automated verification passed."
 echo "Signed Debug app: ${APP}"

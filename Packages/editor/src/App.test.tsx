@@ -2396,7 +2396,7 @@ describe("EditorApp", () => {
       },
     });
 
-    expect(await screen.findByRole("main", { name: "MyShottr editor" })).toBeTruthy();
+    expect(await screen.findByRole("main", { name: "Inkbeam editor" })).toBeTruthy();
     expect(sent).toContainEqual({
       requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
       type: "annotationSnapshot",
@@ -2642,7 +2642,7 @@ describe("EditorApp", () => {
         initialTool: "selection",
       },
     });
-    await screen.findByRole("main", { name: "MyShottr editor" });
+    await screen.findByRole("main", { name: "Inkbeam editor" });
 
     window.dispatchEvent(new CustomEvent("inkbeam:request-annotation-snapshot", {
       detail: { requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB" },
@@ -2687,7 +2687,7 @@ describe("EditorApp", () => {
         initialTool: "selection",
       },
     });
-    await screen.findByRole("main", { name: "MyShottr editor" });
+    await screen.findByRole("main", { name: "Inkbeam editor" });
     fireEvent.click(screen.getByRole("button", { name: "Highlighter, shortcut H" }));
     fireEvent.change(screen.getByRole("slider", { name: "Opacity" }), {
       target: { value: "25" },

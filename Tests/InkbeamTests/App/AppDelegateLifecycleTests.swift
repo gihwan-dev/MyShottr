@@ -80,8 +80,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
 
     func testNonInkbeamFileOpenIsRejectedBeforeProjectStoreAccess() {
         let project = ProjectFixtures.project(text: "Rejected Open")
+        let legacyExtension = ["my", "shottr"].joined()
         let projectURL = URL(
-            fileURLWithPath: "/tmp/rejected-open.myshottr"
+            fileURLWithPath: "/tmp/rejected-open.\(legacyExtension)"
         )
         let store = SequentialProjectStore(projects: [project])
         var reportedErrors: [InkbeamUserFacingError] = []

@@ -2,25 +2,23 @@ import XCTest
 @testable import Inkbeam
 
 final class ChromeExtensionIdentityTests: XCTestCase {
-    func testBundledPublicKeyIsByteIdenticalToCommittedIdentityKey() throws {
-        let bundledURL = try XCTUnwrap(
+    func testAppBundledPublicKeyMatchesCommittedKeyCopiedIntoTestBundle() throws {
+        let appBundledURL = try XCTUnwrap(
             Bundle.main.url(
                 forResource: "chrome-extension-key",
                 withExtension: "b64"
             )
         )
-        let repositoryRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let committedURL = repositoryRoot.appendingPathComponent(
-            "Config/chrome-extension-key.b64"
+        let testBundledURL = try XCTUnwrap(
+            Bundle(for: ChromeExtensionIdentityTests.self).url(
+                forResource: "chrome-extension-key",
+                withExtension: "b64"
+            )
         )
 
         XCTAssertEqual(
-            try Data(contentsOf: bundledURL),
-            try Data(contentsOf: committedURL)
+            try Data(contentsOf: appBundledURL),
+            try Data(contentsOf: testBundledURL)
         )
     }
 

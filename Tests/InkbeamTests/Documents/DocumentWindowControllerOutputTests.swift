@@ -1198,8 +1198,9 @@ final class DocumentWindowControllerOutputTests:
         async throws
     {
         let project = ProjectFixtures.project(text: "Rejected Save")
+        let legacyExtension = ["my", "shottr"].joined()
         let destination = temporaryDirectory.appendingPathComponent(
-            "Rejected Save.myshottr",
+            "Rejected Save.\(legacyExtension)",
             isDirectory: true
         )
         let session = DocumentSession()

@@ -52,7 +52,7 @@ async function gotoFixture(
 ) {
   await page.goto(`/tests/visual/visual.html?state=${state}`);
   await expect(
-    page.getByRole("main", { name: "MyShottr editor" }),
+    page.getByRole("main", { name: "Inkbeam editor" }),
   ).toBeVisible();
   await page.waitForFunction(
     (expected) => document.documentElement.dataset.visualFixtureReady === expected,

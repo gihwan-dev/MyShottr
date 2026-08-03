@@ -10,8 +10,8 @@ export class ReleaseNotesError extends Error {
   }
 }
 
-export const COMMIT_MARKER = "<!-- MYSHOTTR_RELEASE_COMMIT -->";
-export const CHECKSUM_MARKER = "<!-- MYSHOTTR_RELEASE_CHECKSUMS -->";
+export const COMMIT_MARKER = "<!-- INKBEAM_RELEASE_COMMIT -->";
+export const CHECKSUM_MARKER = "<!-- INKBEAM_RELEASE_CHECKSUMS -->";
 
 function fail(message) {
   throw new ReleaseNotesError(message);
@@ -35,8 +35,8 @@ function validateCommitSHA(commitSHA) {
 
 function parseChecksums(checksumSource, version) {
   const expectedNames = [
-    `MyShottr-${version}-macos.zip`,
-    `MyShottr-Chrome-${version}.zip`,
+    `Inkbeam-${version}-macos.zip`,
+    `Inkbeam-Chrome-${version}.zip`,
   ];
   const normalized = checksumSource.endsWith("\n")
     ? checksumSource.slice(0, -1)
@@ -59,12 +59,12 @@ export function renderReleaseNotes(template, checksumSource, version, commitSHA)
   validateCommitSHA(commitSHA);
   const checksumLines = parseChecksums(checksumSource, version);
 
-  if (!template.startsWith(`# MyShottr v${version}\n`)) {
+  if (!template.startsWith(`# Inkbeam v${version}\n`)) {
     fail("release-note title does not match the requested version");
   }
   for (const name of [
-    `MyShottr-${version}-macos.zip`,
-    `MyShottr-Chrome-${version}.zip`,
+    `Inkbeam-${version}-macos.zip`,
+    `Inkbeam-Chrome-${version}.zip`,
     "SHA256SUMS.txt",
   ]) {
     if (!template.includes(name)) {

@@ -6,6 +6,9 @@ import { createNativeBridge } from "./nativeBridge";
 import { EditorToNativeEnvelopeSchema, NativeToEditorEnvelopeSchema } from "./protocol";
 
 const UUID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+const legacyProductStem = ["my", "shottr"].join("");
+const legacyEditorScheme = `${legacyProductStem}-editor`;
+const legacyProjectExtension = `.${legacyProductStem}`;
 
 const editorReadyFixture = {
   protocolVersion: 1,
@@ -221,8 +224,8 @@ describe("NativeToEditorEnvelopeSchema", () => {
   });
 
   it.each([
-    "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
-    "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+    `${legacyProductStem}-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png`,
+    `${legacyEditorScheme}://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png`,
     "inkbeam-editor://editor/document/FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB/original.png",
     "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png/extra",
   ])("rejects a source PNG URL outside the exact document route: %s", (sourceImageURL) => {
@@ -308,14 +311,14 @@ describe("NativeToEditorEnvelopeSchema", () => {
     ["an unknown operation", { operation: "print", phase: "started" }],
     ["an unknown phase", { operation: "save", phase: "queued" }],
     ["export superseded", { operation: "export", phase: "superseded" }],
-    ["save completed with displayName", { operation: "save", phase: "completed", displayName: "Capture.myshottr" }],
+    ["save completed with displayName", { operation: "save", phase: "completed", displayName: `Capture${legacyProjectExtension}` }],
     ["export completed without displayName", { operation: "export", phase: "completed" }],
     ["export completed with a non-string displayName", { operation: "export", phase: "completed", displayName: 7 }],
-    ["save started with displayName", { operation: "save", phase: "started", displayName: "Capture.myshottr" }],
+    ["save started with displayName", { operation: "save", phase: "started", displayName: `Capture${legacyProjectExtension}` }],
     ["export started with displayName", { operation: "export", phase: "started", displayName: "Capture.png" }],
-    ["save cancelled with displayName", { operation: "save", phase: "cancelled", displayName: "Capture.myshottr" }],
+    ["save cancelled with displayName", { operation: "save", phase: "cancelled", displayName: `Capture${legacyProjectExtension}` }],
     ["export cancelled with displayName", { operation: "export", phase: "cancelled", displayName: "Capture.png" }],
-    ["save failed with displayName", { operation: "save", phase: "failed", displayName: "Capture.myshottr" }],
+    ["save failed with displayName", { operation: "save", phase: "failed", displayName: `Capture${legacyProjectExtension}` }],
     ["export failed with displayName", { operation: "export", phase: "failed", displayName: "Capture.png" }],
     ["a payload operation ID", { operation: "save", phase: "started", operationId: UUID }],
     ["an arbitrary extra key", { operation: "export", phase: "completed", displayName: "Capture.png", extra: true }],

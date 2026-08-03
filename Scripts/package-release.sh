@@ -205,7 +205,7 @@ TEMP_ROOT_PARENT=""
 cleanup() {
   [[ -n "${TEMP_ROOT}" ]] || return 0
   case "${TEMP_ROOT:t}" in
-    myshottr-release.*)
+    inkbeam-release.*)
       [[ "${TEMP_ROOT:h}" == "${TEMP_ROOT_PARENT}" ]] \
         || {
           echo "package-release: refusing to clean moved temporary path: ${TEMP_ROOT}" >&2
@@ -303,12 +303,12 @@ for command_name in \
 done
 
 TEMP_ROOT="$(
-  mktemp -d -t myshottr-release
+  mktemp -d -t inkbeam-release
 )" || fail "could not create a temporary release root"
 [[ -d "${TEMP_ROOT}" && ! -L "${TEMP_ROOT}" ]] \
   || fail "mktemp did not create a safe temporary release root"
 TEMP_ROOT="${TEMP_ROOT:A}"
-[[ "${TEMP_ROOT:t}" == myshottr-release.* ]] \
+[[ "${TEMP_ROOT:t}" == inkbeam-release.* ]] \
   || fail "mktemp returned an unexpected temporary release root"
 TEMP_ROOT_PARENT="${TEMP_ROOT:h}"
 trap cleanup EXIT

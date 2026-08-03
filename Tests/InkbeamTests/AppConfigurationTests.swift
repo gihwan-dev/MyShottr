@@ -12,7 +12,7 @@ final class AppConfigurationTests: XCTestCase {
             CaptureError.cancelled,
             context: .capture
         )
-        XCTAssertFalse(error.title.contains("MyShottr"))
+        XCTAssertEqual(error.title, "Capture Cancelled")
     }
 
     func testBundleDeclaresScreenCaptureReasonAndProjectType() throws {

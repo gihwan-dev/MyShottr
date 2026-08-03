@@ -36,14 +36,14 @@ VERSION="\${TAG#v}"
 [[ -f "docs/releases/\${TAG}.md" ]]
 git fetch --no-tags --prune origin \\
   "+refs/heads/main:refs/remotes/origin/main" \\
-  "+refs/notes/myshottr-acceptance:refs/notes/myshottr-acceptance"
+  "+refs/notes/inkbeam-acceptance:refs/notes/inkbeam-acceptance"
 TAG_COMMIT="$(git rev-parse --verify "\${TAG}^{commit}")"
 [[ "\${TAG_COMMIT}" == "\${EXPECTED_SHA}" ]]
 CHECKOUT_COMMIT="$(git rev-parse --verify "HEAD^{commit}")"
 [[ "\${CHECKOUT_COMMIT}" == "\${EXPECTED_SHA}" ]]
 MAIN_COMMIT="$(git rev-parse --verify "origin/main^{commit}")"
 [[ "\${MAIN_COMMIT}" == "\${EXPECTED_SHA}" ]]
-git notes --ref=myshottr-acceptance show "\${EXPECTED_SHA}" |
+git notes --ref=inkbeam-acceptance show "\${EXPECTED_SHA}" |
   node Scripts/validate-release-evidence.mjs \\
     acceptance \\
     - \\
@@ -68,15 +68,15 @@ const RELEASE_PUBLISH_RUN = `set -euo pipefail
 [[ "\${TAG}" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]
 [[ "\${VERSION}" == "\${TAG#v}" ]]
 OUTPUT="dist/release/\${VERSION}"
-test -f "\${OUTPUT}/MyShottr-\${VERSION}-macos.zip"
-test -f "\${OUTPUT}/MyShottr-Chrome-\${VERSION}.zip"
+test -f "\${OUTPUT}/Inkbeam-\${VERSION}-macos.zip"
+test -f "\${OUTPUT}/Inkbeam-Chrome-\${VERSION}.zip"
 test -f "\${OUTPUT}/SHA256SUMS.txt"
 gh release create "\${TAG}" \\
-  "\${OUTPUT}/MyShottr-\${VERSION}-macos.zip" \\
-  "\${OUTPUT}/MyShottr-Chrome-\${VERSION}.zip" \\
+  "\${OUTPUT}/Inkbeam-\${VERSION}-macos.zip" \\
+  "\${OUTPUT}/Inkbeam-Chrome-\${VERSION}.zip" \\
   "\${OUTPUT}/SHA256SUMS.txt" \\
   --repo "\${REPOSITORY}" \\
-  --title "MyShottr \${TAG}" \\
+  --title "Inkbeam \${TAG}" \\
   --notes-file "\${NOTES_PATH}" \\
   --verify-tag
 `;
@@ -210,8 +210,8 @@ function assertReleaseCommandSurface(releaseSource, publishRun) {
     .filter(Boolean);
   assert.deepEqual(createCommandLines, [
     'gh release create "${TAG}"',
-    '"${OUTPUT}/MyShottr-${VERSION}-macos.zip"',
-    '"${OUTPUT}/MyShottr-Chrome-${VERSION}.zip"',
+    '"${OUTPUT}/Inkbeam-${VERSION}-macos.zip"',
+    '"${OUTPUT}/Inkbeam-Chrome-${VERSION}.zip"',
     '"${OUTPUT}/SHA256SUMS.txt"',
     "--repo",
   ]);
@@ -262,9 +262,9 @@ function validateCI(ciSource) {
       run: XCODE_REQUIREMENT_RUN,
     },
     {
-      name: "Verify v1",
+      name: "Verify Inkbeam",
       shell: ZSH_SHELL,
-      run: "Scripts/verify-v1.sh",
+      run: "Scripts/verify-inkbeam.sh",
     },
   ]);
   assertAuditedActionComments(ciSource);
@@ -330,7 +330,7 @@ function validateRelease(releaseSource) {
     {
       name: "Verify exact source",
       shell: ZSH_SHELL,
-      run: "Scripts/verify-v1.sh",
+      run: "Scripts/verify-inkbeam.sh",
     },
     {
       name: "Package release",
@@ -355,7 +355,7 @@ function validateRelease(releaseSource) {
         TAG: "${{ github.ref_name }}",
         VERSION: "${{ steps.release-contract.outputs.version }}",
         EXPECTED_SHA: "${{ github.sha }}",
-        NOTES_PATH: "${{ runner.temp }}/myshottr-release-notes.md",
+        NOTES_PATH: "${{ runner.temp }}/inkbeam-release-notes.md",
       },
       run: RELEASE_NOTES_RUN,
     },
@@ -367,7 +367,7 @@ function validateRelease(releaseSource) {
         REPOSITORY: "${{ github.repository }}",
         TAG: "${{ github.ref_name }}",
         VERSION: "${{ steps.release-contract.outputs.version }}",
-        NOTES_PATH: "${{ runner.temp }}/myshottr-release-notes.md",
+        NOTES_PATH: "${{ runner.temp }}/inkbeam-release-notes.md",
       },
       run: RELEASE_PUBLISH_RUN,
     },
@@ -398,7 +398,7 @@ function replaceOnce(source, before, after, mutation) {
 }
 
 function swapBlocks(source, first, second) {
-  const sentinel = "__MYSHOTTR_WORKFLOW_STEP_SWAP__";
+  const sentinel = "__INKBEAM_WORKFLOW_STEP_SWAP__";
   assert.ok(!source.includes(sentinel));
   return replaceOnce(
     replaceOnce(
@@ -456,7 +456,7 @@ expectRejected("extra release uploads must be rejected", ciSource, extraReleaseU
 
 const verifySourceBlock = `      - name: Verify exact source
         shell: ${ZSH_SHELL}
-        run: Scripts/verify-v1.sh`;
+        run: Scripts/verify-inkbeam.sh`;
 const packageBlock = `      - name: Package release
         shell: ${ZSH_SHELL}
         env:
@@ -493,7 +493,7 @@ expectRejected(
   swapBlocks(releaseSource, releaseNotesBlock, publishBlock),
 );
 
-const acceptanceValidatorInvocation = `          git notes --ref=myshottr-acceptance show "\${EXPECTED_SHA}" |
+const acceptanceValidatorInvocation = `          git notes --ref=inkbeam-acceptance show "\${EXPECTED_SHA}" |
             node Scripts/validate-release-evidence.mjs \\
               acceptance \\
               - \\
@@ -504,7 +504,7 @@ expectRejected(
   replaceOnce(
     releaseSource,
     acceptanceValidatorInvocation,
-    `          git notes --ref=myshottr-acceptance show "\${EXPECTED_SHA}" >/dev/null`,
+    `          git notes --ref=inkbeam-acceptance show "\${EXPECTED_SHA}" >/dev/null`,
     "removed acceptance validator",
   ),
 );

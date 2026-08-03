@@ -11,16 +11,16 @@ const COMMIT_SHA = "1234567890abcdef1234567890abcdef12345678";
 const APP_HASH = "a".repeat(64);
 const EXTENSION_HASH = "b".repeat(64);
 const CHECKSUMS = [
-  `${APP_HASH}  MyShottr-${VERSION}-macos.zip`,
-  `${EXTENSION_HASH}  MyShottr-Chrome-${VERSION}.zip`,
+  `${APP_HASH}  Inkbeam-${VERSION}-macos.zip`,
+  `${EXTENSION_HASH}  Inkbeam-Chrome-${VERSION}.zip`,
   "",
 ].join("\n");
-const TEMPLATE = `# MyShottr v${VERSION}
+const TEMPLATE = `# Inkbeam v${VERSION}
 
 ## Downloads
 
-- \`MyShottr-${VERSION}-macos.zip\`
-- \`MyShottr-Chrome-${VERSION}.zip\`
+- \`Inkbeam-${VERSION}-macos.zip\`
+- \`Inkbeam-Chrome-${VERSION}.zip\`
 - \`SHA256SUMS.txt\`
 
 ## SHA-256 checksums
