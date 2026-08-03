@@ -20,7 +20,7 @@ async function loadServiceWorker() {
   return import("../src/service-worker");
 }
 
-describe("runCaptureAction", () => {
+describe("capture request boundary", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.useFakeTimers();
@@ -54,21 +54,49 @@ describe("runCaptureAction", () => {
   });
 
   it("rejects full-page mode before taking a viewport capture", async () => {
-    const { runCaptureAction } = await loadServiceWorker();
+    captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
+    sendNativeMessage.mockResolvedValue({ ok: true, captureId });
+    const { handleCaptureRequest } = await loadServiceWorker();
 
-    await expect(runCaptureAction("fullPage")).rejects.toMatchObject({
-      code: "UNSUPPORTED_CAPTURE_MODE",
-    });
-    expect(captureVisibleTab).not.toHaveBeenCalled();
-    expect(sendNativeMessage).not.toHaveBeenCalled();
+    const error = await handleCaptureRequest({ mode: "fullPage" }).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect([
+      captureVisibleTab.mock.calls.length,
+      sendNativeMessage.mock.calls.length,
+    ]).toEqual([0, 0]);
+    expect(error).toMatchObject({ code: "UNSUPPORTED_CAPTURE_MODE" });
+  });
+
+  it.each([
+    ["null", null],
+    ["a scalar mode", "visibleViewport"],
+    ["a missing mode", {}],
+    ["an unknown mode", { mode: "futureMode" }],
+    ["an extra field", { mode: "visibleViewport", extra: true }],
+  ])("rejects %s before capture or native messaging", async (_name, request) => {
+    captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
+    sendNativeMessage.mockResolvedValue({ ok: true, captureId });
+    const { handleCaptureRequest } = await loadServiceWorker();
+
+    const error = await handleCaptureRequest(request).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect([
+      captureVisibleTab.mock.calls.length,
+      sendNativeMessage.mock.calls.length,
+    ]).toEqual([0, 0]);
+    expect(error).toMatchObject({ code: "UNSUPPORTED_CAPTURE_MODE" });
   });
 
   it("captures once and sends one native message", async () => {
     captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
     sendNativeMessage.mockResolvedValue({ ok: true, captureId });
-    const { runCaptureAction } = await loadServiceWorker();
+    const { handleCaptureRequest } = await loadServiceWorker();
 
-    await runCaptureAction();
+    await handleCaptureRequest({ mode: "visibleViewport" });
 
     expect(captureVisibleTab).toHaveBeenCalledTimes(1);
     expect(sendNativeMessage).toHaveBeenCalledTimes(1);
@@ -112,9 +140,11 @@ describe("runCaptureAction", () => {
         ok: false,
         code,
       });
-      const { runCaptureAction } = await loadServiceWorker();
+      const { handleCaptureRequest } = await loadServiceWorker();
 
-      await expect(runCaptureAction()).rejects.toMatchObject({ code });
+      await expect(
+        handleCaptureRequest({ mode: "visibleViewport" }),
+      ).rejects.toMatchObject({ code });
       expect(captureVisibleTab).toHaveBeenCalledTimes(1);
       expect(sendNativeMessage).toHaveBeenCalledTimes(1);
       expect(setBadgeText).toHaveBeenCalledWith({ text: "ERR" });
@@ -130,9 +160,11 @@ describe("runCaptureAction", () => {
       code: "UNKNOWN",
       detail: "sensitive raw host detail",
     });
-    const { runCaptureAction } = await loadServiceWorker();
+    const { handleCaptureRequest } = await loadServiceWorker();
 
-    await expect(runCaptureAction()).rejects.toMatchObject({
+    await expect(
+      handleCaptureRequest({ mode: "visibleViewport" }),
+    ).rejects.toMatchObject({
       code: "INVALID_HOST_RESPONSE",
     });
     expect(captureVisibleTab).toHaveBeenCalledTimes(1);
@@ -146,9 +178,11 @@ describe("runCaptureAction", () => {
   it("does not send a fallback capture when native messaging fails", async () => {
     captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
     sendNativeMessage.mockRejectedValue(new Error("host not found"));
-    const { runCaptureAction } = await loadServiceWorker();
+    const { handleCaptureRequest } = await loadServiceWorker();
 
-    await expect(runCaptureAction()).rejects.toMatchObject({
+    await expect(
+      handleCaptureRequest({ mode: "visibleViewport" }),
+    ).rejects.toMatchObject({
       code: "HOST_UNAVAILABLE",
     });
     expect(captureVisibleTab).toHaveBeenCalledTimes(1);

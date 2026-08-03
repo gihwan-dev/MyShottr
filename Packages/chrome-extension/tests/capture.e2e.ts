@@ -10,9 +10,7 @@ type TestSeamSnapshot = {
 };
 
 type TestSeam = {
-  runCaptureAction(
-    mode?: "visibleViewport" | "fullPage",
-  ): Promise<TestSeamSnapshot>;
+  handleCaptureRequest(request: unknown): Promise<TestSeamSnapshot>;
   setNextNativeReply(reply: unknown): void;
   snapshot(): TestSeamSnapshot;
 };
@@ -78,7 +76,7 @@ test("invokes the captureVisibleTab seam exactly once for each action", async ({
     const seam = (
       globalThis as typeof globalThis & { __inkbeamE2E: TestSeam }
     ).__inkbeamE2E;
-    return seam.runCaptureAction();
+    return seam.handleCaptureRequest({ mode: "visibleViewport" });
   });
   expect(first).toEqual({
     captureVisibleTabInvocationCount: 1,
@@ -89,7 +87,7 @@ test("invokes the captureVisibleTab seam exactly once for each action", async ({
     const seam = (
       globalThis as typeof globalThis & { __inkbeamE2E: TestSeam }
     ).__inkbeamE2E;
-    return seam.runCaptureAction();
+    return seam.handleCaptureRequest({ mode: "visibleViewport" });
   });
   expect(second).toEqual({
     captureVisibleTabInvocationCount: 2,
@@ -110,7 +108,7 @@ test("rejects full-page mode before capture or native messaging", async ({
     ).__inkbeamE2E;
     let code: string | undefined;
     try {
-      await seam.runCaptureAction("fullPage");
+      await seam.handleCaptureRequest({ mode: "fullPage" });
     } catch (error) {
       if (
         typeof error === "object"
@@ -155,7 +153,7 @@ test("shows the actionable durable-capture activation failure", async ({
 
     let code: string | undefined;
     try {
-      await seam.runCaptureAction();
+      await seam.handleCaptureRequest({ mode: "visibleViewport" });
     } catch (error) {
       if (
         typeof error === "object"

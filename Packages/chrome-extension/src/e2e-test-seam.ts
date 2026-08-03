@@ -3,7 +3,6 @@ import {
   type CaptureMessage,
 } from "./captureVisibleViewport";
 import { setSendNativeMessageForTesting } from "./nativeMessaging";
-import type { BrowserCaptureMode } from "./service-worker";
 
 const TEST_PNG_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -17,9 +16,11 @@ type TestSeamSnapshot = {
   nativeMessageInvocationCount: number;
 };
 
-type RunCaptureAction = (mode?: BrowserCaptureMode) => Promise<void>;
+type HandleCaptureRequest = (request: unknown) => Promise<void>;
 
-export function installE2ETestSeam(runCaptureAction: RunCaptureAction): void {
+export function installE2ETestSeam(
+  handleCaptureRequest: HandleCaptureRequest,
+): void {
   let captureVisibleTabInvocationCount = 0;
   let nativeMessageInvocationCount = 0;
   let nextNativeReply: unknown = DEFAULT_NATIVE_CAPTURE_REPLY;
@@ -49,10 +50,8 @@ export function installE2ETestSeam(runCaptureAction: RunCaptureAction): void {
     enumerable: false,
     writable: false,
     value: {
-      async runCaptureAction(
-        mode?: BrowserCaptureMode,
-      ): Promise<TestSeamSnapshot> {
-        await runCaptureAction(mode);
+      async handleCaptureRequest(request: unknown): Promise<TestSeamSnapshot> {
+        await handleCaptureRequest(request);
         return snapshot();
       },
       setNextNativeReply(reply: unknown): void {
