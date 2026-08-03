@@ -1,6 +1,6 @@
 import AppKit
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 final class PNGClipboardWriterTests: XCTestCase {
     func testClipboardContainsPNG() throws {

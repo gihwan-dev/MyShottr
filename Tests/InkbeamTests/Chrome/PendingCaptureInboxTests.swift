@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
     func testCreatesInboxRootWithOwnerOnlyPermissions() throws {

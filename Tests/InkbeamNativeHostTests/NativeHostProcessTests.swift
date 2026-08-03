@@ -260,7 +260,7 @@ final class NativeHostProcessTests: XCTestCase {
         let process = Process()
         process.executableURL = Bundle(for: Self.self).bundleURL
             .deletingLastPathComponent()
-            .appendingPathComponent("MyShottrNativeHost")
+            .appendingPathComponent("InkbeamNativeHost")
 
         let input = Pipe()
         let output = Pipe()

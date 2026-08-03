@@ -1,6 +1,6 @@
 import Compression
 import Foundation
-@testable import MyShottr
+@testable import Inkbeam
 
 enum ChromeFixtures {
     static let extensionPublicKeyBase64 =

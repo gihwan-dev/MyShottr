@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 @MainActor
 final class DocumentCommandDefinitionTests: XCTestCase {

@@ -243,12 +243,12 @@ GIT_ROOT="$(
   git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null
 )" || fail "release packaging requires a Git worktree"
 [[ "${GIT_ROOT:A}" == "${REPO_ROOT:A}" ]] \
-  || fail "release packaging must run from the MyShottr Git root"
+  || fail "release packaging must run from the Inkbeam Git root"
 
 for generated_path in \
   "${REPO_ROOT}/Packages/editor/dist" \
   "${REPO_ROOT}/Packages/chrome-extension/dist" \
-  "${REPO_ROOT}/MyShottr.xcodeproj" \
+  "${REPO_ROOT}/Inkbeam.xcodeproj" \
   "${REPO_ROOT}/dist" \
   "${OUTPUT_PARENT}" \
   "${EXPECTED_OUTPUT_ROOT}"; do
@@ -263,7 +263,7 @@ DIRTY_SOURCE="$(
 
 node --input-type=module - \
   "${REPO_ROOT}/project.yml" \
-  "${REPO_ROOT}/Config/MyShottr-Info.plist" \
+  "${REPO_ROOT}/Config/Inkbeam-Info.plist" \
   "${REPO_ROOT}/Packages/chrome-extension/public/manifest.json" \
   "${VERSION}" <<'NODE'
 import { readFileSync } from "node:fs";
@@ -289,7 +289,7 @@ const plistMatch = plist.match(
   /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/,
 );
 if (plistMatch?.[1] !== version) {
-  fail(`Config/MyShottr-Info.plist version does not equal ${version}`);
+  fail(`Config/Inkbeam-Info.plist version does not equal ${version}`);
 }
 if (manifest.version !== version) {
   fail(`Chrome manifest version does not equal ${version}`);
@@ -331,8 +331,8 @@ xcodegen generate
 
 echo "==> Build unsigned Release app"
 xcodebuild build \
-  -project "${REPO_ROOT}/MyShottr.xcodeproj" \
-  -scheme MyShottr \
+  -project "${REPO_ROOT}/Inkbeam.xcodeproj" \
+  -scheme Inkbeam \
   -configuration Release \
   -derivedDataPath "${BUILD_ROOT}/DerivedData" \
   -destination "platform=macOS" \
@@ -341,13 +341,13 @@ xcodebuild build \
   GCC_GENERATE_DEBUGGING_SYMBOLS=NO \
   DEBUG_INFORMATION_FORMAT=
 
-BUILT_APP="${BUILD_ROOT}/DerivedData/Build/Products/Release/MyShottr.app"
+BUILT_APP="${BUILD_ROOT}/DerivedData/Build/Products/Release/Inkbeam.app"
 BUILT_EXTENSION="${REPO_ROOT}/Packages/chrome-extension/dist"
 [[ -d "${BUILT_APP}" ]] || fail "Release app was not produced"
 [[ -d "${BUILT_EXTENSION}" ]] || fail "Chrome extension was not produced"
-[[ -x "${BUILT_APP}/Contents/MacOS/MyShottr" ]] \
+[[ -x "${BUILT_APP}/Contents/MacOS/Inkbeam" ]] \
   || fail "Release app main executable is missing"
-[[ -x "${BUILT_APP}/Contents/Helpers/MyShottrNativeHost" ]] \
+[[ -x "${BUILT_APP}/Contents/Helpers/InkbeamNativeHost" ]] \
   || fail "Release app Native Messaging helper is missing"
 [[ -f "${BUILT_EXTENSION}/manifest.json" ]] \
   || fail "built Chrome manifest is missing"
@@ -355,17 +355,17 @@ BUILT_EXTENSION="${REPO_ROOT}/Packages/chrome-extension/dist"
   || fail "built Chrome service worker is missing"
 
 verify_no_distribution_signature \
-  "${BUILT_APP}/Contents/MacOS/MyShottr" \
+  "${BUILT_APP}/Contents/MacOS/Inkbeam" \
   "Release app executable"
 verify_no_distribution_signature \
-  "${BUILT_APP}/Contents/Helpers/MyShottrNativeHost" \
+  "${BUILT_APP}/Contents/Helpers/InkbeamNativeHost" \
   "embedded Native Messaging helper"
 if spctl --assess --type execute "${BUILT_APP}" >/dev/null 2>&1; then
   fail "unsigned and unnotarized Release app was unexpectedly accepted by Gatekeeper"
 fi
 
-STAGED_APP="${STAGING_ROOT}/MyShottr.app"
-STAGED_EXTENSION="${STAGING_ROOT}/MyShottr-Chrome-${VERSION}"
+STAGED_APP="${STAGING_ROOT}/Inkbeam.app"
+STAGED_EXTENSION="${STAGING_ROOT}/Inkbeam-Chrome-${VERSION}"
 ditto --norsrc --noextattr --noqtn --noacl \
   "${BUILT_APP}" "${STAGED_APP}"
 ditto --norsrc --noextattr --noqtn --noacl \
@@ -374,18 +374,18 @@ ditto --norsrc --noextattr --noqtn --noacl \
 find "${STAGED_APP}" "${STAGED_EXTENSION}" \
   -exec touch -h -t 200001010000 {} +
 
-APP_ARCHIVE="${PACKAGE_ROOT}/MyShottr-${VERSION}-macos.zip"
-EXTENSION_ARCHIVE="${PACKAGE_ROOT}/MyShottr-Chrome-${VERSION}.zip"
+APP_ARCHIVE="${PACKAGE_ROOT}/Inkbeam-${VERSION}-macos.zip"
+EXTENSION_ARCHIVE="${PACKAGE_ROOT}/Inkbeam-Chrome-${VERSION}.zip"
 CHECKSUMS="${PACKAGE_ROOT}/SHA256SUMS.txt"
 
 (
   cd "${STAGING_ROOT}"
   ditto -c -k \
     --norsrc --noextattr --noqtn --noacl --keepParent \
-    "MyShottr.app" "${APP_ARCHIVE}"
+    "Inkbeam.app" "${APP_ARCHIVE}"
   ditto -c -k \
     --norsrc --noextattr --noqtn --noacl --keepParent \
-    "MyShottr-Chrome-${VERSION}" "${EXTENSION_ARCHIVE}"
+    "Inkbeam-Chrome-${VERSION}" "${EXTENSION_ARCHIVE}"
 )
 
 normalize_zip_timestamps "${APP_ARCHIVE}"
@@ -394,8 +394,8 @@ normalize_zip_timestamps "${EXTENSION_ARCHIVE}"
 (
   cd "${PACKAGE_ROOT}"
   shasum -a 256 \
-    "MyShottr-${VERSION}-macos.zip" \
-    "MyShottr-Chrome-${VERSION}.zip" \
+    "Inkbeam-${VERSION}-macos.zip" \
+    "Inkbeam-Chrome-${VERSION}.zip" \
     >"${CHECKSUMS}"
 )
 
@@ -411,10 +411,10 @@ mv "${PACKAGE_ROOT}" "${EXPECTED_OUTPUT_ROOT}"
 
 echo
 echo "Release artifacts: ${EXPECTED_OUTPUT_ROOT}"
-echo "WARNING: MyShottr ${VERSION} has no Developer ID identity and is not notarized."
+echo "WARNING: Inkbeam ${VERSION} has no Developer ID identity and is not notarized."
 echo "Verified link-time ad-hoc executable signatures are present."
 echo "Artifact SHA-256:"
 shasum -a 256 \
-  "${EXPECTED_OUTPUT_ROOT}/MyShottr-${VERSION}-macos.zip" \
-  "${EXPECTED_OUTPUT_ROOT}/MyShottr-Chrome-${VERSION}.zip" \
+  "${EXPECTED_OUTPUT_ROOT}/Inkbeam-${VERSION}-macos.zip" \
+  "${EXPECTED_OUTPUT_ROOT}/Inkbeam-Chrome-${VERSION}.zip" \
   "${EXPECTED_OUTPUT_ROOT}/SHA256SUMS.txt"

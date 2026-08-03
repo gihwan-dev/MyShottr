@@ -1,5 +1,5 @@
 import Foundation
-@testable import MyShottr
+@testable import Inkbeam
 
 enum CaptureFixtures {
     static let retinaDisplay = DisplayDescriptor(

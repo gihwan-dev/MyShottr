@@ -1,5 +1,5 @@
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 final class AppConfigurationTests: XCTestCase {
     func testBundleDeclaresScreenCaptureReasonAndProjectType() throws {
@@ -10,6 +10,6 @@ final class AppConfigurationTests: XCTestCase {
         let extensions = documentTypes
             .compactMap { $0["CFBundleTypeExtensions"] as? [String] }
             .flatMap { $0 }
-        XCTAssertTrue(extensions.contains("myshottr"))
+        XCTAssertTrue(extensions.contains("inkbeam"))
     }
 }

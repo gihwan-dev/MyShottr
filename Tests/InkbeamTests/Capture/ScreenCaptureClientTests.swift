@@ -1,6 +1,6 @@
 import ScreenCaptureKit
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 final class ScreenCaptureClientTests: XCTestCase {
     func testConfigurationUsesExactPixelDimensions() throws {

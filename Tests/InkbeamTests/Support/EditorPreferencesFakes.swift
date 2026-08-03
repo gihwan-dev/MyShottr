@@ -1,4 +1,4 @@
-@testable import MyShottr
+@testable import Inkbeam
 
 struct StubPreferences: EditorPreferencesStoring {
     let value: EditorPreferences

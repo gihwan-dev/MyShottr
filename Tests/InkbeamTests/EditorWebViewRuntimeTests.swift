@@ -4,7 +4,7 @@ import Carbon
 import ImageIO
 import WebKit
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 @MainActor
 final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {

@@ -1,5 +1,5 @@
 import Foundation
-@testable import MyShottr
+@testable import Inkbeam
 
 enum AdditionalProjectFixtures {
     static let secondDocumentID = UUID(

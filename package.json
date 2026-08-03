@@ -6,7 +6,7 @@
     "build": "pnpm -r build",
     "package:release": "Scripts/package-release.sh",
     "test": "pnpm -r test",
-    "test:release": "node --test Tests/Release/identity-contract.test.mjs && node Tests/Release/workflows.test.mjs && node Tests/Release/evidence-validator.test.mjs && node Tests/Release/release-notes.test.mjs && node Tests/Release/documentation.test.mjs && zsh Tests/Release/package-release.test.sh",
+    "test:release": "node --test Tests/Release/identity-contract.test.mjs && node --test Tests/Release/build-consumers.test.mjs && node Tests/Release/workflows.test.mjs && node Tests/Release/evidence-validator.test.mjs && node Tests/Release/release-notes.test.mjs && node Tests/Release/documentation.test.mjs && zsh Tests/Release/package-release.test.sh",
     "typecheck": "pnpm -r typecheck"
   }
 }

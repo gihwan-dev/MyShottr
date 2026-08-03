@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 final class EditorPreferencesStoreTests: XCTestCase {
     private let suiteName = "EditorPreferencesStoreTests"

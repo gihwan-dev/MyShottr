@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 enum ProjectFixtures {
     static let documentID = UUID(uuidString: "B0B7A25D-D451-43C6-8D6C-2E27D47C89CB")!

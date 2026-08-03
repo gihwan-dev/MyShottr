@@ -93,9 +93,9 @@ require_minimum_major "pnpm" "${PNPM_VERSION}" 10
 require_minimum_major "Xcode" "${XCODE_VERSION}" 26
 require_minimum_major "macOS" "${MACOS_VERSION}" 15
 
-if RUNNING_MYSHOTTR_PIDS="$(pgrep -x MyShottr)"; then
+if RUNNING_MYSHOTTR_PIDS="$(pgrep -x Inkbeam)"; then
   RUNNING_MYSHOTTR_PIDS="${RUNNING_MYSHOTTR_PIDS//$'\n'/, }"
-  fail "quit every running MyShottr app before verification (PIDs: ${RUNNING_MYSHOTTR_PIDS})."
+  fail "quit every running Inkbeam app before verification (PIDs: ${RUNNING_MYSHOTTR_PIDS})."
 fi
 
 TEMP_PARENT="${TMPDIR:-/tmp}"
@@ -105,7 +105,7 @@ TEST_BUILD_ROOT="$(
 HOST_TEST_DERIVED_DATA="${TEST_BUILD_ROOT}/HostTests"
 trap cleanup_test_build_root EXIT
 
-echo "MyShottr v1 verification"
+echo "Inkbeam v1 verification"
 echo "Repository: ${REPO_ROOT}"
 echo "Node.js: ${NODE_VERSION}"
 echo "pnpm: ${PNPM_VERSION}"
@@ -135,18 +135,18 @@ run_step "Generate the Xcode project" xcodegen generate
 clean_derived_data "${SIGNED_DERIVED_DATA}"
 clean_derived_data "${APP_TEST_DERIVED_DATA}"
 
-run_step "Run MyShottr app tests" \
+run_step "Run Inkbeam app tests" \
   xcodebuild test \
-    -project "${REPO_ROOT}/MyShottr.xcodeproj" \
-    -scheme MyShottr \
+    -project "${REPO_ROOT}/Inkbeam.xcodeproj" \
+    -scheme Inkbeam \
     -destination "platform=macOS" \
     -derivedDataPath "${APP_TEST_DERIVED_DATA}" \
     CODE_SIGNING_ALLOWED=NO
 
 run_step "Run Native Messaging host tests" \
   xcodebuild test \
-    -project "${REPO_ROOT}/MyShottr.xcodeproj" \
-    -scheme MyShottrNativeHost \
+    -project "${REPO_ROOT}/Inkbeam.xcodeproj" \
+    -scheme InkbeamNativeHost \
     -destination "platform=macOS" \
     -derivedDataPath "${HOST_TEST_DERIVED_DATA}" \
     CODE_SIGNING_ALLOWED=NO \
@@ -154,15 +154,15 @@ run_step "Run Native Messaging host tests" \
 
 run_step "Build a clean signed Debug app" \
   xcodebuild build \
-    -project "${REPO_ROOT}/MyShottr.xcodeproj" \
-    -scheme MyShottr \
+    -project "${REPO_ROOT}/Inkbeam.xcodeproj" \
+    -scheme Inkbeam \
     -configuration Debug \
     -destination "platform=macOS" \
     -derivedDataPath "${SIGNED_DERIVED_DATA}"
 
-APP="${SIGNED_DERIVED_DATA}/Build/Products/Debug/MyShottr.app"
-APP_EXECUTABLE="${APP}/Contents/MacOS/MyShottr"
-HELPER="${APP}/Contents/Helpers/MyShottrNativeHost"
+APP="${SIGNED_DERIVED_DATA}/Build/Products/Debug/Inkbeam.app"
+APP_EXECUTABLE="${APP}/Contents/MacOS/Inkbeam"
+HELPER="${APP}/Contents/Helpers/InkbeamNativeHost"
 EDITOR_ENTRYPOINT="${APP}/Contents/Resources/Editor/index.html"
 APP_EXTENSION_KEY="${APP}/Contents/Resources/chrome-extension-key.b64"
 SOURCE_EXTENSION_KEY="${REPO_ROOT}/Config/chrome-extension-key.b64"
@@ -192,7 +192,7 @@ cmp -s "${SOURCE_EXTENSION_KEY}" "${APP_EXTENSION_KEY}" \
 
 [[ "$(
   plutil -extract CFBundleIdentifier raw "${APP}/Contents/Info.plist"
-)" == "com.myshottr.app" ]] || fail "unexpected app bundle identifier."
+)" == "dev.gihwan.inkbeam" ]] || fail "unexpected app bundle identifier."
 [[ "$(
   plutil -extract CFBundleShortVersionString raw "${APP}/Contents/Info.plist"
 )" == "0.1.0" ]] || fail "unexpected app version."
@@ -242,5 +242,5 @@ codesign --display --verbose=2 "${APP}" >/dev/null
 codesign --display --verbose=2 "${HELPER}" >/dev/null
 
 echo
-echo "MyShottr v1 automated verification passed."
+echo "Inkbeam v1 automated verification passed."
 echo "Signed Debug app: ${APP}"

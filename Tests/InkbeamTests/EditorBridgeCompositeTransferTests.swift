@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 @MainActor
 final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {

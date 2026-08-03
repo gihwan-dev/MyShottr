@@ -1,5 +1,5 @@
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 final class CaptureArtifactTests: XCTestCase {
     func testArtifactDerivesPixelDimensionsWithoutSourceSpecificLogic() throws {

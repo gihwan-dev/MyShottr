@@ -1,7 +1,7 @@
 import AppKit
 import CoreGraphics
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 @MainActor
 final class UserFacingErrorPresenterTests: XCTestCase {

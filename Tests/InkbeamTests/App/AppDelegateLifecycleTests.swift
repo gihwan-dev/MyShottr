@@ -1,7 +1,7 @@
 import AppKit
 import Carbon
 import XCTest
-@testable import MyShottr
+@testable import Inkbeam
 
 @MainActor
 final class AppDelegateLifecycleTests: XCTestCase {
