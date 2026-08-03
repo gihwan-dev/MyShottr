@@ -99,7 +99,7 @@ final class DocumentWindowController:
     var onClose: (() -> Void)?
 
     init(
-        project: MyShottrProject,
+        project: InkbeamProject,
         projectURL: URL?,
         projectStore: any ProjectPackageStoring = ProjectPackageStore(),
         preferences: any EditorPreferencesStoring =
@@ -237,7 +237,7 @@ final class DocumentWindowController:
         window.title = projectURL?
             .deletingPathExtension()
             .lastPathComponent
-            ?? "Untitled MyShottr Project"
+            ?? "Untitled Inkbeam Project"
         window.contentView = editorWebView.webView
         window.delegate = self
         window.toolbar = makeToolbar()
@@ -426,7 +426,7 @@ final class DocumentWindowController:
             item.action = #selector(redoEditor(_:))
         case .saveProject:
             item.label = "Save Project"
-            item.toolTip = "Save an editable MyShottr project (Command-S)"
+            item.toolTip = "Save an editable Inkbeam project (Command-S)"
             item.image = NSImage(
                 systemSymbolName: "square.and.arrow.down",
                 accessibilityDescription: item.label
@@ -748,9 +748,9 @@ final class DocumentWindowController:
 
     private static func chooseProjectSaveURL() -> URL? {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "myshottr")!]
+        panel.allowedContentTypes = [UTType(filenameExtension: "inkbeam")!]
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = "Untitled.myshottr"
+        panel.nameFieldStringValue = "Untitled.inkbeam"
         return panel.runModal() == .OK ? panel.url : nil
     }
 
@@ -775,14 +775,14 @@ final class DocumentWindowController:
     }
 
     private func makeToolbar() -> NSToolbar {
-        let toolbar = NSToolbar(identifier: "MyShottrDocumentToolbar")
+        let toolbar = NSToolbar(identifier: "InkbeamDocumentToolbar")
         toolbar.delegate = self
         toolbar.displayMode = .iconAndLabel
         return toolbar
     }
 
     @discardableResult
-    func present(_ error: MyShottrUserFacingError) -> Bool {
+    func present(_ error: InkbeamUserFacingError) -> Bool {
         errorPresenter.present(
             error,
             from: window
@@ -792,11 +792,11 @@ final class DocumentWindowController:
 }
 
 extension NSToolbarItem.Identifier {
-    static let copyComposite = NSToolbarItem.Identifier("com.myshottr.copyComposite")
-    static let undoEditor = NSToolbarItem.Identifier("com.myshottr.undoEditor")
-    static let redoEditor = NSToolbarItem.Identifier("com.myshottr.redoEditor")
-    static let saveProject = NSToolbarItem.Identifier("com.myshottr.saveProject")
-    static let exportComposite = NSToolbarItem.Identifier("com.myshottr.exportComposite")
+    static let copyComposite = NSToolbarItem.Identifier("dev.gihwan.inkbeam.copyComposite")
+    static let undoEditor = NSToolbarItem.Identifier("dev.gihwan.inkbeam.undoEditor")
+    static let redoEditor = NSToolbarItem.Identifier("dev.gihwan.inkbeam.redoEditor")
+    static let saveProject = NSToolbarItem.Identifier("dev.gihwan.inkbeam.saveProject")
+    static let exportComposite = NSToolbarItem.Identifier("dev.gihwan.inkbeam.exportComposite")
 }
 
 @MainActor

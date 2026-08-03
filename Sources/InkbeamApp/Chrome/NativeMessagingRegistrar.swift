@@ -28,7 +28,7 @@ enum NativeMessagingRegistrarError: Error {
 }
 
 struct NativeMessagingRegistrar {
-    static let hostName = "com.myshottr.capture"
+    static let hostName = "dev.gihwan.inkbeam.capture"
 
     private let publicKeyBase64: String
     private let helperURL: URL
@@ -64,7 +64,7 @@ struct NativeMessagingRegistrar {
         helperURL = bundle.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("Helpers", isDirectory: true)
-            .appendingPathComponent("MyShottrNativeHost")
+            .appendingPathComponent("InkbeamNativeHost")
         self.manifestURL = manifestURL.standardizedFileURL
     }
 
@@ -82,7 +82,7 @@ struct NativeMessagingRegistrar {
         )
         return NativeMessagingHostManifest(
             name: Self.hostName,
-            description: "Open Chrome viewport captures in MyShottr",
+            description: "Open Chrome viewport captures in Inkbeam",
             path: helperURL.standardizedFileURL.path,
             type: "stdio",
             allowedOrigins: [

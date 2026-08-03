@@ -178,7 +178,7 @@ struct HostInboxStore: HostCaptureStaging {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Application Support", isDirectory: true)
-            .appendingPathComponent("MyShottr", isDirectory: true)
+            .appendingPathComponent("Inkbeam", isDirectory: true)
             .appendingPathComponent("Inbox", isDirectory: true)
     }
 

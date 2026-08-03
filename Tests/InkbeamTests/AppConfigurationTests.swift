@@ -2,6 +2,19 @@ import XCTest
 @testable import Inkbeam
 
 final class AppConfigurationTests: XCTestCase {
+    func testInkbeamProjectPreservesOriginalPixels() {
+        let project = InkbeamProject.fixture()
+        XCTAssertEqual(project.originalPNG, PNGFixture.source2x)
+    }
+
+    func testProductErrorNamesInkbeam() {
+        let error = InkbeamUserFacingError.wrapping(
+            CaptureError.cancelled,
+            context: .capture
+        )
+        XCTAssertFalse(error.title.contains("MyShottr"))
+    }
+
     func testBundleDeclaresScreenCaptureReasonAndProjectType() throws {
         let info = try XCTUnwrap(Bundle.main.infoDictionary)
         XCTAssertFalse(try XCTUnwrap(info["NSScreenCaptureUsageDescription"] as? String).isEmpty)

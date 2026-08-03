@@ -8,7 +8,7 @@ class TemporaryDirectoryTestCase: XCTestCase {
         try super.setUpWithError()
 
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MyShottrNativeHostTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("InkbeamNativeHostTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
             at: directory,
             withIntermediateDirectories: false

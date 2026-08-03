@@ -13,8 +13,8 @@ enum DocumentSaveCompletion {
 
 @MainActor
 final class DocumentSession {
-    private(set) var project: MyShottrProject?
-    private var stagedProject: MyShottrProject?
+    private(set) var project: InkbeamProject?
+    private var stagedProject: InkbeamProject?
     private(set) var modificationRevision: UInt64 = 0
     private(set) var isModified = false {
         didSet { onModifiedStateChange?(isModified) }
@@ -23,7 +23,7 @@ final class DocumentSession {
 
     var isOpen: Bool { project != nil }
 
-    func open(project: MyShottrProject) throws {
+    func open(project: InkbeamProject) throws {
         try validate(annotationJSON: project.annotationJSON, for: project.manifest)
         self.project = project
         stagedProject = nil
@@ -32,14 +32,14 @@ final class DocumentSession {
     }
 
     func openUnsaved(
-        project: MyShottrProject
+        project: InkbeamProject
     ) throws {
         try open(project: project)
         modificationRevision = 1
         isModified = true
     }
 
-    func stage(project: MyShottrProject) throws {
+    func stage(project: InkbeamProject) throws {
         guard project.manifest.formatVersion == ProjectManifest.currentFormatVersion else {
             throw DocumentSessionError.invalidDocument
         }
@@ -101,7 +101,7 @@ final class DocumentSession {
 
     func projectForSave(
         annotationJSON: Data? = nil
-    ) throws -> MyShottrProject {
+    ) throws -> InkbeamProject {
         guard var project else { throw DocumentSessionError.noOpenDocument }
         if let annotationJSON {
             try validate(
@@ -116,7 +116,7 @@ final class DocumentSession {
 
     @discardableResult
     func completeSave(
-        _ savedProject: MyShottrProject,
+        _ savedProject: InkbeamProject,
         expectedModificationRevision: UInt64? = nil
     ) throws -> DocumentSaveCompletion {
         try validate(annotationJSON: savedProject.annotationJSON, for: savedProject.manifest)

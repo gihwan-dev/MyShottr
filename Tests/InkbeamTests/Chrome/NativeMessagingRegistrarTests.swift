@@ -33,7 +33,7 @@ final class NativeMessagingRegistrarTests: TemporaryDirectoryTestCase {
             Bundle.main.bundleURL.standardizedFileURL
                 .appendingPathComponent("Contents", isDirectory: true)
                 .appendingPathComponent("Helpers", isDirectory: true)
-                .appendingPathComponent("MyShottrNativeHost")
+                .appendingPathComponent("InkbeamNativeHost")
                 .path
         )
         XCTAssertEqual(
@@ -52,10 +52,10 @@ final class NativeMessagingRegistrarTests: TemporaryDirectoryTestCase {
 
         let manifest = try registrar.makeManifest()
 
-        XCTAssertEqual(manifest.name, "com.myshottr.capture")
+        XCTAssertEqual(manifest.name, "dev.gihwan.inkbeam.capture")
         XCTAssertEqual(
             manifest.description,
-            "Open Chrome viewport captures in MyShottr"
+            "Open Chrome viewport captures in Inkbeam"
         )
         XCTAssertEqual(manifest.path, helperURL.path)
         XCTAssertTrue(manifest.path.hasPrefix("/"))
@@ -94,7 +94,7 @@ final class NativeMessagingRegistrarTests: TemporaryDirectoryTestCase {
     func testInstallRefreshesManifestWithCurrentAbsoluteHelperPath() throws {
         let manifestURL = ChromeFixtures.manifestURL(in: temporaryDirectory)
         let oldHelper = temporaryDirectory
-            .appendingPathComponent("Old.app/Contents/Helpers/MyShottrNativeHost")
+            .appendingPathComponent("Old.app/Contents/Helpers/InkbeamNativeHost")
         try NativeMessagingRegistrar(
             publicKeyBase64: ChromeFixtures.extensionPublicKeyBase64,
             helperURL: oldHelper,

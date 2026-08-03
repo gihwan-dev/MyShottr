@@ -3,7 +3,7 @@ import Foundation
 struct ProjectPackageStore: ProjectPackageStoring {
     private static let memberNames = ["document.json", "manifest.json", "original.png"]
 
-    func load(from url: URL) throws -> MyShottrProject {
+    func load(from url: URL) throws -> InkbeamProject {
         try validatePackageRoot(url)
 
         let members = try FileManager.default.contentsOfDirectory(
@@ -71,14 +71,14 @@ struct ProjectPackageStore: ProjectPackageStoring {
             throw ProjectPackageError.sourceDimensionsMismatch
         }
 
-        return MyShottrProject(
+        return InkbeamProject(
             manifest: manifest,
             originalPNG: try Data(contentsOf: url.appendingPathComponent("original.png")),
             annotationJSON: annotationJSON
         )
     }
 
-    func save(_ project: MyShottrProject, to url: URL) throws {
+    func save(_ project: InkbeamProject, to url: URL) throws {
         try validateAnnotationJSON(project.annotationJSON)
 
         let fileManager = FileManager.default

@@ -109,7 +109,7 @@ final class DocumentWindowControllerCommandTests:
             (
                 .saveProject,
                 "Save Project",
-                "Save an editable MyShottr project (Command-S)",
+                "Save an editable Inkbeam project (Command-S)",
                 "square.and.arrow.down",
                 #selector(DocumentWindowController.saveProjectAction(_:))
             ),
@@ -277,7 +277,7 @@ final class DocumentWindowControllerCommandTests:
         let controller = try DocumentWindowController(
             project: project,
             projectURL: temporaryDirectory.appendingPathComponent(
-                "Output.myshottr",
+                "Output.inkbeam",
                 isDirectory: true
             ),
             testSession: session,
@@ -349,7 +349,7 @@ final class DocumentWindowControllerCommandTests:
         XCTAssertEqual(
             presenter.presentedViewModels,
             [
-                MyShottrUserFacingError.editorBridge(
+                InkbeamUserFacingError.editorBridge(
                     .invalidMessage
                 ).viewModel,
             ]
@@ -369,7 +369,7 @@ final class DocumentWindowControllerCommandTests:
         XCTAssertTrue(controller.present(.pngExport))
         XCTAssertEqual(
             presenter.presentedViewModels,
-            [MyShottrUserFacingError.pngExport.viewModel]
+            [InkbeamUserFacingError.pngExport.viewModel]
         )
         XCTAssertEqual(presenter.windowWasProvided, [false])
     }
@@ -388,7 +388,7 @@ final class DocumentWindowControllerCommandTests:
 
         XCTAssertEqual(
             presenter.presentedViewModels,
-            [MyShottrUserFacingError.projectSave.viewModel]
+            [InkbeamUserFacingError.projectSave.viewModel]
         )
         XCTAssertEqual(presenter.windowWasProvided, [true])
     }
@@ -411,7 +411,7 @@ final class DocumentWindowControllerCommandTests:
             project: initial,
             projectURL: temporaryDirectory
                 .appendingPathComponent(
-                    "Race.myshottr",
+                    "Race.inkbeam",
                     isDirectory: true
                 ),
             projectStore: projectStore,
@@ -517,14 +517,14 @@ private final class CapturingProjectStore:
     ProjectPackageStoring,
     @unchecked Sendable
 {
-    private(set) var savedProjects: [MyShottrProject] = []
+    private(set) var savedProjects: [InkbeamProject] = []
 
-    func load(from url: URL) throws -> MyShottrProject {
+    func load(from url: URL) throws -> InkbeamProject {
         throw CapturingProjectStoreError.unexpectedLoad
     }
 
     func save(
-        _ project: MyShottrProject,
+        _ project: InkbeamProject,
         to url: URL
     ) throws {
         savedProjects.append(project)
@@ -544,7 +544,7 @@ private final class SpyUserFacingErrorPresenter:
     private(set) var windowWasProvided: [Bool] = []
 
     func present(
-        _ error: MyShottrUserFacingError,
+        _ error: InkbeamUserFacingError,
         from window: NSWindow?
     ) {
         presentedViewModels.append(error.viewModel)

@@ -1,8 +1,8 @@
 import Carbon
 import Foundation
 
-private let myShottrHotKeySignature: OSType = 0x4D_53_48_54
-private let myShottrHotKeyID: UInt32 = 1
+private let inkbeamHotKeySignature: OSType = 0x49_4E_4B_42
+private let inkbeamHotKeyID: UInt32 = 1
 
 enum GlobalHotKeyError: Error, Equatable {
     case registrationFailed(OSStatus)
@@ -51,8 +51,8 @@ struct GlobalHotKeyAPI {
                 keyCode,
                 modifiers,
                 EventHotKeyID(
-                    signature: myShottrHotKeySignature,
-                    id: myShottrHotKeyID
+                    signature: inkbeamHotKeySignature,
+                    id: inkbeamHotKeyID
                 ),
                 GetApplicationEventTarget(),
                 options,
@@ -141,8 +141,8 @@ private func globalHotKeyEventHandler(
         &hotKeyID
     )
     guard status == noErr,
-          hotKeyID.signature == myShottrHotKeySignature,
-          hotKeyID.id == myShottrHotKeyID
+          hotKeyID.signature == inkbeamHotKeySignature,
+          hotKeyID.id == inkbeamHotKeyID
     else {
         return OSStatus(eventNotHandledErr)
     }

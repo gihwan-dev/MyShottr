@@ -72,7 +72,7 @@ struct ChromeCaptureImportBatchSummary: Equatable {
 @MainActor
 final class CaptureInboxCoordinator: NSObject {
     static let captureReadyNotification = Notification.Name(
-        "com.myshottr.captureReady"
+        "dev.gihwan.inkbeam.captureReady"
     )
 
     private let inbox: any PendingCaptureStoring
@@ -80,7 +80,7 @@ final class CaptureInboxCoordinator: NSObject {
     private weak var windows: (any DocumentWindowPresenting)?
     private let now: () -> Date
     private let notificationAPI: CaptureReadyNotificationAPI
-    private let reportError: (MyShottrUserFacingError) -> Void
+    private let reportError: (InkbeamUserFacingError) -> Void
     private var presentedStates:
         [UUID: PresentedInMemoryState] = [:]
     private var inFlightOperations:
@@ -94,7 +94,7 @@ final class CaptureInboxCoordinator: NSObject {
         now: @escaping () -> Date = Date.init,
         notificationAPI: CaptureReadyNotificationAPI = .live,
         reportError:
-            @escaping (MyShottrUserFacingError) -> Void = {
+            @escaping (InkbeamUserFacingError) -> Void = {
                 UserFacingErrorPresenter.shared.present(
                     $0,
                     from: nil
@@ -235,7 +235,7 @@ final class CaptureInboxCoordinator: NSObject {
         } catch {
             throw ChromeCaptureImportError.validationFailed
         }
-        let project: MyShottrProject
+        let project: InkbeamProject
         do {
             project = try projectFactory.make(
                 artifact: artifact,

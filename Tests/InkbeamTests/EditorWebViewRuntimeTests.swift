@@ -204,7 +204,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
         editor.webView(
             editor.webView,
             didFailProvisionalNavigation: nil,
-            withError: NSError(domain: "MyShottr.EditorBundle", code: 1)
+            withError: NSError(domain: "Inkbeam.EditorBundle", code: 1)
         )
         await fulfillment(of: [navigationFailed], timeout: 5)
         XCTAssertNotNil(editor.navigationError)
@@ -224,7 +224,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
             for outputShortcut in RuntimeOutputShortcut.allCases {
                 let project = try validProject()
                 let projectURL = temporaryDirectory.appendingPathComponent(
-                    "\(focusOwner.rawValue)-\(outputShortcut.rawValue).myshottr",
+                    "\(focusOwner.rawValue)-\(outputShortcut.rawValue).inkbeam",
                     isDirectory: true
                 )
                 let exportURL = temporaryDirectory.appendingPathComponent(
@@ -513,9 +513,9 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
             _ = try await evaluateString(
                 """
                 (() => {
-                  window.__myshottrRuntimeKeyTrace = null;
+                  window.__inkbeamRuntimeKeyTrace = null;
                   window.addEventListener('keydown', (event) => {
-                    window.__myshottrRuntimeKeyTrace = JSON.stringify({
+                    window.__inkbeamRuntimeKeyTrace = JSON.stringify({
                       code: event.code,
                       isTrusted: event.isTrusted,
                     });
@@ -539,10 +539,10 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
                   '[aria-label="Annotation tools"] button[aria-label="Text, shortcut T"]'
                 )?.getAttribute('aria-pressed') === 'true'
                   && JSON.parse(
-                    window.__myshottrRuntimeKeyTrace ?? '{}'
+                    window.__inkbeamRuntimeKeyTrace ?? '{}'
                   ).code === 'KeyT'
                   && JSON.parse(
-                    window.__myshottrRuntimeKeyTrace ?? '{}'
+                    window.__inkbeamRuntimeKeyTrace ?? '{}'
                   ).isTrusted === true
                 """,
                 in: webView
@@ -560,9 +560,9 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
                   const containerBounds = container.getBoundingClientRect();
                   const origin = source.getAbsolutePosition();
                   const scale = source.getAbsoluteScale();
-                  window.__myshottrRuntimePointerTrace = null;
+                  window.__inkbeamRuntimePointerTrace = null;
                   content.addEventListener('pointerdown', (event) => {
-                    window.__myshottrRuntimePointerTrace = JSON.stringify({
+                    window.__inkbeamRuntimePointerTrace = JSON.stringify({
                       isTrusted: event.isTrusted,
                       pointerType: event.pointerType,
                     });
@@ -600,10 +600,10 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
                   && document.activeElement.getAttribute('aria-label')
                     === 'Edit annotation text'
                   && JSON.parse(
-                    window.__myshottrRuntimePointerTrace ?? '{}'
+                    window.__inkbeamRuntimePointerTrace ?? '{}'
                   ).isTrusted === true
                   && JSON.parse(
-                    window.__myshottrRuntimePointerTrace ?? '{}'
+                    window.__inkbeamRuntimePointerTrace ?? '{}'
                   ).pointerType === 'mouse'
                 """,
                 in: webView
@@ -612,9 +612,9 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
             _ = try await evaluateString(
                 """
                 (() => {
-                  window.__myshottrRuntimeKeyTrace = null;
+                  window.__inkbeamRuntimeKeyTrace = null;
                   window.addEventListener('keydown', (event) => {
-                    window.__myshottrRuntimeKeyTrace = JSON.stringify({
+                    window.__inkbeamRuntimeKeyTrace = JSON.stringify({
                       code: event.code,
                       isTrusted: event.isTrusted,
                     });
@@ -641,10 +641,10 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
                     '[role="dialog"][aria-labelledby="shortcut-help-title"]'
                   ) !== null
                   && JSON.parse(
-                    window.__myshottrRuntimeKeyTrace ?? '{}'
+                    window.__inkbeamRuntimeKeyTrace ?? '{}'
                   ).code === 'Slash'
                   && JSON.parse(
-                    window.__myshottrRuntimeKeyTrace ?? '{}'
+                    window.__inkbeamRuntimeKeyTrace ?? '{}'
                   ).isTrusted === true
                 """,
                 in: webView
@@ -723,7 +723,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
     private func makeOutputCommandMenu(
         target: RuntimeOutputCommandTarget
     ) -> NSMenu {
-        let menu = NSMenu(title: "MyShottr Test Main Menu")
+        let menu = NSMenu(title: "Inkbeam Test Main Menu")
         let documentItem = NSMenuItem(
             title: "Document",
             action: nil,
@@ -895,8 +895,8 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
               )?.content;
               if (!policy) return JSON.stringify({ hasPolicy: false });
               const urls = {
-                remoteFetch: 'https://example.com/myshottr-csp-fetch',
-                localFetch: 'http://localhost:65535/myshottr-csp-fetch',
+                remoteFetch: 'https://example.com/inkbeam-csp-fetch',
+                localFetch: 'http://localhost:65535/inkbeam-csp-fetch',
               };
               const observeFetch = (url) => new Promise((resolve) => {
                 const controller = new AbortController();
@@ -1002,7 +1002,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
                 } else {
                     continuation.resume(
                         throwing: NSError(
-                            domain: "MyShottr.EditorWebViewRuntimeTests",
+                            domain: "Inkbeam.EditorWebViewRuntimeTests",
                             code: 1,
                             userInfo: [NSLocalizedDescriptionKey: "JavaScript did not return a string"]
                         )
@@ -1025,7 +1025,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
                 } else {
                     continuation.resume(
                         throwing: NSError(
-                            domain: "MyShottr.EditorWebViewRuntimeTests",
+                            domain: "Inkbeam.EditorWebViewRuntimeTests",
                             code: 3,
                             userInfo: [
                                 NSLocalizedDescriptionKey:
@@ -1050,7 +1050,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
         )
         guard let result = result as? String else {
             throw NSError(
-                domain: "MyShottr.EditorWebViewRuntimeTests",
+                domain: "Inkbeam.EditorWebViewRuntimeTests",
                 code: 2,
                 userInfo: [
                     NSLocalizedDescriptionKey:
@@ -1061,7 +1061,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
         return result
     }
 
-    private func validProject() throws -> MyShottrProject {
+    private func validProject() throws -> InkbeamProject {
         let annotationJSON = try JSONSerialization.data(withJSONObject: [
             "schemaVersion": 3,
             "sourcePixelWidth": Self.runtimeSourcePixelWidth,
@@ -1078,7 +1078,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
                 "highlighterOpacity": 0.5,
             ],
         ])
-        return MyShottrProject(
+        return InkbeamProject(
             manifest: ProjectManifest(
                 formatVersion: ProjectManifest.currentFormatVersion,
                 documentId: UUID(),
@@ -1141,7 +1141,7 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else {
             throw NSError(
-                domain: "MyShottr.EditorWebViewRuntimeTests",
+                domain: "Inkbeam.EditorWebViewRuntimeTests",
                 code: 2,
                 userInfo: [
                     NSLocalizedDescriptionKey:
@@ -1356,11 +1356,11 @@ private final class RuntimeProjectStoreSpy:
 {
     private(set) var saveCount = 0
 
-    func load(from url: URL) throws -> MyShottrProject {
+    func load(from url: URL) throws -> InkbeamProject {
         throw RuntimeProjectStoreSpyError.unexpectedLoad
     }
 
-    func save(_ project: MyShottrProject, to url: URL) throws {
+    func save(_ project: InkbeamProject, to url: URL) throws {
         saveCount += 1
     }
 }

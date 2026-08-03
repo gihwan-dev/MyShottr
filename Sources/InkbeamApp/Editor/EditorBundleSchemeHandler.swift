@@ -84,7 +84,7 @@ final class EditorBundleSchemeHandler: NSObject, WKURLSchemeHandler {
 
         @MainActor
         func reject() {
-            task.didFailWithError(NSError(domain: "MyShottr.EditorBundle", code: 1))
+            task.didFailWithError(NSError(domain: "Inkbeam.EditorBundle", code: 1))
         }
 
         @MainActor

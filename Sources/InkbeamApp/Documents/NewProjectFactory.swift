@@ -1,7 +1,7 @@
 import Foundation
 
 protocol NewProjectCreating: Sendable {
-    func make(artifact: CaptureArtifact, now: Date) throws -> MyShottrProject
+    func make(artifact: CaptureArtifact, now: Date) throws -> InkbeamProject
 }
 
 struct NewProjectFactory: NewProjectCreating {
@@ -11,7 +11,7 @@ struct NewProjectFactory: NewProjectCreating {
         self.preferences = preferences
     }
 
-    func make(artifact: CaptureArtifact, now: Date = .now) throws -> MyShottrProject {
+    func make(artifact: CaptureArtifact, now: Date = .now) throws -> InkbeamProject {
         let preferences = preferences.load()
         let annotationJSON = try JSONSerialization.data(withJSONObject: [
             "schemaVersion": 3,
@@ -36,7 +36,7 @@ struct NewProjectFactory: NewProjectCreating {
             expectedPixelWidth: artifact.pixelWidth,
             expectedPixelHeight: artifact.pixelHeight
         )
-        return MyShottrProject(
+        return InkbeamProject(
             manifest: ProjectManifest(
                 formatVersion: ProjectManifest.currentFormatVersion,
                 documentId: artifact.id,

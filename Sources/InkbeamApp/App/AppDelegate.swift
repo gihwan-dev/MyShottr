@@ -25,7 +25,7 @@ final class AppDelegate:
     DocumentWindowPresenting
 {
     typealias DocumentWindowFactory = (
-        _ project: MyShottrProject,
+        _ project: InkbeamProject,
         _ projectURL: URL?
     ) throws -> any EditorWindowControlling
     typealias NativeMessagingHostInstaller = () throws -> Void
@@ -33,7 +33,7 @@ final class AppDelegate:
         _ projectFactory: any NewProjectCreating,
         _ windows: any DocumentWindowPresenting
     ) throws -> CaptureInboxCoordinator
-    typealias LaunchErrorReporter = (MyShottrUserFacingError) -> Void
+    typealias LaunchErrorReporter = (InkbeamUserFacingError) -> Void
     typealias TerminationReply = (Bool) -> Void
 
     private enum TerminationResolutionState: Equatable {
@@ -162,7 +162,7 @@ final class AppDelegate:
 
         if let registrationError {
             launchErrorReporter(
-                MyShottrUserFacingError.wrapping(
+                InkbeamUserFacingError.wrapping(
                     registrationError,
                     context: .chromeRegistration
                 )
@@ -170,7 +170,7 @@ final class AppDelegate:
         }
         if let chromeStartupError {
             launchErrorReporter(
-                MyShottrUserFacingError.wrapping(
+                InkbeamUserFacingError.wrapping(
                     chromeStartupError,
                     context: .chromeImport
                 )
@@ -191,7 +191,7 @@ final class AppDelegate:
             )
         } catch {
             launchErrorReporter(
-                MyShottrUserFacingError.wrapping(
+                InkbeamUserFacingError.wrapping(
                     error,
                     context: .application
                 )
@@ -208,7 +208,7 @@ final class AppDelegate:
             }
         } catch {
             launchErrorReporter(
-                MyShottrUserFacingError.wrapping(
+                InkbeamUserFacingError.wrapping(
                     error,
                     context: .globalShortcut
                 )
@@ -259,7 +259,7 @@ final class AppDelegate:
     }
 
     func present(
-        project: MyShottrProject
+        project: InkbeamProject
     ) async throws {
         let opening = try beginOpeningDocument(
             project: project,
@@ -292,7 +292,7 @@ final class AppDelegate:
     private func chooseProject() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [
-            UTType(filenameExtension: "myshottr")!,
+            UTType(filenameExtension: "inkbeam")!,
         ]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
@@ -316,7 +316,7 @@ final class AppDelegate:
             )
         } catch {
             launchErrorReporter(
-                MyShottrUserFacingError.wrapping(
+                InkbeamUserFacingError.wrapping(
                     error,
                     context: .projectOpen
                 )
@@ -326,7 +326,7 @@ final class AppDelegate:
 
     @discardableResult
     private func openDocument(
-        project: MyShottrProject,
+        project: InkbeamProject,
         projectURL: URL?
     ) throws -> Bool {
         let opening = try beginOpeningDocument(
@@ -343,7 +343,7 @@ final class AppDelegate:
                 }
                 discardFailedOpening(opening.controller)
                 launchErrorReporter(
-                    MyShottrUserFacingError.wrapping(
+                    InkbeamUserFacingError.wrapping(
                         error,
                         context: .editorBridge
                     )
@@ -354,7 +354,7 @@ final class AppDelegate:
     }
 
     private func beginOpeningDocument(
-        project: MyShottrProject,
+        project: InkbeamProject,
         projectURL: URL?
     ) throws -> (
         controller: any EditorWindowControlling,

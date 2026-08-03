@@ -36,7 +36,7 @@ enum UserFacingErrorContext {
     case application
 }
 
-enum MyShottrUserFacingError: Error {
+enum InkbeamUserFacingError: Error {
     case capture(CaptureError)
     case captureWorkflow(CaptureWorkflowError)
     case chromeNativeHost(ChromeNativeHostUserFacingError)
@@ -59,7 +59,7 @@ enum MyShottrUserFacingError: Error {
     static func wrapping(
         _ error: any Error,
         context: UserFacingErrorContext
-    ) -> MyShottrUserFacingError {
+    ) -> InkbeamUserFacingError {
         switch context {
         case .capture:
             if let error = error as? CaptureError {
@@ -158,6 +158,10 @@ enum MyShottrUserFacingError: Error {
         }
     }
 
+    var title: String {
+        viewModel.title
+    }
+
     var viewModel: UserFacingErrorViewModel {
         switch self {
         case .capture(let error):
@@ -237,13 +241,13 @@ enum MyShottrUserFacingError: Error {
                     title: "Document Could Not Be Updated",
                     message:
                         "The document remains open and modified. "
-                        + "Save the project before closing MyShottr.",
+                        + "Save the project before closing Inkbeam.",
                     primaryAction: .dismiss
                 )
             }
         case .application:
             return UserFacingErrorViewModel(
-                title: "MyShottr Could Not Complete the Operation",
+                title: "Inkbeam Could Not Complete the Operation",
                 message:
                     "The operation stopped without changing an existing "
                     + "document or destination.",
@@ -256,11 +260,17 @@ enum MyShottrUserFacingError: Error {
         _ error: CaptureError
     ) -> UserFacingErrorViewModel {
         switch error {
+        case .cancelled:
+            return UserFacingErrorViewModel(
+                title: "Capture Cancelled",
+                message: "The screen capture was cancelled before completion.",
+                primaryAction: .dismiss
+            )
         case .screenRecordingPermissionDenied:
             return UserFacingErrorViewModel(
                 title: "Screen Recording Permission Required",
                 message:
-                    "Allow MyShottr in System Settings > Privacy & "
+                    "Allow Inkbeam in System Settings > Privacy & "
                     + "Security > Screen Recording, then capture again.",
                 primaryAction: .openScreenRecordingSettings
             )
@@ -352,7 +362,7 @@ enum MyShottrUserFacingError: Error {
             return UserFacingErrorViewModel(
                 title: "Chrome Connection Is Not Ready",
                 message:
-                    "Open MyShottr once to register the Chrome connection, "
+                    "Open Inkbeam once to register the Chrome connection, "
                     + "then try the Chrome capture again.",
                 primaryAction: .openChromeSetupInstructions
             )
@@ -383,7 +393,7 @@ enum MyShottrUserFacingError: Error {
             return UserFacingErrorViewModel(
                 title: "Chrome Capture Is Too Large",
                 message:
-                    "The image exceeds MyShottr’s local import limit and "
+                    "The image exceeds Inkbeam’s local import limit and "
                     + "was not staged.",
                 primaryAction: .dismiss
             )
@@ -391,15 +401,15 @@ enum MyShottrUserFacingError: Error {
             return UserFacingErrorViewModel(
                 title: "Chrome Capture Could Not Be Staged",
                 message:
-                    "The image was not published to MyShottr’s local inbox.",
+                    "The image was not published to Inkbeam’s local inbox.",
                 primaryAction: .dismiss
             )
         case .appActivationFailed:
             return UserFacingErrorViewModel(
                 title: "Chrome Capture Is Waiting",
                 message:
-                    "The image is safely staged in MyShottr’s local inbox. "
-                    + "Open MyShottr to import it.",
+                    "The image is safely staged in Inkbeam’s local inbox. "
+                    + "Open Inkbeam to import it.",
                 primaryAction: .dismiss
             )
         }
@@ -442,7 +452,7 @@ enum MyShottrUserFacingError: Error {
             return UserFacingErrorViewModel(
                 title: "Chrome Capture Inbox Is Not Secure",
                 message:
-                    "MyShottr refused to read the inbox because its "
+                    "Inkbeam refused to read the inbox because its "
                     + "ownership or permissions are unsafe.",
                 primaryAction: .dismiss
             )
@@ -466,7 +476,7 @@ enum MyShottrUserFacingError: Error {
             return UserFacingErrorViewModel(
                 title: "Chrome Capture Is Too Large",
                 message:
-                    "The inbox image exceeds MyShottr’s local import limit. "
+                    "The inbox image exceeds Inkbeam’s local import limit. "
                     + "No editor document was opened.",
                 primaryAction: .dismiss
             )
@@ -567,7 +577,7 @@ enum MyShottrUserFacingError: Error {
             return UserFacingErrorViewModel(
                 title: "Chrome Capture Inbox Could Not Be Scanned",
                 message:
-                    "MyShottr could not enumerate one local inbox phase. "
+                    "Inkbeam could not enumerate one local inbox phase. "
                     + "Existing inbox files remain unchanged.",
                 primaryAction: .dismiss
             )
@@ -635,7 +645,7 @@ enum MyShottrUserFacingError: Error {
             return UserFacingErrorViewModel(
                 title: "Editor Message Was Rejected",
                 message:
-                    "MyShottr rejected an invalid editor message and kept "
+                    "Inkbeam rejected an invalid editor message and kept "
                     + "the current native document state.",
                 primaryAction: .dismiss
             )

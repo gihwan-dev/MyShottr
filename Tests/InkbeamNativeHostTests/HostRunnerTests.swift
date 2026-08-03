@@ -298,7 +298,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
     }
 
     func testAppActivatorFindsAndOpensContainingApplication() async throws {
-        let appURL = temporaryDirectory.appendingPathComponent("MyShottr.app", isDirectory: true)
+        let appURL = temporaryDirectory.appendingPathComponent("Inkbeam.app", isDirectory: true)
         let contentsURL = appURL.appendingPathComponent("Contents", isDirectory: true)
         let helpersURL = contentsURL.appendingPathComponent("Helpers", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -306,13 +306,13 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
             withIntermediateDirectories: true
         )
         try Data("plist".utf8).write(to: contentsURL.appendingPathComponent("Info.plist"))
-        let executableURL = helpersURL.appendingPathComponent("MyShottrNativeHost")
+        let executableURL = helpersURL.appendingPathComponent("InkbeamNativeHost")
         var openedURL: URL?
         var notifiedCaptureID: UUID?
         var events: [String] = []
         let otherAppURL = temporaryDirectory
             .appendingPathComponent("Other", isDirectory: true)
-            .appendingPathComponent("MyShottr.app", isDirectory: true)
+            .appendingPathComponent("Inkbeam.app", isDirectory: true)
         let activator = AppActivator(
             executableURL: executableURL,
             runningApplicationURLs: { [otherAppURL] },
@@ -336,7 +336,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
 
     func testAppActivatorAwaitsAsynchronousColdLaunchBeforeNotifying() async throws {
         let appURL = temporaryDirectory.appendingPathComponent(
-            "MyShottr.app",
+            "Inkbeam.app",
             isDirectory: true
         )
         let contentsURL = appURL.appendingPathComponent(
@@ -355,7 +355,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
             to: contentsURL.appendingPathComponent("Info.plist")
         )
         let executableURL = helpersURL.appendingPathComponent(
-            "MyShottrNativeHost"
+            "InkbeamNativeHost"
         )
         var launchedURL: URL?
         var notifiedCaptureID: UUID?
@@ -388,7 +388,7 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
 
     func testAppActivatorNotifiesRunningContainingApplicationWithoutReopening() async throws {
         let appURL = temporaryDirectory.appendingPathComponent(
-            "MyShottr.app",
+            "Inkbeam.app",
             isDirectory: true
         )
         let contentsURL = appURL.appendingPathComponent(
@@ -407,14 +407,14 @@ final class HostRunnerTests: TemporaryDirectoryTestCase {
             to: contentsURL.appendingPathComponent("Info.plist")
         )
         let executableURL = helpersURL.appendingPathComponent(
-            "MyShottrNativeHost"
+            "InkbeamNativeHost"
         )
         var openedURL: URL?
         var notifiedCaptureID: UUID?
         var events: [String] = []
         let otherAppURL = temporaryDirectory
             .appendingPathComponent("Other", isDirectory: true)
-            .appendingPathComponent("MyShottr.app", isDirectory: true)
+            .appendingPathComponent("Inkbeam.app", isDirectory: true)
         let activator = AppActivator(
             executableURL: executableURL,
             runningApplicationURLs: {

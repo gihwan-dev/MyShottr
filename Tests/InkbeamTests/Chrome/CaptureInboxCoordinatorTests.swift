@@ -20,7 +20,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         )
         let windows = SpyDocumentWindowPresenter()
         windows.suspendsPresentation = true
-        var reportedErrors: [MyShottrUserFacingError] = []
+        var reportedErrors: [InkbeamUserFacingError] = []
         weak var releasedCoordinator:
             CaptureInboxCoordinator?
 
@@ -99,7 +99,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         let windows = SpyDocumentWindowPresenter()
         windows.suspendsPresentation = true
         windows.presentationError = EditorBridgeError.timedOut
-        var reportedErrors: [MyShottrUserFacingError] = []
+        var reportedErrors: [InkbeamUserFacingError] = []
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
             projectFactory: StubNewProjectFactory(),
@@ -169,7 +169,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         inbox.commitError = ChromeFixtureError.commit
         let windows = SpyDocumentWindowPresenter()
         windows.suspendsPresentation = true
-        var reportedErrors: [MyShottrUserFacingError] = []
+        var reportedErrors: [InkbeamUserFacingError] = []
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
             projectFactory: StubNewProjectFactory(),
@@ -399,7 +399,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         inbox.claimErrorByID[invalid.id] =
             PendingCaptureInboxError.invalidPNG
         let windows = SpyDocumentWindowPresenter()
-        var reportedErrors: [MyShottrUserFacingError] = []
+        var reportedErrors: [InkbeamUserFacingError] = []
         var importedCountWhenReported = 0
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
@@ -471,7 +471,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         inbox.commitErrorByID[ids[7]] =
             ChromeFixtureError.commit
         let windows = SpyDocumentWindowPresenter()
-        var reported: [MyShottrUserFacingError] = []
+        var reported: [InkbeamUserFacingError] = []
         var presentedCountWhenReported = 0
         var cleanedCountWhenReported = 0
         let coordinator = CaptureInboxCoordinator(
@@ -534,7 +534,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         )
         inbox.cleanupScanError = ChromeFixtureError.cleanup
         let windows = SpyDocumentWindowPresenter()
-        var reported: [MyShottrUserFacingError] = []
+        var reported: [InkbeamUserFacingError] = []
         var importedCountWhenReported = 0
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
@@ -581,7 +581,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         let windows = SpyDocumentWindowPresenter()
         windows.presentationError =
             CapturePipelineTestError.presentation
-        var reported: [MyShottrUserFacingError] = []
+        var reported: [InkbeamUserFacingError] = []
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
             projectFactory: StubNewProjectFactory(),
@@ -620,7 +620,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         )
         inbox.commitError = ChromeFixtureError.commit
         let windows = SpyDocumentWindowPresenter()
-        var reported: [MyShottrUserFacingError] = []
+        var reported: [InkbeamUserFacingError] = []
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
             projectFactory: StubNewProjectFactory(),
@@ -822,7 +822,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
     func testUnknownCaptureNotificationDoesNotReportError() async {
         let inbox = StubPendingCaptureInbox(dataByID: [:])
         let windows = SpyDocumentWindowPresenter()
-        var reportedErrors: [MyShottrUserFacingError] = []
+        var reportedErrors: [InkbeamUserFacingError] = []
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
             projectFactory: StubNewProjectFactory(),
@@ -847,7 +847,7 @@ final class CaptureInboxCoordinatorTests: XCTestCase {
         inbox.claimErrorByID[ChromeFixtures.captureID] =
             PendingCaptureInboxError.invalidPNG
         let windows = SpyDocumentWindowPresenter()
-        var reportedErrors: [MyShottrUserFacingError] = []
+        var reportedErrors: [InkbeamUserFacingError] = []
         let coordinator = CaptureInboxCoordinator(
             inbox: inbox,
             projectFactory: StubNewProjectFactory(),

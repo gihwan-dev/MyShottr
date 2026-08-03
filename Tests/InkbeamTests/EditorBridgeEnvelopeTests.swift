@@ -366,7 +366,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             [
                 "operation": "save",
                 "phase": "completed",
-                "displayName": "Capture.myshottr",
+                "displayName": "Capture.inkbeam",
             ],
             ["operation": "export", "phase": "completed"],
             [
@@ -377,7 +377,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             [
                 "operation": "save",
                 "phase": "started",
-                "displayName": "Capture.myshottr",
+                "displayName": "Capture.inkbeam",
             ],
             [
                 "operation": "export",
@@ -387,7 +387,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             [
                 "operation": "save",
                 "phase": "cancelled",
-                "displayName": "Capture.myshottr",
+                "displayName": "Capture.inkbeam",
             ],
             [
                 "operation": "export",
@@ -397,7 +397,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             [
                 "operation": "save",
                 "phase": "failed",
-                "displayName": "Capture.myshottr",
+                "displayName": "Capture.inkbeam",
             ],
             [
                 "operation": "export",
@@ -443,7 +443,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             [
                 "operation": "save",
                 "phase": "completed",
-                "displayName": "Capture.myshottr",
+                "displayName": "Capture.inkbeam",
             ],
             ["operation": "export", "phase": "completed"],
             [
@@ -454,7 +454,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             [
                 "operation": "save",
                 "phase": "started",
-                "displayName": "Capture.myshottr",
+                "displayName": "Capture.inkbeam",
             ],
             [
                 "operation": "export",
@@ -464,7 +464,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             [
                 "operation": "save",
                 "phase": "cancelled",
-                "displayName": "Capture.myshottr",
+                "displayName": "Capture.inkbeam",
             ],
             [
                 "operation": "export",
@@ -474,7 +474,7 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
             [
                 "operation": "save",
                 "phase": "failed",
-                "displayName": "Capture.myshottr",
+                "displayName": "Capture.inkbeam",
             ],
             [
                 "operation": "export",
@@ -908,9 +908,9 @@ final class EditorBridgeEnvelopeTests: XCTestCase {
         )
     }
 
-    private func project(annotationDocument: [String: Any]) throws -> MyShottrProject {
+    private func project(annotationDocument: [String: Any]) throws -> InkbeamProject {
         let documentID = UUID()
-        return MyShottrProject(
+        return InkbeamProject(
             manifest: ProjectManifest(
                 formatVersion: 1,
                 documentId: documentID,

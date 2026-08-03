@@ -808,7 +808,7 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
     }
 
     private func evaluationFailure() -> Error {
-        NSError(domain: "MyShottr.EditorBridgeEvaluation", code: 1)
+        NSError(domain: "Inkbeam.EditorBridgeEvaluation", code: 1)
     }
 
     private func assertBridgeError<Value>(_ task: Task<Value, Error>, equals expected: EditorBridgeError) async {
@@ -896,7 +896,7 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
         ).encodedData()
     }
 
-    private func validProject() -> MyShottrProject {
+    private func validProject() -> InkbeamProject {
         let manifest = ProjectManifest(
             formatVersion: 1,
             documentId: UUID(),
@@ -922,6 +922,6 @@ final class EditorBridgeCompositeTransferTests: TemporaryDirectoryTestCase {
                 "highlighterOpacity": 0.5,
             ],
         ])
-        return MyShottrProject(manifest: manifest, originalPNG: ProjectFixtures.pngData, annotationJSON: annotationJSON)
+        return InkbeamProject(manifest: manifest, originalPNG: ProjectFixtures.pngData, annotationJSON: annotationJSON)
     }
 }

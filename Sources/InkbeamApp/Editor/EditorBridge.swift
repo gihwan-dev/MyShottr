@@ -60,7 +60,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private let preferences: any EditorPreferencesStoring
     private weak var webView: WKWebView?
     private var editorIsReady = false
-    private var pendingProject: MyShottrProject?
+    private var pendingProject: InkbeamProject?
     private var pendingLoadRequestID: UUID?
     private var pendingLoadOperation: EditorLoadOperation?
     private var snapshotContinuations: [UUID: CheckedContinuation<Data, Error>] = [:]
@@ -117,7 +117,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
 
     @discardableResult
     func load(
-        project: MyShottrProject
+        project: InkbeamProject
     ) throws -> EditorLoadOperation {
         do {
             cancelPendingLoad()
@@ -443,7 +443,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         }
     }
 
-    private func sendLoadDocument(_ project: MyShottrProject) throws {
+    private func sendLoadDocument(_ project: InkbeamProject) throws {
         let annotationDocument = try JSONDecoder().decode(BridgeJSONValue.self, from: project.annotationJSON)
         let payload: BridgeJSONValue = .object([
             "documentId": .string(project.manifest.documentId.uuidString),

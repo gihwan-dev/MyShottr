@@ -47,7 +47,7 @@ struct AppActivator: AppActivating {
         },
         postCaptureReady: @escaping (UUID) -> Void = { captureID in
             DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("com.myshottr.captureReady"),
+                Notification.Name("dev.gihwan.inkbeam.captureReady"),
                 object: captureID.uuidString,
                 userInfo: nil,
                 deliverImmediately: true

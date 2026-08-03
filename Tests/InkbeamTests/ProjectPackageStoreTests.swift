@@ -4,7 +4,7 @@ import XCTest
 
 final class ProjectPackageStoreTests: TemporaryDirectoryTestCase {
     func testSaveAndLoadRoundTrip() throws {
-        let url = temporaryDirectory.appendingPathComponent("Sample.myshottr")
+        let url = temporaryDirectory.appendingPathComponent("Sample.inkbeam")
         let project = try ProjectFixtures.sampleProject()
 
         try ProjectPackageStore().save(project, to: url)
@@ -39,7 +39,7 @@ final class ProjectPackageStoreTests: TemporaryDirectoryTestCase {
     func testRejectsSymbolicLinkPackageRoot() throws {
         let packageURL = try ProjectFixtures.package()
         defer { try? FileManager.default.removeItem(at: packageURL) }
-        let symbolicLinkURL = temporaryDirectory.appendingPathComponent("Linked.myshottr")
+        let symbolicLinkURL = temporaryDirectory.appendingPathComponent("Linked.inkbeam")
         try FileManager.default.createSymbolicLink(at: symbolicLinkURL, withDestinationURL: packageURL)
 
         XCTAssertThrowsError(try ProjectPackageStore().load(from: symbolicLinkURL)) {
@@ -81,7 +81,7 @@ final class ProjectPackageStoreTests: TemporaryDirectoryTestCase {
     }
 
     func testSaveReplacesAnExistingPackage() throws {
-        let url = temporaryDirectory.appendingPathComponent("Sample.myshottr")
+        let url = temporaryDirectory.appendingPathComponent("Sample.inkbeam")
         let initialProject = ProjectFixtures.project(text: "Initial annotation")
         let replacementProject = ProjectFixtures.project(text: "Replacement annotation")
 
@@ -157,7 +157,7 @@ final class ProjectPackageStoreTests: TemporaryDirectoryTestCase {
             ("SchemaTwo", try ProjectFixtures.schemaTwoAnnotationJSON()),
         ] {
             let url = temporaryDirectory
-                .appendingPathComponent("\(name).myshottr")
+                .appendingPathComponent("\(name).inkbeam")
             var project = try ProjectFixtures.sampleProject()
             project.annotationJSON = annotationJSON
 
@@ -176,7 +176,7 @@ final class ProjectPackageStoreTests: TemporaryDirectoryTestCase {
     }
 
     func testSavePreservesExactValidatedCurrentJSON() throws {
-        let url = temporaryDirectory.appendingPathComponent("Exact.myshottr")
+        let url = temporaryDirectory.appendingPathComponent("Exact.inkbeam")
         var project = try ProjectFixtures.sampleProject()
         let object = try JSONSerialization.jsonObject(with: project.annotationJSON)
         project.annotationJSON = try JSONSerialization.data(

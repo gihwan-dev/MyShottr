@@ -105,7 +105,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertEqual(
             presenter.presentedViewModels,
             [
-                MyShottrUserFacingError.compositeTransfer(
+                InkbeamUserFacingError.compositeTransfer(
                     .notFinished
                 ).viewModel,
             ]
@@ -151,7 +151,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertEqual(
             presenter.presentedViewModels,
             [
-                MyShottrUserFacingError.compositeTransfer(
+                InkbeamUserFacingError.compositeTransfer(
                     .invalidPNG
                 ).viewModel,
             ]
@@ -194,7 +194,7 @@ final class DocumentWindowControllerOutputTests:
 
         XCTAssertEqual(
             presenter.presentedViewModels,
-            [MyShottrUserFacingError.application.viewModel]
+            [InkbeamUserFacingError.application.viewModel]
         )
         XCTAssertEqual(clipboardWriteCount, 0)
         XCTAssertEqual(statusSendCount, 0)
@@ -241,7 +241,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertEqual(
             presenter.presentedViewModels,
             [
-                MyShottrUserFacingError.clipboard(
+                InkbeamUserFacingError.clipboard(
                     .writeFailed
                 ).viewModel,
             ]
@@ -368,7 +368,7 @@ final class DocumentWindowControllerOutputTests:
             text: "Close blocked by active save"
         )
         let destination = temporaryDirectory.appendingPathComponent(
-            "Active Save.myshottr",
+            "Active Save.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -511,7 +511,7 @@ final class DocumentWindowControllerOutputTests:
             text: "Save preserves disabled close button"
         )
         let destination = temporaryDirectory.appendingPathComponent(
-            "Preserve Close State.myshottr",
+            "Preserve Close State.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -1108,7 +1108,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertEqual(
             presenter.presentedViewModels,
             [
-                MyShottrUserFacingError.compositeTransfer(
+                InkbeamUserFacingError.compositeTransfer(
                     .notFinished
                 ).viewModel,
             ]
@@ -1204,7 +1204,7 @@ final class DocumentWindowControllerOutputTests:
             text: "Unsaved save snapshot"
         )
         let destination = temporaryDirectory.appendingPathComponent(
-            "Chosen Project.myshottr",
+            "Chosen Project.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -1256,7 +1256,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertNil(controller.representedProjectURL)
         XCTAssertEqual(
             controller.window?.title,
-            "Untitled MyShottr Project"
+            "Untitled Inkbeam Project"
         )
 
         XCTAssertTrue(controller.saveProjectAction(nil))
@@ -1299,7 +1299,7 @@ final class DocumentWindowControllerOutputTests:
         let initial = ProjectFixtures.project(text: "Save initial")
         let saved = ProjectFixtures.project(text: "Save snapshot")
         let destination = temporaryDirectory.appendingPathComponent(
-            "Existing.myshottr",
+            "Existing.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -1408,7 +1408,7 @@ final class DocumentWindowControllerOutputTests:
         let captured = ProjectFixtures.project(text: "Race captured")
         let latest = ProjectFixtures.project(text: "Race latest")
         let destination = temporaryDirectory.appendingPathComponent(
-            "Race.myshottr",
+            "Race.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -1512,7 +1512,7 @@ final class DocumentWindowControllerOutputTests:
             text: "Save cancellation"
         )
         let destination = temporaryDirectory.appendingPathComponent(
-            "Cancelled.myshottr",
+            "Cancelled.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -1595,7 +1595,7 @@ final class DocumentWindowControllerOutputTests:
     {
         let project = ProjectFixtures.project(text: "Save failure")
         let destination = temporaryDirectory.appendingPathComponent(
-            "Failed.myshottr",
+            "Failed.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -1666,7 +1666,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertEqual(Set(statuses.map(\.requestID)).count, 1)
         XCTAssertEqual(
             presenter.presentedViewModels,
-            [MyShottrUserFacingError.projectSave.viewModel]
+            [InkbeamUserFacingError.projectSave.viewModel]
         )
         XCTAssertEqual(store.saveCount, 0)
         XCTAssertTrue(session.isModified)
@@ -1681,7 +1681,7 @@ final class DocumentWindowControllerOutputTests:
     {
         let project = ProjectFixtures.project(text: "Close saved")
         let destination = temporaryDirectory.appendingPathComponent(
-            "Close Saved.myshottr",
+            "Close Saved.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -1748,7 +1748,7 @@ final class DocumentWindowControllerOutputTests:
             text: "Close superseded latest"
         )
         let destination = temporaryDirectory.appendingPathComponent(
-            "Close Superseded.myshottr",
+            "Close Superseded.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -1876,7 +1876,7 @@ final class DocumentWindowControllerOutputTests:
             text: "Close after-start cancellation"
         )
         let destination = temporaryDirectory.appendingPathComponent(
-            "Close Cancelled.myshottr",
+            "Close Cancelled.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -1934,7 +1934,7 @@ final class DocumentWindowControllerOutputTests:
             text: "Close failed"
         )
         let destination = temporaryDirectory.appendingPathComponent(
-            "Close Failed.myshottr",
+            "Close Failed.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -1985,7 +1985,7 @@ final class DocumentWindowControllerOutputTests:
         XCTAssertTrue(session.isModified)
         XCTAssertEqual(
             presenter.presentedViewModels,
-            [MyShottrUserFacingError.projectSave.viewModel]
+            [InkbeamUserFacingError.projectSave.viewModel]
         )
         XCTAssertEqual(closeCount, 0)
         XCTAssertTrue(closeButton.isEnabled)
@@ -1998,7 +1998,7 @@ final class DocumentWindowControllerOutputTests:
             text: "Close guard overlap"
         )
         let destination = temporaryDirectory.appendingPathComponent(
-            "Close Guard.myshottr",
+            "Close Guard.inkbeam",
             isDirectory: true
         )
         let session = DocumentSession()
@@ -2067,7 +2067,7 @@ final class DocumentWindowControllerOutputTests:
     }
 
     private func makeController(
-        project: MyShottrProject,
+        project: InkbeamProject,
         session: DocumentSession,
         errorPresenter: any UserFacingErrorPresenting,
         compositeProvider:
@@ -2169,16 +2169,16 @@ private final class OutputProjectStoreSpy:
     @unchecked Sendable
 {
     private(set) var saveCount = 0
-    private(set) var savedProjects: [MyShottrProject] = []
+    private(set) var savedProjects: [InkbeamProject] = []
     private(set) var savedURLs: [URL] = []
-    var onSave: ((MyShottrProject, URL) -> Void)?
+    var onSave: ((InkbeamProject, URL) -> Void)?
 
-    func load(from url: URL) throws -> MyShottrProject {
+    func load(from url: URL) throws -> InkbeamProject {
         throw OutputProjectStoreSpyError.unexpectedLoad
     }
 
     func save(
-        _ project: MyShottrProject,
+        _ project: InkbeamProject,
         to url: URL
     ) throws {
         saveCount += 1
@@ -2214,7 +2214,7 @@ private final class OutputErrorPresenterSpy:
     }
 
     func present(
-        _ error: MyShottrUserFacingError,
+        _ error: InkbeamUserFacingError,
         from window: NSWindow?
     ) {
         presentedViewModels.append(error.viewModel)

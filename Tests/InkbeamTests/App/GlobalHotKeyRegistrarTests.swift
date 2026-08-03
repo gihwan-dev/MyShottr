@@ -28,7 +28,7 @@ final class GlobalHotKeyRegistrarTests: XCTestCase {
         XCTAssertNotNil(harness.eventHandlerContext)
 
         harness.invokeEventHandler(
-            signature: 0x4D_53_48_54,
+            signature: 0x49_4E_4B_42,
             id: 1
         )
         await Task.yield()
@@ -48,7 +48,7 @@ final class GlobalHotKeyRegistrarTests: XCTestCase {
         )
 
         harness.invokeEventHandler(
-            signature: 0x4D_53_48_54,
+            signature: 0x49_4E_4B_42,
             id: 99
         )
 
@@ -113,7 +113,7 @@ final class MenuBarControllerTests: XCTestCase {
             "Capture Area",
             "Open Project…",
             "",
-            "Quit MyShottr",
+            "Quit Inkbeam",
         ])
         XCTAssertEqual(menu.items[0].keyEquivalent, "2")
         XCTAssertEqual(

@@ -9,7 +9,7 @@ enum AdditionalProjectFixtures {
     static func project(
         text: String,
         documentID: UUID = ProjectFixtures.documentID
-    ) -> MyShottrProject {
+    ) -> InkbeamProject {
         let project = ProjectFixtures.project(text: text)
         let manifest = ProjectManifest(
             formatVersion: project.manifest.formatVersion,
@@ -21,7 +21,7 @@ enum AdditionalProjectFixtures {
             sourceKind: project.manifest.sourceKind,
             sourceScale: project.manifest.sourceScale
         )
-        return MyShottrProject(
+        return InkbeamProject(
             manifest: manifest,
             originalPNG: project.originalPNG,
             annotationJSON: project.annotationJSON

@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 protocol UserFacingErrorPresenting {
     func present(
-        _ error: MyShottrUserFacingError,
+        _ error: InkbeamUserFacingError,
         from window: NSWindow?
     )
 }
@@ -88,14 +88,14 @@ struct UserFacingErrorActions {
         },
         openChromeSetupInstructions: {
             let alert = NSAlert()
-            alert.messageText = "Connect MyShottr to Chrome"
+            alert.messageText = "Connect Inkbeam to Chrome"
             alert.informativeText = """
-            1. Open MyShottr once so it can register its local Chrome helper.
+            1. Open Inkbeam once so it can register its local Chrome helper.
             2. Open chrome://extensions and enable Developer mode.
-            3. Load the unpacked MyShottr Chrome extension.
+            3. Load the unpacked Inkbeam Chrome extension.
             4. Use the extension button on the page you want to capture.
 
-            MyShottr keeps the captured PNG on this Mac.
+            Inkbeam keeps the captured PNG on this Mac.
             """
             alert.addButton(withTitle: "OK")
             alert.runModal()
@@ -170,7 +170,7 @@ final class UserFacingErrorPresenter: UserFacingErrorPresenting {
     }
 
     func present(
-        _ error: MyShottrUserFacingError,
+        _ error: InkbeamUserFacingError,
         from window: NSWindow?
     ) {
         let viewModel = error.viewModel

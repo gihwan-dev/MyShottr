@@ -69,19 +69,19 @@ enum ChromeFixtures {
     }
 
     static func appBundleURL(in root: URL) -> URL {
-        root.appendingPathComponent("MyShottr.app", isDirectory: true)
+        root.appendingPathComponent("Inkbeam.app", isDirectory: true)
     }
 
     static func helperURL(in root: URL) -> URL {
         appBundleURL(in: root)
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("Helpers", isDirectory: true)
-            .appendingPathComponent("MyShottrNativeHost")
+            .appendingPathComponent("InkbeamNativeHost")
     }
 
     static func manifestURL(in root: URL) -> URL {
         root.appendingPathComponent(
-            "NativeMessagingHosts/com.myshottr.capture.json"
+            "NativeMessagingHosts/dev.gihwan.inkbeam.capture.json"
         )
     }
 }
@@ -215,7 +215,7 @@ final class SpyChromeNewProjectFactory:
     func make(
         artifact: CaptureArtifact,
         now: Date
-    ) throws -> MyShottrProject {
+    ) throws -> InkbeamProject {
         requests.append(
             Request(
                 id: artifact.id,

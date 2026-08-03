@@ -36,7 +36,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         ]
 
         for (error, title, action) in cases {
-            let viewModel = MyShottrUserFacingError.capture(error).viewModel
+            let viewModel = InkbeamUserFacingError.capture(error).viewModel
             XCTAssertEqual(viewModel.title, title)
             XCTAssertEqual(viewModel.primaryAction, action)
             XCTAssertFalse(viewModel.message.isEmpty)
@@ -64,7 +64,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         ]
 
         for (error, expectedTitle) in cases {
-            let viewModel = MyShottrUserFacingError
+            let viewModel = InkbeamUserFacingError
                 .captureWorkflow(error)
                 .viewModel
             XCTAssertEqual(viewModel.title, expectedTitle)
@@ -119,7 +119,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         ]
 
         for (error, title, action) in cases {
-            let viewModel = MyShottrUserFacingError
+            let viewModel = InkbeamUserFacingError
                 .chromeNativeHost(error)
                 .viewModel
             XCTAssertEqual(viewModel.title, title)
@@ -142,7 +142,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         ]
 
         for (error, title) in cases {
-            let viewModel = MyShottrUserFacingError.inbox(error).viewModel
+            let viewModel = InkbeamUserFacingError.inbox(error).viewModel
             XCTAssertEqual(viewModel.title, title)
             XCTAssertEqual(viewModel.primaryAction, .dismiss)
             XCTAssertFalse(viewModel.message.isEmpty)
@@ -209,7 +209,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         ]
 
         for (error, title, documentOpened) in cases {
-            let viewModel = MyShottrUserFacingError
+            let viewModel = InkbeamUserFacingError
                 .chromeImport(error)
                 .viewModel
             XCTAssertEqual(viewModel.title, title)
@@ -239,7 +239,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             (.timedOut, "Editor Operation Timed Out"),
         ]
         for (error, title) in bridgeCases {
-            let viewModel = MyShottrUserFacingError
+            let viewModel = InkbeamUserFacingError
                 .editorBridge(error)
                 .viewModel
             XCTAssertEqual(viewModel.title, title)
@@ -260,7 +260,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             (.malformedMessage, "Editor Message Was Rejected"),
         ]
         for (error, title) in protocolCases {
-            let viewModel = MyShottrUserFacingError
+            let viewModel = InkbeamUserFacingError
                 .editorProtocol(error)
                 .viewModel
             XCTAssertEqual(viewModel.title, title)
@@ -295,7 +295,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         ]
 
         for (error, title) in cases {
-            let viewModel = MyShottrUserFacingError.project(error).viewModel
+            let viewModel = InkbeamUserFacingError.project(error).viewModel
             XCTAssertEqual(viewModel.title, title)
             XCTAssertEqual(viewModel.primaryAction, .dismiss)
             XCTAssertFalse(viewModel.message.localizedCaseInsensitiveContains(
@@ -324,23 +324,23 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            MyShottrUserFacingError.projectSave.viewModel.title,
+            InkbeamUserFacingError.projectSave.viewModel.title,
             "Project Could Not Be Saved"
         )
         XCTAssertEqual(
-            MyShottrUserFacingError.projectSave.viewModel.primaryAction,
+            InkbeamUserFacingError.projectSave.viewModel.primaryAction,
             .dismiss
         )
         XCTAssertEqual(
-            MyShottrUserFacingError.pngExport.viewModel.title,
+            InkbeamUserFacingError.pngExport.viewModel.title,
             "PNG Could Not Be Exported"
         )
         XCTAssertEqual(
-            MyShottrUserFacingError.pngExport.viewModel.primaryAction,
+            InkbeamUserFacingError.pngExport.viewModel.primaryAction,
             .dismiss
         )
         XCTAssertEqual(
-            MyShottrUserFacingError
+            InkbeamUserFacingError
                 .clipboard(.writeFailed)
                 .viewModel
                 .title,
@@ -348,7 +348,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         )
 
         for error in compositeCases {
-            let viewModel = MyShottrUserFacingError
+            let viewModel = InkbeamUserFacingError
                 .compositeTransfer(error)
                 .viewModel
             XCTAssertEqual(viewModel.title, "Image Transfer Failed")
@@ -362,7 +362,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
     }
 
     func testShortcutAndChromeRegistrationErrorsHaveExhaustiveMappings() {
-        let shortcut = MyShottrUserFacingError
+        let shortcut = InkbeamUserFacingError
             .globalShortcut(.registrationFailed(-9876))
             .viewModel
         XCTAssertEqual(shortcut.title, "Keyboard Shortcut Is Unavailable")
@@ -374,7 +374,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             .systemCallFailed(name: "publish manifest", code: 5),
         ]
         for error in registrationCases {
-            let viewModel = MyShottrUserFacingError
+            let viewModel = InkbeamUserFacingError
                 .chromeRegistration(error)
                 .viewModel
             XCTAssertEqual(viewModel.title, "Chrome Setup Could Not Be Completed")
@@ -385,7 +385,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             XCTAssertFalse(viewModel.message.isEmpty)
         }
 
-        let rawRegistration = MyShottrUserFacingError
+        let rawRegistration = InkbeamUserFacingError
             .chromeRegistration(
                 .systemCallFailed(
                     name: "raw-secret",
@@ -396,7 +396,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         XCTAssertFalse(
             rawRegistration.message.contains("raw-secret")
         )
-        let rawInbox = MyShottrUserFacingError
+        let rawInbox = InkbeamUserFacingError
             .inbox(
                 .systemCallFailed(
                     name: "raw-secret",
@@ -416,7 +416,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             .noStagedDocument,
         ]
         for error in documentCases {
-            let viewModel = MyShottrUserFacingError
+            let viewModel = InkbeamUserFacingError
                 .documentSession(error)
                 .viewModel
             XCTAssertEqual(
@@ -429,7 +429,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
 
     func testContextWrappingProducesOneTypedErrorForEachFailureBoundary() {
         XCTAssertEqual(
-            MyShottrUserFacingError
+            InkbeamUserFacingError
                 .wrapping(
                     CaptureError.screenRecordingPermissionDenied,
                     context: .capture
@@ -439,7 +439,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             .openScreenRecordingSettings
         )
         XCTAssertEqual(
-            MyShottrUserFacingError
+            InkbeamUserFacingError
                 .wrapping(
                     ProjectPackageError.invalidManifest,
                     context: .projectOpen
@@ -449,7 +449,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             "Project Could Not Be Opened"
         )
         XCTAssertEqual(
-            MyShottrUserFacingError
+            InkbeamUserFacingError
                 .wrapping(
                     PendingCaptureInboxError.invalidPNG,
                     context: .chromeImport
@@ -459,7 +459,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             "Chrome Capture Image Is Invalid"
         )
         XCTAssertEqual(
-            MyShottrUserFacingError
+            InkbeamUserFacingError
                 .wrapping(
                     CompositeTransferError.invalidPNG,
                     context: .pngExport
@@ -469,7 +469,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             "Image Transfer Failed"
         )
         XCTAssertEqual(
-            MyShottrUserFacingError
+            InkbeamUserFacingError
                 .wrapping(
                     NSError(domain: "test", code: 1),
                     context: .projectSave
@@ -479,7 +479,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             "Project Could Not Be Saved"
         )
         XCTAssertEqual(
-            MyShottrUserFacingError
+            InkbeamUserFacingError
                 .wrapping(
                     ChromeCaptureImportError
                         .windowPresenterUnavailable,
@@ -490,7 +490,7 @@ final class UserFacingErrorPresenterTests: XCTestCase {
             "Chrome Capture Could Not Be Opened"
         )
         XCTAssertEqual(
-            MyShottrUserFacingError
+            InkbeamUserFacingError
                 .wrapping(
                     SafePNGValidationError.imageTooLarge,
                     context: .chromeImport
@@ -505,31 +505,31 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         let cases: [(any Error, UserFacingErrorViewModel)] = [
             (
                 CompositeTransferError.invalidPNG,
-                MyShottrUserFacingError.compositeTransfer(
+                InkbeamUserFacingError.compositeTransfer(
                     .invalidPNG
                 ).viewModel
             ),
             (
                 EditorBridgeEnvelopeError.malformedMessage,
-                MyShottrUserFacingError.editorProtocol(
+                InkbeamUserFacingError.editorProtocol(
                     .malformedMessage
                 ).viewModel
             ),
             (
                 EditorBridgeError.invalidMessage,
-                MyShottrUserFacingError.editorBridge(
+                InkbeamUserFacingError.editorBridge(
                     .invalidMessage
                 ).viewModel
             ),
             (
                 CocoaError(.fileReadNoSuchFile),
-                MyShottrUserFacingError.application.viewModel
+                InkbeamUserFacingError.application.viewModel
             ),
         ]
 
         for (error, expectedViewModel) in cases {
             XCTAssertEqual(
-                MyShottrUserFacingError.wrapping(
+                InkbeamUserFacingError.wrapping(
                     error,
                     context: .compositeTransfer
                 ).viewModel,

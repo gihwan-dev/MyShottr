@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 
 enum CaptureError: Error, Equatable {
+    case cancelled
     case screenRecordingPermissionDenied
     case displayUnavailable(CGDirectDisplayID)
     case emptySelection

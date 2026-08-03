@@ -6,7 +6,7 @@ final class NativeHostProcessTests: XCTestCase {
     func testExecutableStagesOneOwnerOnlyPNGInInjectedInbox() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
-                "MyShottrNativeHostProcessTests-\(UUID().uuidString)",
+                "InkbeamNativeHostProcessTests-\(UUID().uuidString)",
                 isDirectory: true
             )
         let inboxURL = temporaryDirectory
@@ -67,7 +67,7 @@ final class NativeHostProcessTests: XCTestCase {
     func testExecutableActivationFailurePreservesOneOwnerOnlyPendingPNG() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
-                "MyShottrNativeHostProcessTests-\(UUID().uuidString)",
+                "InkbeamNativeHostProcessTests-\(UUID().uuidString)",
                 isDirectory: true
             )
         let inboxURL = temporaryDirectory
@@ -128,7 +128,7 @@ final class NativeHostProcessTests: XCTestCase {
     func testExecutableStagingFailureLeavesNoPendingCapture() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
-                "MyShottrNativeHostProcessTests-\(UUID().uuidString)",
+                "InkbeamNativeHostProcessTests-\(UUID().uuidString)",
                 isDirectory: true
             )
         let inboxURL = temporaryDirectory.appendingPathComponent("Inbox")

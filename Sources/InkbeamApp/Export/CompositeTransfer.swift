@@ -44,7 +44,7 @@ final class CompositeTransfer: @unchecked Sendable {
         self.expectedChunks = expectedChunks
         self.expectedPixelSize = expectedPixelSize
         let parent = directory ?? FileManager.default.temporaryDirectory
-        self.fileURL = parent.appendingPathComponent(".myshottr-composite-\(requestId.uuidString).png", isDirectory: false)
+        self.fileURL = parent.appendingPathComponent(".inkbeam-composite-\(requestId.uuidString).png", isDirectory: false)
         guard FileManager.default.createFile(
             atPath: fileURL.path,
             contents: nil,

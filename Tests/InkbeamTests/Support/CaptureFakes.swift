@@ -48,7 +48,7 @@ struct StubNewProjectFactory: NewProjectCreating {
     func make(
         artifact: CaptureArtifact,
         now: Date
-    ) throws -> MyShottrProject {
+    ) throws -> InkbeamProject {
         try NewProjectFactory(
             preferences: StubPreferences(.approvedDefaults)
         ).make(
@@ -62,8 +62,8 @@ struct StubNewProjectFactory: NewProjectCreating {
 final class SpyDocumentWindowPresenter: DocumentWindowPresenting {
     var presentationError: (any Error)?
     var suspendsPresentation = false
-    private(set) var presentedProjects: [MyShottrProject] = []
-    private(set) var presentationAttempts: [MyShottrProject] = []
+    private(set) var presentedProjects: [InkbeamProject] = []
+    private(set) var presentationAttempts: [InkbeamProject] = []
     private var presentationContinuations: [
         CheckedContinuation<Void, Never>
     ] = []
@@ -72,7 +72,7 @@ final class SpyDocumentWindowPresenter: DocumentWindowPresenting {
     ] = []
 
     func present(
-        project: MyShottrProject
+        project: InkbeamProject
     ) async throws {
         presentationAttempts.append(project)
         let waiting = startedContinuations
@@ -179,7 +179,7 @@ struct ThrowingNewProjectFactory: NewProjectCreating {
     func make(
         artifact: CaptureArtifact,
         now: Date
-    ) throws -> MyShottrProject {
+    ) throws -> InkbeamProject {
         throw error
     }
 }

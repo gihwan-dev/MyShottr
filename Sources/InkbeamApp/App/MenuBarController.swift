@@ -37,7 +37,7 @@ final class MenuBarController: NSObject {
         super.init()
 
         statusItem.button?.image = image
-        statusItem.button?.toolTip = "MyShottr"
+        statusItem.button?.toolTip = "Inkbeam"
         statusItem.menu = makeMenu()
     }
 
@@ -80,7 +80,7 @@ final class MenuBarController: NSObject {
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(
-            title: "Quit MyShottr",
+            title: "Quit Inkbeam",
             action: #selector(quitAction(_:)),
             keyEquivalent: ""
         )

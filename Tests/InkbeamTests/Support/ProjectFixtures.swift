@@ -21,11 +21,11 @@ enum ProjectFixtures {
         return defaults
     }
 
-    static func sampleProject() throws -> MyShottrProject {
+    static func sampleProject() throws -> InkbeamProject {
         project(text: "Sample annotation")
     }
 
-    static func project(text: String) -> MyShottrProject {
+    static func project(text: String) -> InkbeamProject {
         let manifest = ProjectManifest(
             formatVersion: ProjectManifest.currentFormatVersion,
             documentId: documentID,
@@ -40,7 +40,7 @@ enum ProjectFixtures {
             options: [.sortedKeys]
         )
 
-        return MyShottrProject(
+        return InkbeamProject(
             manifest: manifest,
             originalPNG: pngData,
             annotationJSON: annotationJSON
@@ -52,7 +52,7 @@ enum ProjectFixtures {
         sourcePixelWidth: Int = 2
     ) throws -> URL {
         let packageURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MyShottrFixture-\(UUID().uuidString).myshottr", isDirectory: true)
+            .appendingPathComponent("InkbeamFixture-\(UUID().uuidString).inkbeam", isDirectory: true)
         try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: false)
 
         let project = project(text: "Fixture annotation")
@@ -152,5 +152,15 @@ enum ProjectFixtures {
             forResource: "source-2x",
             withExtension: "png"
         ))
+    }
+}
+
+enum PNGFixture {
+    static let source2x = ProjectFixtures.pngData
+}
+
+extension InkbeamProject {
+    static func fixture() -> InkbeamProject {
+        ProjectFixtures.project(text: "Fixture annotation")
     }
 }

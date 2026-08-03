@@ -44,7 +44,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
     func testColdFileOpenBeforeDidFinishKeepsDocumentAndRegularPolicy() {
         let project = ProjectFixtures.project(text: "Cold Open")
         let projectURL = URL(
-            fileURLWithPath: "/tmp/cold-open.myshottr"
+            fileURLWithPath: "/tmp/cold-open.inkbeam"
         )
         let application = SpyApplicationLifecycle()
         let window = SpyEditorWindowController()
@@ -147,7 +147,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
 
     func testGlobalShortcutConflictReportsTypedErrorAndKeepsAccessoryPolicy() {
         let application = SpyApplicationLifecycle()
-        var reportedErrors: [MyShottrUserFacingError] = []
+        var reportedErrors: [InkbeamUserFacingError] = []
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
             nativeMessagingHostInstaller: {},
@@ -254,7 +254,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 ),
             ]
         )
-        var reportedErrors: [MyShottrUserFacingError] = []
+        var reportedErrors: [InkbeamUserFacingError] = []
         var events: [String] = []
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
@@ -530,7 +530,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         throws
     {
         let url = URL(
-            fileURLWithPath: "/tmp/duplicate-url.myshottr"
+            fileURLWithPath: "/tmp/duplicate-url.inkbeam"
         )
         let first = ProjectFixtures.project(text: "first")
         let second = AdditionalProjectFixtures.project(
@@ -1153,13 +1153,13 @@ final class AppDelegateLifecycleTests: XCTestCase {
 }
 
 private struct StubProjectStore: ProjectPackageStoring {
-    let project: MyShottrProject
+    let project: InkbeamProject
 
-    func load(from url: URL) throws -> MyShottrProject {
+    func load(from url: URL) throws -> InkbeamProject {
         project
     }
 
-    func save(_ project: MyShottrProject, to url: URL) throws {
+    func save(_ project: InkbeamProject, to url: URL) throws {
         throw StubProjectStoreError.unexpectedSave
     }
 }
@@ -1172,19 +1172,19 @@ private final class SequentialProjectStore:
     ProjectPackageStoring,
     @unchecked Sendable
 {
-    private var projects: [MyShottrProject]
+    private var projects: [InkbeamProject]
     private(set) var loadCount = 0
 
-    init(projects: [MyShottrProject]) {
+    init(projects: [InkbeamProject]) {
         self.projects = projects
     }
 
-    func load(from url: URL) throws -> MyShottrProject {
+    func load(from url: URL) throws -> InkbeamProject {
         loadCount += 1
         return projects.removeFirst()
     }
 
-    func save(_ project: MyShottrProject, to url: URL) throws {
+    func save(_ project: InkbeamProject, to url: URL) throws {
         throw StubProjectStoreError.unexpectedSave
     }
 }

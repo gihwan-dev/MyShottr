@@ -1088,7 +1088,7 @@ struct PendingCaptureInbox: PendingCaptureStoring {
                 "Application Support",
                 isDirectory: true
             )
-            .appendingPathComponent("MyShottr", isDirectory: true)
+            .appendingPathComponent("Inkbeam", isDirectory: true)
             .appendingPathComponent("Inbox", isDirectory: true)
     }
 

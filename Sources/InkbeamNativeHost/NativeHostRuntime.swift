@@ -2,9 +2,9 @@ import Foundation
 
 #if DEBUG
 enum NativeHostTestEnvironment {
-    static let inboxPathKey = "MYSHOTTR_NATIVE_HOST_TEST_INBOX"
+    static let inboxPathKey = "INKBEAM_NATIVE_HOST_TEST_INBOX"
     static let activationFailureKey =
-        "MYSHOTTR_NATIVE_HOST_TEST_ACTIVATION_FAILURE"
+        "INKBEAM_NATIVE_HOST_TEST_ACTIVATION_FAILURE"
 }
 
 private struct NativeHostTestActivator: AppActivating {

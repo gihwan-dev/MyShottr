@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 protocol DocumentWindowPresenting: AnyObject {
     func present(
-        project: MyShottrProject
+        project: InkbeamProject
     ) async throws
 }
 
@@ -31,7 +31,7 @@ final class RegionCaptureCoordinator {
     }
 
     @discardableResult
-    func captureArea() async -> MyShottrUserFacingError? {
+    func captureArea() async -> InkbeamUserFacingError? {
         guard !captureIsActive else {
             return .capture(.captureAlreadyInProgress)
         }
@@ -64,7 +64,7 @@ final class RegionCaptureCoordinator {
             return .capture(.screenCaptureKitFailed)
         }
 
-        let project: MyShottrProject
+        let project: InkbeamProject
         do {
             project = try projectFactory.make(
                 artifact: artifact,

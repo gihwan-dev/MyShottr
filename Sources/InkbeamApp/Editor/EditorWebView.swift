@@ -97,7 +97,7 @@ final class EditorWebView: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func load(
-        project: MyShottrProject
+        project: InkbeamProject
     ) throws -> EditorLoadOperation {
         try bridge.load(project: project)
     }
