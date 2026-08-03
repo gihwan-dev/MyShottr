@@ -53,6 +53,10 @@ final class AppInfoPlistTests: XCTestCase {
             exportedType["UTTypeIdentifier"] as? String,
             "dev.gihwan.inkbeam.project"
         )
+        XCTAssertEqual(
+            exportedType["UTTypeConformsTo"] as? [String],
+            ["com.apple.package"]
+        )
         let tags = try XCTUnwrap(
             exportedType["UTTypeTagSpecification"] as? [String: Any]
         )

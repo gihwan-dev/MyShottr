@@ -29,6 +29,7 @@ export type NativeBridge = {
 export type NativeBridgeMessageHandler = (message: NativeToEditorEnvelope) => void;
 
 const nativeMessageEvent = "inkbeam:native-message";
+export const ANNOTATION_SNAPSHOT_REQUEST_EVENT = "inkbeam:request-annotation-snapshot";
 const uuidPattern = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 
 export function createNativeBridge(): NativeBridge {

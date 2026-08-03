@@ -261,40 +261,7 @@ DIRTY_SOURCE="$(
 [[ -z "${DIRTY_SOURCE}" ]] \
   || fail "source tree must be clean; ignored release output is the only allowed local output"
 
-node --input-type=module - \
-  "${REPO_ROOT}/project.yml" \
-  "${REPO_ROOT}/Config/Inkbeam-Info.plist" \
-  "${REPO_ROOT}/Packages/chrome-extension/public/manifest.json" \
-  "${VERSION}" <<'NODE'
-import { readFileSync } from "node:fs";
-
-const [projectPath, plistPath, manifestPath, version] = process.argv.slice(2);
-const project = readFileSync(projectPath, "utf8");
-const plist = readFileSync(plistPath, "utf8");
-const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-
-function fail(message) {
-  process.stderr.write(`package-release: ${message}\n`);
-  process.exit(1);
-}
-
-const projectVersions = [
-  ...project.matchAll(/CFBundleShortVersionString:\s*"([^"]+)"/g),
-].map((match) => match[1]);
-if (projectVersions.length !== 1 || projectVersions[0] !== version) {
-  fail(`project.yml version does not equal ${version}`);
-}
-
-const plistMatch = plist.match(
-  /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/,
-);
-if (plistMatch?.[1] !== version) {
-  fail(`Config/Inkbeam-Info.plist version does not equal ${version}`);
-}
-if (manifest.version !== version) {
-  fail(`Chrome manifest version does not equal ${version}`);
-}
-NODE
+node "${REPO_ROOT}/Scripts/verify-release-metadata.mjs" "${VERSION}"
 
 for command_name in \
   pnpm xcodegen xcodebuild ditto shasum plutil codesign spctl find touch \

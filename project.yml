@@ -35,7 +35,7 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "0.1.0"
+        CFBundleShortVersionString: "0.2.0"
         CFBundleVersion: "1"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         LSMultipleInstancesProhibited: true
@@ -71,6 +71,7 @@ targets:
         basedOnDependencyAnalysis: false
     settings:
       base:
+        MARKETING_VERSION: "0.2.0"
         PRODUCT_BUNDLE_IDENTIFIER: dev.gihwan.inkbeam
         PRODUCT_NAME: Inkbeam
         CODE_SIGN_STYLE: Automatic

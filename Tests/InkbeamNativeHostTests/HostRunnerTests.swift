@@ -6,6 +6,13 @@ import XCTest
 final class HostRunnerTests: TemporaryDirectoryTestCase {
     private let captureID = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
 
+    func testAppActivatorUsesTheInkbeamCaptureReadyNotification() {
+        XCTAssertEqual(
+            AppActivator.captureReadyNotification.rawValue,
+            "dev.gihwan.inkbeam.captureReady"
+        )
+    }
+
     func testStagesValidatedPNGBeforeActivatingApp() async throws {
         let events = EventRecorder()
         let staging = StagingSpy(result: .success(captureID), events: events)

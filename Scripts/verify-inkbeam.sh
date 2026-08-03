@@ -196,7 +196,7 @@ cmp -s "${SOURCE_EXTENSION_KEY}" "${APP_EXTENSION_KEY}" \
 )" == "dev.gihwan.inkbeam" ]] || fail "unexpected app bundle identifier."
 [[ "$(
   plutil -extract CFBundleShortVersionString raw "${APP}/Contents/Info.plist"
-)" == "0.1.0" ]] || fail "unexpected app version."
+)" == "0.2.0" ]] || fail "unexpected app version."
 [[ "$(
   plutil -extract LSMinimumSystemVersion raw "${APP}/Contents/Info.plist"
 )" == "15.0" ]] || fail "unexpected minimum macOS version."

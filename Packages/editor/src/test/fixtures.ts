@@ -189,28 +189,6 @@ export function fixtureDocument(
   };
 }
 
-export function schemaOneFixture() {
-  const { presentation: _presentation, defaults: currentDefaults, ...document } = fixtureDocument();
-  const { rectangleFillColor: _rectangleFillColor, highlighterOpacity: _highlighterOpacity, ...defaults } = currentDefaults;
-
-  return {
-    ...document,
-    schemaVersion: 1 as const,
-    defaults,
-  };
-}
-
-export function schemaTwoFixture() {
-  const { defaults: currentDefaults, ...document } = fixtureDocument();
-  const { rectangleFillColor: _rectangleFillColor, highlighterOpacity: _highlighterOpacity, ...defaults } = currentDefaults;
-
-  return {
-    ...document,
-    schemaVersion: 2 as const,
-    defaults,
-  };
-}
-
 export function creationGesture(
   tool: Exclude<EditorTool, "selection">,
 ): CreationGesture {

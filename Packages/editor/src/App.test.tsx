@@ -3,7 +3,11 @@ import { createRef, forwardRef, useImperativeHandle, useRef, type ReactNode } fr
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App, EditorApp, type EditorAppHandle } from "./App";
-import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
+import {
+  ANNOTATION_SNAPSHOT_REQUEST_EVENT,
+  NativeBridgeProvider,
+  type NativeBridge,
+} from "./bridge/nativeBridge";
 import type { EditorCanvasHandle } from "./canvas/EditorCanvas";
 import { keyboardCommandFor } from "./input/ShortcutRouter";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorTool, Point } from "./model/elements";
@@ -2192,7 +2196,7 @@ describe("EditorApp", () => {
     fireEvent.click(screen.getByRole("button", { name: "Update first element" }));
     expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:201,0");
 
-    window.dispatchEvent(new CustomEvent("inkbeam:request-annotation-snapshot", {
+    window.dispatchEvent(new CustomEvent(ANNOTATION_SNAPSHOT_REQUEST_EVENT, {
       detail: { requestId: secondaryRequestId },
     }));
     harness.receive({
@@ -2329,7 +2333,7 @@ describe("EditorApp", () => {
       ) return;
       exercisedGap = true;
       harness.receive(nativeHistoryMessage("undo"));
-      window.dispatchEvent(new CustomEvent("inkbeam:request-annotation-snapshot", {
+      window.dispatchEvent(new CustomEvent(ANNOTATION_SNAPSHOT_REQUEST_EVENT, {
         detail: { requestId: gapSnapshotRequestId },
       }));
       harness.receive({
@@ -2615,7 +2619,7 @@ describe("EditorApp", () => {
     }]);
   });
 
-  it("returns a correlated annotation snapshot through the local native request event", async () => {
+  it("ignores the old snapshot event and returns a snapshot only for the current event", async () => {
     vi.stubGlobal("Image", class {
       naturalWidth = 1440;
       naturalHeight = 900;
@@ -2643,8 +2647,17 @@ describe("EditorApp", () => {
       },
     });
     await screen.findByRole("main", { name: "Inkbeam editor" });
+    await vi.waitFor(() => expect(sent.some(({ type }) => type === "historyStateChanged")).toBe(true));
+    sent.length = 0;
 
-    window.dispatchEvent(new CustomEvent("inkbeam:request-annotation-snapshot", {
+    const oldSnapshotRequestEvent = ["my", "shottr", ":request-annotation-snapshot"].join("");
+    window.dispatchEvent(new CustomEvent(oldSnapshotRequestEvent, {
+      detail: { requestId: "11111111-2222-3333-4444-555555555555" },
+    }));
+    await act(async () => {});
+    expect(sent).toEqual([]);
+
+    window.dispatchEvent(new CustomEvent(ANNOTATION_SNAPSHOT_REQUEST_EVENT, {
       detail: { requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB" },
     }));
 
@@ -2693,7 +2706,7 @@ describe("EditorApp", () => {
       target: { value: "25" },
     });
 
-    window.dispatchEvent(new CustomEvent("inkbeam:request-annotation-snapshot", {
+    window.dispatchEvent(new CustomEvent(ANNOTATION_SNAPSHOT_REQUEST_EVENT, {
       detail: { requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB" },
     }));
 

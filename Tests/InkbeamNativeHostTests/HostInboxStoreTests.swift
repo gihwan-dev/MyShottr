@@ -5,6 +5,17 @@ import XCTest
 final class HostInboxStoreTests: TemporaryDirectoryTestCase {
     private let captureID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
 
+    func testDefaultRootUsesTheInkbeamApplicationSupportInbox() {
+        let root = HostInboxStore().rootURL
+
+        XCTAssertEqual(root.lastPathComponent, "Inbox")
+        XCTAssertEqual(root.deletingLastPathComponent().lastPathComponent, "Inkbeam")
+        XCTAssertEqual(
+            root.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent,
+            "Application Support"
+        )
+    }
+
     func testCreatesInboxRootWithOwnerOnlyPermissions() throws {
         let root = temporaryDirectory.appendingPathComponent("Inbox", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)

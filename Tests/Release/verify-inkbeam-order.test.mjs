@@ -62,6 +62,9 @@ case "\${tool}" in
     if [[ "\${1:-}" == */Scripts/verify-clean-cutover.mjs ]]; then
       print 'scanner' >>"\${INKBEAM_ORDER_EVENTS}"
       [[ -f "\${INKBEAM_TEST_REPO_ROOT}/Inkbeam.xcodeproj/project.pbxproj" ]] || exit 91
+      if [[ -n "\${INKBEAM_ORDER_SCANNER_FAILURE:-}" ]]; then
+        exit "\${INKBEAM_ORDER_SCANNER_FAILURE}"
+      fi
     fi
     exit 0
     ;;
@@ -109,7 +112,7 @@ case "\${tool}" in
   plutil)
     case "\${2:-}" in
       CFBundleIdentifier) print 'dev.gihwan.inkbeam' ;;
-      CFBundleShortVersionString) print '0.1.0' ;;
+      CFBundleShortVersionString) print '0.2.0' ;;
       LSMinimumSystemVersion) print '15.0' ;;
       *) exit 94 ;;
     esac
@@ -161,4 +164,25 @@ esac
   const events = (await fs.readFile(eventsPath, "utf8")).trim().split("\n");
   assert.deepEqual(events, ["xcodegen", "scanner", "pnpm-test-release"]);
   assert.equal((await fs.lstat(generatedProjectPath)).isFile(), true);
+
+  await fs.rm(generatedProjectPath);
+  await fs.writeFile(eventsPath, "");
+  const failedExecution = spawnSync("/bin/zsh", [verifierPath], {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${binPath}:${process.env.PATH}`,
+      TMPDIR: temporaryPath,
+      INKBEAM_ORDER_EVENTS: eventsPath,
+      INKBEAM_ORDER_SCANNER_FAILURE: "73",
+      INKBEAM_TEST_REPO_ROOT: root,
+    },
+  });
+
+  assert.equal(failedExecution.status, 73);
+  assert.deepEqual(
+    (await fs.readFile(eventsPath, "utf8")).trim().split("\n"),
+    ["xcodegen", "scanner"],
+  );
 });

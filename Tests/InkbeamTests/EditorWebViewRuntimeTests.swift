@@ -38,6 +38,16 @@ final class EditorWebViewRuntimeTests: TemporaryDirectoryTestCase {
         let loadOperation = try editor.load(project: validProject())
         try await loadOperation.wait()
         try await waitForEditorMount(in: editor.webView)
+        let currentHandlerExists = try await evaluateBoolean(
+            "typeof window.webkit?.messageHandlers?.inkbeam?.postMessage === 'function'",
+            in: editor.webView
+        )
+        let oldHandlerIsAbsent = try await evaluateBoolean(
+            "typeof window.webkit?.messageHandlers?.[['my', 'shottr'].join('')] === 'undefined'",
+            in: editor.webView
+        )
+        XCTAssertTrue(currentHandlerExists)
+        XCTAssertTrue(oldHandlerIsAbsent)
         try await waitForSourceImage(in: editor.webView)
         try await assertExternalResourcesAreBlocked(in: editor.webView)
 

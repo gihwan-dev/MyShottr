@@ -11,6 +11,7 @@ const readSwiftTree = (directory) => fs.readdirSync(directory, { recursive: true
 
 test("executable build consumers use Inkbeam project products and test module", () => {
   const packageRelease = read("Scripts/package-release.sh");
+  const metadataPreflight = read("Scripts/verify-release-metadata.mjs");
   const verifier = read("Scripts/verify-inkbeam.sh");
   const artifactVerifier = read("Scripts/verify-release-artifacts.sh");
   const appTests = readSwiftTree("Tests/InkbeamTests");
@@ -23,7 +24,12 @@ test("executable build consumers use Inkbeam project products and test module", 
     assert.match(script, /Inkbeam\.app/);
     assert.match(script, /InkbeamNativeHost/);
   }
-  assert.match(packageRelease, /Config\/Inkbeam-Info\.plist/);
+  assert.match(metadataPreflight, /Config\/Inkbeam-Info\.plist/);
+  assert.match(metadataPreflight, /Packages\/chrome-extension\/public\/manifest\.json/);
+  assert.match(
+    packageRelease,
+    /node "\$\{REPO_ROOT\}\/Scripts\/verify-release-metadata\.mjs" "\$\{VERSION\}"/,
+  );
   assert.match(
     verifier,
     /SOURCE_EXTENSION_KEY="\$\{REPO_ROOT\}\/Config\/chrome-extension-key\.b64"/,
@@ -39,6 +45,10 @@ test("executable build consumers use Inkbeam project products and test module", 
   assert.match(
     verifier,
     /manifest\.version === "0\.2\.0", "built extension version is not 0\.2\.0"/,
+  );
+  assert.match(
+    verifier,
+    /CFBundleShortVersionString raw "\$\{APP\}\/Contents\/Info\.plist"\s*\n\)" == "0\.2\.0"/,
   );
   assert.match(artifactVerifier, /inspect_archive "\$\{APP_ARCHIVE\}" "Inkbeam\.app" "app"/);
   assert.match(artifactVerifier, /Contents\/Helpers\/InkbeamNativeHost/);

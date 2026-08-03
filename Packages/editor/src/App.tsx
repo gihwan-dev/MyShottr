@@ -36,7 +36,10 @@ import {
   EditorWorkspace,
   type EditorWorkspaceHandle,
 } from "./components/EditorWorkspace";
-import { useNativeBridge } from "./bridge/nativeBridge";
+import {
+  ANNOTATION_SNAPSHOT_REQUEST_EVENT,
+  useNativeBridge,
+} from "./bridge/nativeBridge";
 import { useNativeAppearance } from "./appearance/useNativeAppearance";
 import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
 import { sendComposite } from "./export/sendComposite";
@@ -801,12 +804,12 @@ export function App() {
         return;
       }
     });
-    window.addEventListener("inkbeam:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
+    window.addEventListener(ANNOTATION_SNAPSHOT_REQUEST_EVENT, receiveAnnotationSnapshotRequest);
     void bridge.send("editorReady", {});
     return () => {
       latestLoadRequestSequence.current += 1;
       unsubscribe();
-      window.removeEventListener("inkbeam:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
+      window.removeEventListener(ANNOTATION_SNAPSHOT_REQUEST_EVENT, receiveAnnotationSnapshotRequest);
     };
   }, [bridge, receiveOperationStatus]);
 
