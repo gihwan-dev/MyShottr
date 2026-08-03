@@ -129,7 +129,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
             )
         )
         hotKeyHarness.invokeEventHandler(
-            signature: 0x4D_53_48_54,
+            signature: 0x49_4E_4B_42,
             id: 1
         )
         await selector.waitUntilStarted()
