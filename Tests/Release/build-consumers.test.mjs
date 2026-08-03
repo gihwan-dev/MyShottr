@@ -12,6 +12,7 @@ const readSwiftTree = (directory) => fs.readdirSync(directory, { recursive: true
 test("executable build consumers use Inkbeam project products and test module", () => {
   const packageRelease = read("Scripts/package-release.sh");
   const verifier = read("Scripts/verify-v1.sh");
+  const artifactVerifier = read("Scripts/verify-release-artifacts.sh");
   const appTests = readSwiftTree("Tests/InkbeamTests");
   const nativeHostProcessTests = read("Tests/InkbeamNativeHostTests/NativeHostProcessTests.swift");
   const appConfigurationTests = read("Tests/InkbeamTests/AppConfigurationTests.swift");
@@ -25,6 +26,14 @@ test("executable build consumers use Inkbeam project products and test module", 
   }
   assert.match(packageRelease, /Config\/Inkbeam-Info\.plist/);
   assert.doesNotMatch(packageRelease, /Config\/MyShottr-Info\.plist/);
+  assert.match(artifactVerifier, /inspect_archive "\$\{APP_ARCHIVE\}" "Inkbeam\.app" "app"/);
+  assert.match(artifactVerifier, /Contents\/Helpers\/InkbeamNativeHost/);
+  assert.match(artifactVerifier, /Contents\/MacOS\/Inkbeam/);
+  assert.match(artifactVerifier, /dev\.gihwan\.inkbeam/);
+  assert.doesNotMatch(
+    artifactVerifier,
+    /MyShottr-\$\{VERSION\}|MyShottr-Chrome|MyShottr\.app|Contents\/MacOS\/MyShottr|MyShottrNativeHost|com\.myshottr\.app/,
+  );
   assert.doesNotMatch(appTests, /@testable import MyShottr/);
   assert.match(appTests, /@testable import Inkbeam/);
   assert.match(appConfigurationTests, /extensions\.contains\("inkbeam"\)/);
