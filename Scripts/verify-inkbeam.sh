@@ -114,6 +114,7 @@ echo "macOS: ${MACOS_VERSION}"
 
 cd "${REPO_ROOT}"
 
+run_step "Generate the Xcode project" xcodegen generate
 run_step "Install locked JavaScript dependencies" \
   pnpm install --frozen-lockfile
 run_step "Run TypeScript unit tests" pnpm test
@@ -131,8 +132,6 @@ run_step "Verify the Inkbeam clean cutover" \
   node "${REPO_ROOT}/Scripts/verify-clean-cutover.mjs"
 run_step "Run release workflow, packaging, and documentation contracts" \
   pnpm test:release
-
-run_step "Generate the Xcode project" xcodegen generate
 
 clean_derived_data "${SIGNED_DERIVED_DATA}"
 clean_derived_data "${APP_TEST_DERIVED_DATA}"

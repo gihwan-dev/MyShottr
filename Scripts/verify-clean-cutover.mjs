@@ -81,6 +81,14 @@ function maskRange(text, startOffset, endOffset) {
     .replace(/[^\n]/g, " ")}${text.slice(endOffset)}`;
 }
 
+function isStandaloneMarker(text, offset, marker) {
+  const lineStart = text.lastIndexOf("\n", offset - 1) + 1;
+  const nextNewline = text.indexOf("\n", offset);
+  const lineEnd = nextNewline === -1 ? text.length : nextNewline;
+  const line = text.slice(lineStart, lineEnd).replace(/\r$/, "");
+  return line === marker;
+}
+
 function maskSingleSection(text, startMarker, endMarker) {
   const starts = occurrencesOf(text, startMarker);
   const ends = occurrencesOf(text, endMarker);
@@ -88,6 +96,12 @@ function maskSingleSection(text, startMarker, endMarker) {
     return { text, malformed: false };
   }
   if (starts.length !== 1 || ends.length !== 1) {
+    return { text, malformed: true };
+  }
+  if (
+    !isStandaloneMarker(text, starts[0], startMarker)
+    || !isStandaloneMarker(text, ends[0], endMarker)
+  ) {
     return { text, malformed: true };
   }
 
@@ -173,7 +187,67 @@ function scanPath(relativePath) {
   return violations;
 }
 
-async function collectRepositorySurfaceFiles(repositoryRoot) {
+async function isGitIgnored(repositoryRoot, relativePath) {
+  try {
+    await execFileAsync(
+      "git",
+      ["check-ignore", "-q", "--", relativePath],
+      { cwd: repositoryRoot },
+    );
+    return true;
+  } catch (error) {
+    if (error?.code === 1) return false;
+    throw error;
+  }
+}
+
+async function collectNonRegularSurfacePaths(repositoryRoot, fileSystem) {
+  const nonRegularPaths = [];
+
+  async function visit(relativePath, isSurfaceRoot = false) {
+    const absolutePath = path.join(repositoryRoot, relativePath);
+    let stats;
+    try {
+      stats = await fileSystem.lstat(absolutePath);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+
+    if (!stats.isDirectory()) {
+      if (
+        !stats.isFile()
+        && (isSurfaceRoot || !(await isGitIgnored(repositoryRoot, relativePath)))
+      ) {
+        nonRegularPaths.push(relativePath);
+      }
+      return;
+    }
+
+    const entries = await fileSystem.readdir(absolutePath, { withFileTypes: true });
+    entries.sort((left, right) => (
+      left.name < right.name ? -1 : Number(left.name > right.name)
+    ));
+    for (const entry of entries) {
+      const childPath = path.posix.join(relativePath, entry.name);
+      if (entry.isDirectory()) {
+        if (!(await isGitIgnored(repositoryRoot, childPath))) {
+          await visit(childPath);
+        }
+      } else if (
+        !entry.isFile()
+        && !(await isGitIgnored(repositoryRoot, childPath))
+      ) {
+        nonRegularPaths.push(childPath);
+      }
+    }
+  }
+
+  for (const surface of scannedSurfaces) await visit(surface, true);
+  return nonRegularPaths;
+}
+
+async function collectRepositorySurfaceFiles(repositoryRoot, fileSystem) {
   const { stdout } = await execFileAsync(
     "git",
     [
@@ -187,7 +261,10 @@ async function collectRepositorySurfaceFiles(repositoryRoot) {
     ],
     { cwd: repositoryRoot, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
   );
-  const relativePaths = stdout.split("\0").filter(Boolean);
+  const relativePaths = [
+    ...stdout.split("\0").filter(Boolean),
+    ...await collectNonRegularSurfacePaths(repositoryRoot, fileSystem),
+  ];
   if (!relativePaths.includes(requiredGeneratedProject)) {
     relativePaths.push(requiredGeneratedProject);
   }
@@ -207,27 +284,57 @@ function compareViolations(left, right) {
     || (left.message < right.message ? -1 : Number(left.message > right.message));
 }
 
-export async function collectCleanCutoverViolations(repositoryRoot) {
+function nonRegularKind(stats) {
+  if (stats.isSymbolicLink()) return "symbolic link";
+  if (stats.isDirectory()) return "directory";
+  if (stats.isFIFO()) return "FIFO";
+  if (stats.isSocket()) return "socket";
+  if (stats.isCharacterDevice()) return "character device";
+  if (stats.isBlockDevice()) return "block device";
+  return "unknown type";
+}
+
+function nonRegularViolation(relativePath, stats) {
+  return {
+    relativePath,
+    line: -2,
+    column: -2,
+    tokenIndex: -2,
+    message: `${relativePath}: repository entry is not a regular file (${nonRegularKind(stats)})`,
+  };
+}
+
+export async function collectCleanCutoverViolations(
+  repositoryRoot,
+  { fileSystem = fs } = {},
+) {
   const generatedProjectPath = path.join(repositoryRoot, requiredGeneratedProject);
+  let generatedProject;
   try {
-    const generatedProject = await fs.stat(generatedProjectPath);
-    if (!generatedProject.isFile()) throw Object.assign(new Error("not a file"), { code: "ENOENT" });
+    generatedProject = await fileSystem.lstat(generatedProjectPath);
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
     return [`${requiredGeneratedProject}: missing required generated project`];
   }
+  if (!generatedProject.isFile()) {
+    return [nonRegularViolation(requiredGeneratedProject, generatedProject).message];
+  }
 
   const violations = [];
-  const relativePaths = await collectRepositorySurfaceFiles(repositoryRoot);
+  const relativePaths = await collectRepositorySurfaceFiles(repositoryRoot, fileSystem);
   for (const relativePath of relativePaths) {
     const isScanner = relativePath === "Scripts/verify-clean-cutover.mjs";
-    if (exactHistoricalFiles.has(relativePath) && !isScanner) continue;
+    const isHistorical = exactHistoricalFiles.has(relativePath) && !isScanner;
+    const stats = await fileSystem.lstat(path.join(repositoryRoot, relativePath));
+    if (!stats.isFile()) {
+      if (!isHistorical) violations.push(...scanPath(relativePath));
+      violations.push(nonRegularViolation(relativePath, stats));
+      continue;
+    }
+    if (isHistorical) continue;
 
     violations.push(...scanPath(relativePath));
-    const stats = await fs.lstat(path.join(repositoryRoot, relativePath));
-    if (!stats.isFile()) continue;
-
-    const bytes = await fs.readFile(path.join(repositoryRoot, relativePath));
+    const bytes = await fileSystem.readFile(path.join(repositoryRoot, relativePath));
     let text;
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
