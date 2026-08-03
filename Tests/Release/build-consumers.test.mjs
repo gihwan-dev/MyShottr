@@ -29,7 +29,10 @@ test("executable build consumers use Inkbeam project products and test module", 
   assert.match(artifactVerifier, /inspect_archive "\$\{APP_ARCHIVE\}" "Inkbeam\.app" "app"/);
   assert.match(artifactVerifier, /Contents\/Helpers\/InkbeamNativeHost/);
   assert.match(artifactVerifier, /Contents\/MacOS\/Inkbeam/);
-  assert.match(artifactVerifier, /dev\.gihwan\.inkbeam/);
+  assert.match(
+    artifactVerifier,
+    /\)" == "dev\.gihwan\.inkbeam" \]\] \|\| fail "unexpected app bundle identifier"/,
+  );
   assert.doesNotMatch(
     artifactVerifier,
     /MyShottr-\$\{VERSION\}|MyShottr-Chrome|MyShottr\.app|Contents\/MacOS\/MyShottr|MyShottrNativeHost|com\.myshottr\.app/,
