@@ -1208,7 +1208,11 @@ final class DocumentWindowControllerOutputTests:
         let presenter = OutputErrorPresenterSpy()
         var snapshotRequestCount = 0
         var statusSendCount = 0
-        let controller = try DocumentWindowController(
+        var observedDestinationValidation = false
+        var controller: DocumentWindowController!
+        var closeButton: NSButton!
+        var copyItem: NSToolbarItem!
+        controller = try DocumentWindowController(
             project: project,
             projectURL: nil,
             projectStore: store,
@@ -1218,19 +1222,30 @@ final class DocumentWindowControllerOutputTests:
                 snapshotRequestCount += 1
                 return project.annotationJSON
             },
-            projectSaveURLProvider: { destination },
+            projectSaveURLProvider: {
+                observedDestinationValidation = true
+                XCTAssertFalse(controller.hasActiveOutputOperation)
+                XCTAssertTrue(closeButton.isEnabled)
+                XCTAssertTrue(controller.validateToolbarItem(copyItem))
+                return destination
+            },
             operationStatusSender: { _, _ in
                 statusSendCount += 1
             },
             commandWindowPredicate: { _ in true }
         )
+        closeButton = try XCTUnwrap(
+            controller.window?.standardWindowButton(.closeButton)
+        )
+        copyItem = try makeCopyToolbarItem(controller)
         try await controller.waitForEditorLoad()
 
-        XCTAssertTrue(controller.saveProjectAction(nil))
+        XCTAssertFalse(controller.saveProjectAction(nil))
         await waitUntil {
             presenter.presentedViewModels.count == 1
         }
 
+        XCTAssertTrue(observedDestinationValidation)
         XCTAssertEqual(store.saveCount, 0)
         XCTAssertEqual(snapshotRequestCount, 0)
         XCTAssertEqual(statusSendCount, 0)

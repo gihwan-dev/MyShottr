@@ -56,7 +56,6 @@ final class DocumentWindowController:
     private enum ProjectSaveOutcome: Equatable {
         case saved
         case superseded
-        case cancelledBeforeStart
         case cancelledAfterStart
         case failed
     }
@@ -316,11 +315,15 @@ final class DocumentWindowController:
         }
         switch decision {
         case .save:
-            guard let reservation = beginSaveOutput() else {
+            guard canBeginOutput,
+                  let url = resolveProjectSaveURL(),
+                  let reservation = beginSaveOutput()
+            else {
                 return false
             }
             return await saveProject(
-                with: reservation
+                with: reservation,
+                to: url
             ) == .saved
         case .discard:
             return true
@@ -481,10 +484,15 @@ final class DocumentWindowController:
 
     @objc func saveProjectAction(_ sender: Any?) -> Bool {
         guard commandWindowPredicate(window),
+              canBeginOutput,
+              let url = resolveProjectSaveURL(),
               let reservation = beginSaveOutput()
         else { return false }
         Task { @MainActor in
-            _ = await saveProject(with: reservation)
+            _ = await saveProject(
+                with: reservation,
+                to: url
+            )
         }
         return true
     }
@@ -643,9 +651,7 @@ final class DocumentWindowController:
     private func beginOutput(
         _ operation: OutputOperation
     ) -> Bool {
-        guard editorIsReady,
-              outputOperation == nil
-        else { return false }
+        guard canBeginOutput else { return false }
         let closeButton = window?.standardWindowButton(.closeButton)
         closeButtonEnabledBeforeOutput = closeButton?.isEnabled
         outputOperation = operation
@@ -671,18 +677,17 @@ final class DocumentWindowController:
         return SaveOutputReservation()
     }
 
-    private func saveProject(
-        with reservation: SaveOutputReservation
-    ) async -> ProjectSaveOutcome {
-        _ = reservation
-        defer { finishOutput() }
+    private var canBeginOutput: Bool {
+        editorIsReady && outputOperation == nil
+    }
 
+    private func resolveProjectSaveURL() -> URL? {
         let url: URL
         if let projectURL {
             url = projectURL
         } else {
             guard let selectedURL = projectSaveURLProvider() else {
-                return .cancelledBeforeStart
+                return nil
             }
             url = selectedURL
         }
@@ -694,8 +699,17 @@ final class DocumentWindowController:
                     context: .projectSave
                 )
             )
-            return .failed
+            return nil
         }
+        return url
+    }
+
+    private func saveProject(
+        with reservation: SaveOutputReservation,
+        to url: URL
+    ) async -> ProjectSaveOutcome {
+        _ = reservation
+        defer { finishOutput() }
 
         let modificationRevision =
             session.modificationRevision
