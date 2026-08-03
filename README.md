@@ -2,7 +2,7 @@
 
 Fast, local screenshot capture and Excalidraw-style annotation for macOS.
 
-![MyShottr Quick Ink editor](docs/images/editor-quick-ink.png)
+![MyShottr Quick Ink editor](docs/images/editor-inkbeam.png)
 
 MyShottr captures a macOS region or the visible content of the active Chrome
 tab, then opens it in one editable Quick Ink canvas. Captures stay on your Mac.

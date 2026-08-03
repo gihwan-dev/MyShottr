@@ -25,35 +25,35 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>MyShottr captures a screen region that you explicitly select.</string>
+    <string>Inkbeam captures a screen region that you explicitly select.</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
             <key>CFBundleTypeName</key>
-            <string>MyShottr Project</string>
+            <string>Inkbeam Project</string>
             <key>CFBundleTypeExtensions</key>
-            <array><string>myshottr</string></array>
+            <array><string>inkbeam</string></array>
             <key>CFBundleTypeRole</key>
             <string>Editor</string>
             <key>LSHandlerRank</key>
             <string>Owner</string>
             <key>LSItemContentTypes</key>
-            <array><string>com.myshottr.project</string></array>
+            <array><string>dev.gihwan.inkbeam.project</string></array>
         </dict>
     </array>
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>
             <key>UTTypeIdentifier</key>
-            <string>com.myshottr.project</string>
+            <string>dev.gihwan.inkbeam.project</string>
             <key>UTTypeConformsTo</key>
             <array><string>com.apple.package</string></array>
             <key>UTTypeDescription</key>
-            <string>MyShottr Project</string>
+            <string>Inkbeam Project</string>
             <key>UTTypeTagSpecification</key>
             <dict>
                 <key>public.filename-extension</key>
-                <array><string>myshottr</string></array>
+                <array><string>inkbeam</string></array>
             </dict>
         </dict>
     </array>

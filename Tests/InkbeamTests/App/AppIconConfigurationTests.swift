@@ -3,7 +3,7 @@ import XCTest
 @testable import MyShottr
 
 final class AppIconConfigurationTests: XCTestCase {
-    func testBuiltAppUsesQuickInkAppIconAndStatusBarIcon() {
+    func testBuiltAppUsesInkbeamAppIconAndStatusBarIcon() {
         XCTAssertEqual(
             Bundle.main.object(forInfoDictionaryKey: "CFBundleIconName") as? String,
             "AppIcon"

@@ -321,10 +321,10 @@ mkdir -p "${BUILD_ROOT}" "${STAGING_ROOT}" "${PACKAGE_ROOT}"
 cd "${REPO_ROOT}"
 
 echo "==> Build production editor"
-pnpm --filter @myshottr/editor build
+pnpm --filter @inkbeam/editor build
 
 echo "==> Build production Chrome extension"
-pnpm --filter @myshottr/chrome-extension build
+pnpm --filter @inkbeam/chrome-extension build
 
 echo "==> Generate Xcode project"
 xcodegen generate

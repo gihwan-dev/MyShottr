@@ -120,11 +120,11 @@ run_step "Run TypeScript unit tests" pnpm test
 run_step "Type-check TypeScript packages" pnpm typecheck
 run_step "Build editor and production Chrome extension" pnpm build
 run_step "Install the pinned Playwright Chromium runtime" \
-  pnpm --filter @myshottr/chrome-extension exec playwright install chromium
+  pnpm --filter @inkbeam/chrome-extension exec playwright install chromium
 run_step "Run editor visual and accessibility tests" \
-  pnpm --filter @myshottr/editor test:visual
+  pnpm --filter @inkbeam/editor test:visual
 run_step "Run Chrome extension integration tests" \
-  pnpm --filter @myshottr/chrome-extension exec playwright test
+  pnpm --filter @inkbeam/chrome-extension exec playwright test
 run_step "Verify local-only runtime and extension permissions" \
   "${REPO_ROOT}/Scripts/verify-privacy.sh"
 run_step "Run release workflow, packaging, and documentation contracts" \

@@ -12,7 +12,7 @@ const README_PATH = "README.md";
 const LICENSE_PATH = "LICENSE";
 const NOTES_PATH = "docs/releases/v0.1.0.md";
 const INSTALL_PATH = "docs/testing/release-installation.md";
-const SCREENSHOT_PATH = "docs/images/editor-quick-ink.png";
+const SCREENSHOT_PATH = "docs/images/editor-inkbeam.png";
 
 const SCREENSHOT_SOURCE_SHA = "a1c1a69b943ce42a4008cc41e8a930a5bb383445";
 const SCREENSHOT_SHA256 =
@@ -55,7 +55,7 @@ assert.match(
 );
 assert.match(
   readme,
-  /!\[MyShottr Quick Ink editor\]\(docs\/images\/editor-quick-ink\.png\)/,
+  /!\[MyShottr Quick Ink editor\]\(docs\/images\/editor-inkbeam\.png\)/,
 );
 
 const featuresBody = readme.match(
