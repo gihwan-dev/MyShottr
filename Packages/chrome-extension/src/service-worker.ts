@@ -37,6 +37,6 @@ chrome.commands.onCommand.addListener((command) => {
   if (command === "capture-visible-viewport") startCaptureAction();
 });
 
-if (__MYSHOTTR_E2E__) {
+if (__INKBEAM_E2E__) {
   installE2ETestSeam(runCaptureAction);
 }

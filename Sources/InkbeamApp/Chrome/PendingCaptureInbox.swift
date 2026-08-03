@@ -1081,7 +1081,7 @@ struct PendingCaptureInbox: PendingCaptureStoring {
         return data
     }
 
-    private static var defaultRootURL: URL {
+    static var defaultRootURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent(

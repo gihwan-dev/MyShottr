@@ -3,6 +3,32 @@ import XCTest
 @testable import Inkbeam
 
 final class NativeMessagingRegistrarTests: TemporaryDirectoryTestCase {
+    func testRegistrarUsesOnlyExactInkbeamHostAndManifestLocation() {
+        XCTAssertEqual(
+            NativeMessagingRegistrar.hostName,
+            "dev.gihwan.inkbeam.capture"
+        )
+        XCTAssertEqual(
+            NativeMessagingRegistrar.defaultManifestURL.path,
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent(
+                    "Application Support",
+                    isDirectory: true
+                )
+                .appendingPathComponent("Google", isDirectory: true)
+                .appendingPathComponent("Chrome", isDirectory: true)
+                .appendingPathComponent(
+                    "NativeMessagingHosts",
+                    isDirectory: true
+                )
+                .appendingPathComponent(
+                    "dev.gihwan.inkbeam.capture.json"
+                )
+                .path
+        )
+    }
+
     func testAppBundleContainsCommittedExtensionPublicKey() throws {
         let keyURL = try XCTUnwrap(
             Bundle.main.url(
@@ -18,7 +44,7 @@ final class NativeMessagingRegistrarTests: TemporaryDirectoryTestCase {
         )
     }
 
-    func testBundledRegistrarPointsToEmbeddedHelper() throws {
+    func testBundledRegistrarUsesInstalledHelperPath() throws {
         let registrar = try NativeMessagingRegistrar(
             bundle: .main,
             manifestURL: ChromeFixtures.manifestURL(
@@ -30,11 +56,7 @@ final class NativeMessagingRegistrarTests: TemporaryDirectoryTestCase {
 
         XCTAssertEqual(
             manifest.path,
-            Bundle.main.bundleURL.standardizedFileURL
-                .appendingPathComponent("Contents", isDirectory: true)
-                .appendingPathComponent("Helpers", isDirectory: true)
-                .appendingPathComponent("InkbeamNativeHost")
-                .path
+            "/Applications/Inkbeam.app/Contents/Helpers/InkbeamNativeHost"
         )
         XCTAssertEqual(
             manifest.allowedOrigins,
@@ -114,6 +136,35 @@ final class NativeMessagingRegistrarTests: TemporaryDirectoryTestCase {
             from: Data(contentsOf: manifestURL)
         )
         XCTAssertEqual(decoded.path, currentHelper.path)
+    }
+
+    func testInstallDoesNotWriteOrDeleteLegacyHostManifest() throws {
+        let hostDirectory = temporaryDirectory.appendingPathComponent(
+            "NativeMessagingHosts",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: hostDirectory,
+            withIntermediateDirectories: true
+        )
+        let legacyURL = hostDirectory.appendingPathComponent(
+            "com." + "my" + "shottr.capture.json"
+        )
+        let legacyData = Data("legacy sentinel".utf8)
+        try legacyData.write(to: legacyURL)
+        let manifestURL = hostDirectory.appendingPathComponent(
+            "dev.gihwan.inkbeam.capture.json"
+        )
+        let registrar = NativeMessagingRegistrar(
+            publicKeyBase64: ChromeFixtures.extensionPublicKeyBase64,
+            helperURL: ChromeFixtures.helperURL(in: temporaryDirectory),
+            manifestURL: manifestURL
+        )
+
+        try registrar.install()
+
+        XCTAssertEqual(try Data(contentsOf: legacyURL), legacyData)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: manifestURL.path))
     }
 
     func testRelativeHelperPathIsRejected() {

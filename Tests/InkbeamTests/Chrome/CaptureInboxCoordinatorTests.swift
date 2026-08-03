@@ -4,6 +4,13 @@ import XCTest
 
 @MainActor
 final class CaptureInboxCoordinatorTests: XCTestCase {
+    func testCaptureReadyNotificationUsesOnlyInkbeamNamespace() {
+        XCTAssertEqual(
+            CaptureInboxCoordinator.captureReadyNotification.rawValue,
+            "dev.gihwan.inkbeam.captureReady"
+        )
+    }
+
     private let captureDate = Date(timeIntervalSince1970: 1_745_678_901)
 
     func testConcurrentScanAndNotificationJoinOneSuccessfulImport()

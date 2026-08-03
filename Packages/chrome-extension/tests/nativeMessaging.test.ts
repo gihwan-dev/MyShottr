@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CaptureMessage } from "../src/captureVisibleViewport";
 import {
+  NATIVE_HOST_NAME,
   sendCaptureToNativeHost,
   setSendNativeMessageForTesting,
   type NativeHostErrorCode,
@@ -23,6 +24,10 @@ describe("sendCaptureToNativeHost", () => {
     setSendNativeMessageForTesting(sendNativeMessage);
   });
 
+  it("uses the single Inkbeam native host", () => {
+    expect(NATIVE_HOST_NAME).toBe("dev.gihwan.inkbeam.capture");
+  });
+
   it("accepts the exact success reply", async () => {
     sendNativeMessage.mockResolvedValue({ ok: true, captureId });
 
@@ -32,7 +37,7 @@ describe("sendCaptureToNativeHost", () => {
     });
     expect(sendNativeMessage).toHaveBeenCalledTimes(1);
     expect(sendNativeMessage).toHaveBeenCalledWith(
-      "com.myshottr.capture",
+      "dev.gihwan.inkbeam.capture",
       capture,
     );
   });

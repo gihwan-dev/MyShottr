@@ -44,13 +44,15 @@ export function installE2ETestSeam(runCaptureAction: RunCaptureAction): void {
     return reply;
   });
 
-  Object.defineProperty(globalThis, "__myshottrE2E", {
+  Object.defineProperty(globalThis, "__inkbeamE2E", {
     configurable: false,
     enumerable: false,
     writable: false,
     value: {
-      async runCaptureAction(): Promise<TestSeamSnapshot> {
-        await runCaptureAction();
+      async runCaptureAction(
+        mode?: BrowserCaptureMode,
+      ): Promise<TestSeamSnapshot> {
+        await runCaptureAction(mode);
         return snapshot();
       },
       setNextNativeReply(reply: unknown): void {
@@ -68,7 +70,7 @@ function assertNativeMessage(
   message: CaptureMessage,
 ): void {
   if (
-    hostName !== "com.myshottr.capture"
+    hostName !== "dev.gihwan.inkbeam.capture"
     || message.protocolVersion !== 1
     || message.type !== "capture"
     || message.captureMode !== "visibleViewport"

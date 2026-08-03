@@ -4,6 +4,19 @@ import XCTest
 @testable import Inkbeam
 
 final class PendingCaptureInboxTests: TemporaryDirectoryTestCase {
+    func testDefaultInboxUsesOnlyInkbeamApplicationSupport() {
+        XCTAssertEqual(
+            PendingCaptureInbox.defaultRootURL.lastPathComponent,
+            "Inbox"
+        )
+        XCTAssertEqual(
+            PendingCaptureInbox.defaultRootURL
+                .deletingLastPathComponent()
+                .lastPathComponent,
+            "Inkbeam"
+        )
+    }
+
     func testCreatesInboxRootWithOwnerOnlyPermissions() throws {
         let root = temporaryDirectory.appendingPathComponent(
             "Inbox",

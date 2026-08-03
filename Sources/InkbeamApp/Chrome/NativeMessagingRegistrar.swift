@@ -29,6 +29,10 @@ enum NativeMessagingRegistrarError: Error {
 
 struct NativeMessagingRegistrar {
     static let hostName = "dev.gihwan.inkbeam.capture"
+    static let installedHelperURL = URL(
+        fileURLWithPath:
+            "/Applications/Inkbeam.app/Contents/Helpers/InkbeamNativeHost"
+    )
 
     private let publicKeyBase64: String
     private let helperURL: URL
@@ -61,10 +65,7 @@ struct NativeMessagingRegistrar {
             contentsOf: publicKeyURL,
             encoding: .utf8
         )
-        helperURL = bundle.bundleURL
-            .appendingPathComponent("Contents", isDirectory: true)
-            .appendingPathComponent("Helpers", isDirectory: true)
-            .appendingPathComponent("InkbeamNativeHost")
+        helperURL = Self.installedHelperURL
         self.manifestURL = manifestURL.standardizedFileURL
     }
 
@@ -209,7 +210,7 @@ struct NativeMessagingRegistrar {
         }
     }
 
-    private static var defaultManifestURL: URL {
+    static var defaultManifestURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent(

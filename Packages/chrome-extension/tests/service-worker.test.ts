@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const captureVisibleTab = vi.fn();
 const sendNativeMessage = vi.fn();
@@ -71,16 +72,19 @@ describe("runCaptureAction", () => {
 
     expect(captureVisibleTab).toHaveBeenCalledTimes(1);
     expect(sendNativeMessage).toHaveBeenCalledTimes(1);
-    expect(sendNativeMessage).toHaveBeenCalledWith("com.myshottr.capture", {
-      protocolVersion: 1,
-      type: "capture",
-      captureMode: "visibleViewport",
-      mimeType: "image/png",
-      dataBase64: "iVBORw0KGgo=",
-    });
+    expect(sendNativeMessage).toHaveBeenCalledWith(
+      "dev.gihwan.inkbeam.capture",
+      {
+        protocolVersion: 1,
+        type: "capture",
+        captureMode: "visibleViewport",
+        mimeType: "image/png",
+        dataBase64: "iVBORw0KGgo=",
+      },
+    );
     expect(setBadgeText).toHaveBeenCalledWith({ text: "OK" });
     expect(setTitle).toHaveBeenCalledWith({
-      title: "Captured visible viewport in MyShottr",
+      title: "Captured visible viewport in Inkbeam",
     });
 
     await vi.advanceTimersByTimeAsync(3_000);
@@ -88,17 +92,17 @@ describe("runCaptureAction", () => {
   });
 
   it.each([
-    ["INVALID_MESSAGE", "MyShottr rejected the capture request."],
+    ["INVALID_MESSAGE", "Inkbeam rejected the capture request."],
     [
       "UNSUPPORTED_CAPTURE_MODE",
       "Only visible viewport capture is supported.",
     ],
-    ["INVALID_IMAGE", "MyShottr could not read the captured PNG."],
-    ["IMAGE_TOO_LARGE", "Capture is too large for MyShottr."],
-    ["STAGING_FAILED", "MyShottr could not import the capture."],
+    ["INVALID_IMAGE", "Inkbeam could not read the captured PNG."],
+    ["IMAGE_TOO_LARGE", "Capture is too large for Inkbeam."],
+    ["STAGING_FAILED", "Inkbeam could not import the capture."],
     [
       "APP_ACTIVATION_FAILED",
-      "Capture saved. Open MyShottr to import.",
+      "Capture saved. Open Inkbeam to import.",
     ],
   ] as const)(
     "shows the bounded helper failure %s instead of reporting success",
@@ -134,7 +138,7 @@ describe("runCaptureAction", () => {
     expect(captureVisibleTab).toHaveBeenCalledTimes(1);
     expect(sendNativeMessage).toHaveBeenCalledTimes(1);
     expect(setTitle).toHaveBeenCalledWith({
-      title: "MyShottr returned an invalid response.",
+      title: "Inkbeam returned an invalid response.",
     });
     expect(JSON.stringify(setTitle.mock.calls)).not.toContain("sensitive");
   });
@@ -151,7 +155,7 @@ describe("runCaptureAction", () => {
     expect(sendNativeMessage).toHaveBeenCalledTimes(1);
     expect(setBadgeText).toHaveBeenCalledWith({ text: "ERR" });
     expect(setTitle).toHaveBeenCalledWith({
-      title: "Open MyShottr once, then retry.",
+      title: "Open Inkbeam once, then retry.",
     });
     expect(JSON.stringify(setTitle.mock.calls)).not.toContain("host not found");
   });
@@ -169,7 +173,7 @@ describe("runCaptureAction", () => {
 
     await vi.waitFor(() => {
       expect(setTitle).toHaveBeenCalledWith({
-        title: "Open MyShottr once, then retry.",
+        title: "Open Inkbeam once, then retry.",
       });
     });
     expect(captureVisibleTab).toHaveBeenCalledTimes(1);
@@ -199,6 +203,8 @@ describe("privacy boundary", () => {
     ) as Record<string, unknown>;
 
     expect(manifest.permissions).toEqual(["activeTab", "nativeMessaging"]);
+    expect(manifest.name).toBe("Inkbeam");
+    expect(manifest.version).toBe("0.2.0");
     expect(manifest).not.toHaveProperty("optional_permissions");
     expect(manifest).not.toHaveProperty("host_permissions");
     expect(manifest).not.toHaveProperty("optional_host_permissions");
@@ -214,9 +220,25 @@ describe("privacy boundary", () => {
         /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource)\s*\(/,
       );
       expect(source, path).not.toMatch(/\bnavigator\s*\.\s*sendBeacon\s*\(/);
+      expect(source, path).not.toMatch(/\b(?:analytics|telemetry)\b/i);
     }
+
+    const publicKey = await fs.readFile(
+      resolve(
+        repoRoot(packageDirectory),
+        "Config",
+        "chrome-extension-key.b64",
+      ),
+    );
+    expect(createHash("sha256").update(publicKey).digest("hex")).toBe(
+      "4c4f958fb19e9016d429e5335e1000ba90fa2bf8ac9e26fc8bcda22a361d08c3",
+    );
   });
 });
+
+function repoRoot(packageDirectory: string): string {
+  return resolve(packageDirectory, "../..");
+}
 
 async function productionSourcePaths(directory: string): Promise<string[]> {
   const entries = await fs.readdir(directory, { withFileTypes: true });

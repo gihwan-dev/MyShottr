@@ -18,6 +18,7 @@ final class NativeHostProcessTests: XCTestCase {
         defer {
             try? FileManager.default.removeItem(at: temporaryDirectory)
         }
+        let appURL = try makeTestApplication(in: temporaryDirectory)
 
         let result = try runHost(
             inputData: HostFixtures.framed(
@@ -25,6 +26,9 @@ final class NativeHostProcessTests: XCTestCase {
             ),
             environment: [
                 NativeHostTestEnvironment.inboxPathKey: inboxURL.path,
+                NativeHostTestEnvironment.appPathKey: appURL.path,
+                NativeHostTestEnvironment.notificationKey:
+                    "dev.gihwan.inkbeam.tests.captureReady",
             ]
         )
 
@@ -86,7 +90,11 @@ final class NativeHostProcessTests: XCTestCase {
             ),
             environment: [
                 NativeHostTestEnvironment.inboxPathKey: inboxURL.path,
-                NativeHostTestEnvironment.activationFailureKey: "1",
+                NativeHostTestEnvironment.appPathKey: temporaryDirectory
+                    .appendingPathComponent("Missing.app")
+                    .path,
+                NativeHostTestEnvironment.notificationKey:
+                    "dev.gihwan.inkbeam.tests.captureReady",
             ]
         )
 
@@ -148,7 +156,11 @@ final class NativeHostProcessTests: XCTestCase {
             ),
             environment: [
                 NativeHostTestEnvironment.inboxPathKey: inboxURL.path,
-                NativeHostTestEnvironment.activationFailureKey: "1",
+                NativeHostTestEnvironment.appPathKey: temporaryDirectory
+                    .appendingPathComponent("Unused.app")
+                    .path,
+                NativeHostTestEnvironment.notificationKey:
+                    "dev.gihwan.inkbeam.tests.captureReady",
             ]
         )
 
@@ -283,5 +295,24 @@ final class NativeHostProcessTests: XCTestCase {
             replyData: replyData,
             errorData: errorData
         )
+    }
+
+    private func makeTestApplication(in root: URL) throws -> URL {
+        let appURL = root.appendingPathComponent(
+            "Inkbeam.app",
+            isDirectory: true
+        )
+        let contentsURL = appURL.appendingPathComponent(
+            "Contents",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: contentsURL,
+            withIntermediateDirectories: true
+        )
+        try Data("test plist".utf8).write(
+            to: contentsURL.appendingPathComponent("Info.plist")
+        )
+        return appURL
     }
 }

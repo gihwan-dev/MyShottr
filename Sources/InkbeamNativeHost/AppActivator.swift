@@ -11,6 +11,10 @@ enum AppActivationError: Error {
 }
 
 struct AppActivator: AppActivating {
+    static let captureReadyNotification = Notification.Name(
+        "dev.gihwan.inkbeam.captureReady"
+    )
+
     private let executableURL: URL
     private let runningApplicationURLs: () -> [URL]
     private let launchApplication: (URL) async -> Bool
@@ -47,7 +51,7 @@ struct AppActivator: AppActivating {
         },
         postCaptureReady: @escaping (UUID) -> Void = { captureID in
             DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("dev.gihwan.inkbeam.captureReady"),
+                Self.captureReadyNotification,
                 object: captureID.uuidString,
                 userInfo: nil,
                 deliverImmediately: true
