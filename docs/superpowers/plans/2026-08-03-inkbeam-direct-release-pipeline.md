@@ -129,7 +129,12 @@ The state schema permits only identity, non-secret phase timestamps, exact SHA/b
 
 - [ ] **Step 5: Ignore only generated release evidence and add tests to the gate**
 
-Add `/build/release-evidence/`, `/build/release-cache/`, `/build/release-feeds/`, and `/dist/release/` to `.gitignore`. Do not ignore `Config`, `docs/testing/releases`, or appcast fixtures. Add both tests to `pnpm test:release`.
+Add `/build/release-evidence/`, `/build/release-cache/`,
+`/build/release-feeds/`, `/build/release-clone/`, and `/dist/release/` to
+`.gitignore`. The exact release-clone path is reserved for the persistent clean
+`main` checkout used by the rollout plan. Do not ignore `Config`,
+`docs/testing/releases`, or appcast fixtures. Add both tests to
+`pnpm test:release`.
 
 - [ ] **Step 6: Run GREEN and commit**
 
@@ -179,7 +184,14 @@ gh auth status --hostname github.com
 test "$(git remote get-url origin)" = 'https://github.com/gihwan-dev/inkbeam.git'
 ```
 
-Use a fixed DerivedData path to find the pinned Sparkle 2.9.4 tools. Run `generate_keys --account inkbeam`, extract only the printed public base64 line, and compare it byte-for-byte with `Config/SparklePublicEDKey.txt`. Never call `security ... -w` or `generate_keys -x`.
+Use a fixed DerivedData path to find the pinned Sparkle 2.9.4 tools. First
+require the read-only `security find-generic-password` probe for account
+`inkbeam` to succeed. If it is absent, stop preflight and never invoke
+`generate_keys`. Only after that existing-account proof, run
+`generate_keys --account inkbeam` to print the corresponding public key,
+extract only the public base64 line, and compare it byte-for-byte with
+`Config/SparklePublicEDKey.txt`. Never call `security ... -w`,
+`generate_keys -x`, or any key-creation path from preflight.
 
 - [ ] **Step 4: Enforce repository and version provenance**
 
@@ -224,6 +236,10 @@ Set `ENABLE_HARDENED_RUNTIME: YES`, `CODE_SIGN_STYLE: Manual` for Release, and k
 
 `package.sh` runs the full preflight, then:
 
+Before invoking Xcode, map contract channel `beta` to the literal
+`Release Candidate` and `stable` to `Stable`; reject every other value. Pass
+that result as `CHANNEL_NAME` below.
+
 ```bash
 INKBEAM_RELEASE_CHANNEL="${CHANNEL}" Scripts/generate-project.sh
 xcodebuild archive \
@@ -237,7 +253,7 @@ xcodebuild archive \
   CODE_SIGN_IDENTITY="${INKBEAM_SIGNING_IDENTITY}" \
   CODE_SIGN_STYLE=Manual ENABLE_HARDENED_RUNTIME=YES \
   OTHER_CODE_SIGN_FLAGS='--timestamp' \
-  ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO archive
+  ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO
 ```
 
 Xcode signs embedded Sparkle services/frameworks and helper before the outer app. Immediately verify each nested executable and the outer app from the inside out.
@@ -325,8 +341,8 @@ get-task-allow: absent
 Extract printable strings and text metadata from the mounted app, helper,
 Chrome ZIP, DMG file list, and generated appcast, and apply the same banned-token
 set as `Scripts/verify-clean-cutover.mjs`. No artifact-level exception is
-allowed: `MyShottr`, `.myshottr`, `com.myshottr`, `MyShottrNativeHost`, and
-`myshottr-editor` must all be absent.
+allowed: `MyShottr`, `.myshottr`, `com.myshottr`, `MyShottrNativeHost`,
+`myshottr-editor`, `QuickInk`, and `Quick Ink` must all be absent.
 
 - [ ] **Step 3: Seal only after staple validation**
 
@@ -400,11 +416,12 @@ git commit -m "build(update): generate signed Inkbeam appcasts"
 - Create: `Scripts/release/withdraw-candidate.sh`
 - Create: `Scripts/release/promote-final.sh`
 - Create: `Scripts/release/rollback-final.sh`
+- Create: `Scripts/release/deprecate-v0.1.0.sh`
 - Create: `Tests/Release/publication.test.mjs`
 
 - [ ] **Step 1: Test every allowed external transition against fake CLIs**
 
-Freeze the exact transitions: RC candidate and final candidate are published/non-draft/prerelease/not-latest; a withdrawn RC remains non-draft/prerelease/not-latest with title prefix `Withdrawn —` and is removed from the newly signed beta feed; final promotion edits the same release to non-prerelease/latest; rollback restores prerelease/not-latest/final-candidate title; feed publication records the previous `gh-pages` SHA and can revert it; v0.1.0 becomes deprecated prerelease/not-latest without replacing assets.
+Freeze the exact transitions: RC candidate and final candidate are published/non-draft/prerelease/not-latest; a withdrawn RC remains non-draft/prerelease/not-latest with title prefix `Withdrawn —` and is removed from the newly signed beta feed; final promotion edits the same release to non-prerelease/latest; rollback restores prerelease/not-latest/final-candidate title; first Pages publication creates the one approved `gh-pages` root and later publications require it; feed publication records the previous `gh-pages` SHA and can revert it; v0.1.0 becomes deprecated prerelease/not-latest without replacing assets. Add a negative fake-CLI case proving `publish-feed TAG stable` refuses a draft, prerelease, or non-latest GitHub release, while `prepare-feed TAG stable` remains valid before promotion.
 
 - [ ] **Step 2: Publish candidate assets only after the seal**
 
@@ -416,7 +433,19 @@ Use `gh release download TAG --dir build/release-cache/TAG`, compare SHA-256 to 
 
 - [ ] **Step 4: Publish feeds atomically from local authority**
 
-Fetch `origin gh-pages`, record its exact SHA, create an isolated temporary worktree, replace only `appcast-beta.xml` or `appcast.xml` with the already signed feed, commit, and push `HEAD:gh-pages`. Fetch the public URL and byte-compare it with the signed local feed. Do not publish via Actions.
+First query `refs/heads/gh-pages` and the repository Pages configuration. If
+the branch already exists, fetch it, record its exact SHA, create an isolated
+temporary worktree, and replace only `appcast-beta.xml` or `appcast.xml` with
+the already signed feed. If it is absent during the first RC1 beta publication,
+require Pages to be absent too, create one orphan branch containing only
+`.nojekyll` and the signed `appcast-beta.xml`, push it, and configure GitHub
+Pages to serve the root of `gh-pages` through the GitHub API. Every later
+absence or configuration mismatch is an error, not an alternate hosting path.
+Commit and push `HEAD:gh-pages`, fetch the public URL, and byte-compare it with
+the signed local feed. Before any stable push, query the referenced GitHub
+release and require `draft=false`, `prerelease=false`, and `make_latest=true`;
+the final-candidate state must fail before `gh-pages` is mutated. Do not publish
+via Actions.
 
 - [ ] **Step 5: Implement final promotion and rollback**
 
@@ -426,7 +455,7 @@ Promotion requires final public verification, beta-feed final item, recorded RC2
 
 ```bash
 gh release edit "${TAG}" \
-  --title "Withdrawn — Inkbeam ${TAG#v}" \
+  --title "Withdrawn — Inkbeam ${TAG}" \
   --notes-file "${WITHDRAWN_NOTES}"
 ```
 
@@ -442,7 +471,24 @@ gh release edit v0.2.0 \
 
 It verifies the rollback and records failure. It does not announce stable.
 
-- [ ] **Step 6: Run fake-CLI tests and commit**
+- [ ] **Step 6: Preserve and deprecate the historical v0.1.0 release**
+
+Read and record the existing tag, asset names/IDs/checksums, and body before any
+edit. Create a notes file whose first paragraph says the release is an unsigned,
+pre-Inkbeam prototype, then appends the existing body unchanged. Run:
+
+```bash
+gh release edit v0.1.0 --repo gihwan-dev/inkbeam \
+  --prerelease --latest=false \
+  --title 'Deprecated — pre-Inkbeam prototype' \
+  --notes-file "${DEPRECATED_NOTES}"
+```
+
+Verify `draft=false`, `prerelease=true`, `make_latest=false`, the title prefix,
+body banner, and byte-identical tag/assets. Refuse to delete, upload, or replace
+anything, and assert neither updater feed contains v0.1.0.
+
+- [ ] **Step 7: Run fake-CLI tests and commit**
 
 ```bash
 node --test Tests/Release/publication.test.mjs
@@ -455,23 +501,55 @@ git commit -m "build(release): orchestrate local publication and rollback"
 **Files:**
 - Delete: `.github/workflows/release.yml`
 - Modify: `.github/workflows/ci.yml`
-- Modify: `Tests/Release/workflows.test.mjs`, `documentation.test.mjs`
+- Modify: `Scripts/validate-release-evidence.mjs`
+- Modify: `Tests/Release/evidence-validator.test.mjs`, `workflows.test.mjs`, `documentation.test.mjs`
 - Create: `docs/releasing/v0.2.0-direct-release.md`
 - Modify: `README.md`, `package.json`
 
-- [ ] **Step 1: Rewrite workflow tests first**
+- [ ] **Step 1: Replace v0.1 evidence validation with staged Inkbeam validation**
+
+Add the exact CLI mode:
+
+```text
+node Scripts/validate-release-evidence.mjs staged-release REPORT_PATH EXPECTED_SHA TAG SHA256SUMS_PATH candidate|complete
+```
+
+It resolves the immutable tag contract and validates every field and required
+environment/gate from sections 15, 15.1, 16, and 18 of the approved design.
+For RC tags, `candidate` already requires every RC gate PASS. For final,
+`candidate` permits `NOT RUN` only for the GitHub-promotion and public-stable-
+feed rows that cannot exist before promotion; every runtime, clean-install,
+RC2-to-final, artifact, beta-feed, and environment row must already PASS.
+`complete` requires those remaining rows PASS too. FAIL or any other NOT RUN
+blocks acceptance. Test malformed SHAs, wrong tag/build/channel, checksum
+mismatch, missing environment, forged PASS without evidence, and every allowed
+versus disallowed final-candidate pending row.
+
+`record-acceptance` runs `candidate`; `complete` runs `complete` against the
+same path again. This makes the provisional final gate explicit without
+misreporting the official release as complete.
+
+- [ ] **Step 2: Rewrite workflow tests**
 
 Require no workflow contains `gh release`, `notarytool`, `stapler`, `codesign --sign`, `generate_appcast`, `sign_update`, Pages push, release secrets, signing identities, certificates, or artifact publication. Require pinned audited actions, read-only permissions, locked installs, product tests, clean-cut scan, release metadata tests, and unsigned non-published test builds only.
 
-- [ ] **Step 2: Delete tag-triggered publication and keep one blocking CI job**
+- [ ] **Step 3: Delete tag-triggered publication and keep one blocking CI job**
 
 Remove `.github/workflows/release.yml`. Keep `.github/workflows/ci.yml` on main, pull requests, and manual dispatch with `contents: read`. It may build a test product but must not upload or publish it.
 
-- [ ] **Step 3: Write the release-Mac runbook**
+- [ ] **Step 4: Write the release-Mac runbook**
 
 Document exact environment variable names, fixed Keychain profiles/accounts, read-only preflight commands, the stable CLI contract, private/public evidence boundaries, notarization resume behavior, RC/final phase order, feed rollback, and the fact that current real preflight is blocked until a valid Developer ID identity exists.
 
-- [ ] **Step 4: Run the complete pipeline test gate**
+Also encode the post-stable incident policy: Inkbeam never automatically
+downgrades. If a bad stable item has already reached the signed feed, publish a
+newly signed feed without that item to stop new installs, document impact on the
+unchanged GitHub release, ship the correction only as `v0.2.1` with a higher
+build through the normal pipeline, and provide official-GitHub manual recovery
+instructions only if the affected app cannot launch. Never replace the
+`v0.2.0` asset in place. Add documentation contract assertions for every clause.
+
+- [ ] **Step 5: Run the complete pipeline test gate**
 
 ```bash
 pnpm install --frozen-lockfile
@@ -486,7 +564,7 @@ git diff --check
 
 Expected: all source/fixture tests pass. Real `preflight` may still report the explicit certificate operator blocker; that is not converted to a pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add .github Tests/Release docs/releasing README.md package.json Scripts project.yml Config

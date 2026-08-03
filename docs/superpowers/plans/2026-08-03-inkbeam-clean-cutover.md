@@ -75,6 +75,9 @@ Scripts/
 - Rename: `Sources/MyShottrShared` -> `Sources/InkbeamShared`
 - Rename: `Tests/MyShottrTests` -> `Tests/InkbeamTests`
 - Rename: `Tests/MyShottrNativeHostTests` -> `Tests/InkbeamNativeHostTests`
+- Rename: `Assets/AppIcon/QuickInk-1024.png` -> `Assets/AppIcon/Inkbeam-1024.png`
+- Rename: `Assets/StatusBar/QuickInkStatus.svg` -> `Assets/StatusBar/InkbeamStatus.svg`
+- Rename: `docs/images/editor-quick-ink.png` -> `docs/images/editor-inkbeam.png`
 
 - [ ] **Step 1: Add the failing identity contract**
 
@@ -190,6 +193,11 @@ schemes:
 
 Keep the existing deployment target, assets, editor prebuild, helper embed phase, test fixture resources, and Swift settings around this skeleton. Change the helper copy source and destination to `InkbeamNativeHost`.
 
+`MyShottr.xcodeproj` is generated and currently untracked. Before generating
+the new project, confirm `git ls-files -- MyShottr.xcodeproj` is empty and, if
+the exact directory exists, move only that resolved directory to Finder Trash.
+Do not recursively delete a glob or another project path.
+
 - [ ] **Step 4: Update the plist, packages, lockfile, and build scripts**
 
 Set the document declaration in both `project.yml` and `Config/Inkbeam-Info.plist` to:
@@ -207,6 +215,12 @@ Set the document declaration in both `project.yml` and `Config/Inkbeam-Info.plis
 
 Rename package names and every `pnpm --filter` call to `@inkbeam/*`, then run `pnpm install --lockfile-only` so the checked-in lockfile is generated rather than manually edited.
 
+Update `Scripts/generate-app-iconset.sh` and asset configuration/tests to use
+the two Inkbeam source filenames. Regenerate the existing `AppIcon.appiconset`
+from `Assets/AppIcon/Inkbeam-1024.png`; preserve the approved image pixels and
+status-bar template behavior rather than inventing a second icon during the
+namespace cut.
+
 - [ ] **Step 5: Generate and run GREEN**
 
 ```bash
@@ -221,7 +235,7 @@ Expected: PASS; the project lists only `Inkbeam` and `InkbeamNativeHost` schemes
 - [ ] **Step 6: Commit**
 
 ```bash
-git add project.yml package.json pnpm-lock.yaml Config Sources Tests Scripts Packages
+git add project.yml package.json pnpm-lock.yaml Config Sources Tests Scripts Packages Assets Resources
 git commit -m "refactor(brand): cut build graph over to Inkbeam"
 ```
 
@@ -566,7 +580,11 @@ pnpm --filter @inkbeam/chrome-extension exec playwright test
 xcodebuild test -project Inkbeam.xcodeproj -scheme InkbeamNativeHost \
   -destination 'platform=macOS'
 xcodebuild test -project Inkbeam.xcodeproj -scheme Inkbeam \
-  -destination 'platform=macOS' -only-testing:InkbeamTests/Chrome
+  -destination 'platform=macOS' \
+  -only-testing:InkbeamTests/NativeMessagingRegistrarTests \
+  -only-testing:InkbeamTests/CaptureInboxCoordinatorTests \
+  -only-testing:InkbeamTests/PendingCaptureInboxTests \
+  -only-testing:InkbeamTests/ChromeExtensionIdentityTests
 ```
 
 Expected: fixed ID unchanged; one Inkbeam host and inbox; visible viewport only.
@@ -597,10 +615,16 @@ const banned = [
   "com.myshottr",
   "MyShottrNativeHost",
   "myshottr-editor",
+  "QuickInk",
+  "Quick Ink",
 ];
 ```
 
-Scan `project.yml`, `package.json`, `pnpm-lock.yaml`, `Config`, `Sources`, `Packages`, `Scripts`, `Tests`, `README.md`, and current `docs`. Exact file exceptions are limited to:
+Scan `project.yml`, generated `Inkbeam.xcodeproj/project.pbxproj`,
+`package.json`, `pnpm-lock.yaml`, `Config`, `Sources`, `Packages`, `Scripts`,
+`Tests`, `README.md`, and current `docs`. Fail if the generated project is
+absent. Apply the banned set to both relative path names and UTF-8 file
+contents. Exact file exceptions are limited to:
 
 ```js
 const exactHistoricalFiles = new Set([
@@ -648,13 +672,13 @@ Expected initially: FAIL with exact file and line for every remaining live token
 ```bash
 pkill -x Inkbeam 2>/dev/null || true
 pkill -x InkbeamNativeHost 2>/dev/null || true
-node Scripts/verify-clean-cutover.mjs
 pnpm install --frozen-lockfile
 pnpm test
 pnpm typecheck
 pnpm build
 pnpm test:release
 xcodegen generate
+node Scripts/verify-clean-cutover.mjs
 xcodebuild test -project Inkbeam.xcodeproj -scheme Inkbeam -destination 'platform=macOS'
 xcodebuild test -project Inkbeam.xcodeproj -scheme InkbeamNativeHost -destination 'platform=macOS'
 ```

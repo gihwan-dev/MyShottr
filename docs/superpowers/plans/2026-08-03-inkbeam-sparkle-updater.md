@@ -30,7 +30,7 @@
 protocol UpdateServing: AnyObject {
     var canCheckForUpdates: Bool { get }
     func start() throws
-    func checkForUpdates()
+    func checkForUpdates() throws
 }
 
 enum UpdateChannel: String, Equatable {
@@ -57,6 +57,7 @@ enum InstallLocationDecision: Equatable {
 - Modify: `Config/Inkbeam-Info.plist`
 - Create: `Config/SparklePublicEDKey.txt` through the public-key operator step
 - Create: `Scripts/generate-project.sh`
+- Modify: `.gitignore`
 - Modify: `Tests/InkbeamTests/App/AppInfoPlistTests.swift`
 - Modify: `Tests/InkbeamTests/AppConfigurationTests.swift`
 
@@ -78,6 +79,8 @@ func testSparkleSecurityKeysAreStrict() throws {
     XCTAssertEqual(info["SUSignedFeedFailureExpirationInterval"] as? Int, 0)
     XCTAssertNotNil(info["SUPublicEDKey"] as? String)
     XCTAssertNotNil(URL(string: try XCTUnwrap(info["SUFeedURL"] as? String)))
+    let channel = try XCTUnwrap(info["InkbeamReleaseChannel"] as? String)
+    XCTAssertTrue(["Release Candidate", "Stable"].contains(channel))
 }
 ```
 
@@ -99,23 +102,7 @@ xcodebuild test -project Inkbeam.xcodeproj -scheme Inkbeam \
 
 Expected: FAIL because Sparkle and the security keys are absent.
 
-- [ ] **Step 3: Generate or confirm the public key without exporting the private key**
-
-Resolve the pinned package into a deterministic tool directory:
-
-```bash
-mkdir -p build/sparkle-tools
-xcodebuild -resolvePackageDependencies \
-  -project Inkbeam.xcodeproj -scheme Inkbeam \
-  -derivedDataPath build/sparkle-tools/DerivedData
-SPARKLE_TOOLS="build/sparkle-tools/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin"
-test -x "${SPARKLE_TOOLS}/generate_keys"
-"${SPARKLE_TOOLS}/generate_keys" --account inkbeam
-```
-
-The final command prints the public key and stores or reads the private key from Keychain. Validate the printed value against `^[A-Za-z0-9+/]{43}=$`, then use `apply_patch` to add that exact one-line value to `Config/SparklePublicEDKey.txt`. Do not use `-x`, `-f`, `--ed-key-file`, shell redirection of Keychain data, or a test key.
-
-- [ ] **Step 4: Add exact package and plist substitutions**
+- [ ] **Step 3: Add the exact package pin before resolving its tools**
 
 Add to `project.yml`:
 
@@ -133,11 +120,38 @@ Add the product to `Inkbeam.dependencies`:
         product: Sparkle
 ```
 
+Regenerate `Inkbeam.xcodeproj`, and add `/build/sparkle-tools/` to
+`.gitignore` because the fixed DerivedData directory is generated input to the
+release tools, not source.
+
+- [ ] **Step 4: Generate or confirm the public key, then add plist substitutions**
+
+Resolve the now-pinned package into the deterministic ignored tool directory:
+
+```bash
+mkdir -p build/sparkle-tools
+xcodebuild -resolvePackageDependencies \
+  -project Inkbeam.xcodeproj -scheme Inkbeam \
+  -derivedDataPath build/sparkle-tools/DerivedData
+SPARKLE_TOOLS="build/sparkle-tools/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin"
+test -x "${SPARKLE_TOOLS}/generate_keys"
+"${SPARKLE_TOOLS}/generate_keys" --account inkbeam
+```
+
+This is Sparkle's documented Swift Package Manager layout: from the package
+checkout, the tools are in the sibling `../artifacts/sparkle/Sparkle/bin/`
+directory. The fixed DerivedData root makes that location deterministic. The
+`test -x` check must fail closed if Sparkle changes the layout; do not search
+other checkouts or fall back to a globally installed tool.
+
+The final command prints the public key and stores or reads the private key from Keychain. Validate the printed value against `^[A-Za-z0-9+/]{43}=$`, then use `apply_patch` to add that exact one-line value to `Config/SparklePublicEDKey.txt`. Do not use `-x`, `-f`, `--ed-key-file`, shell redirection of Keychain data, or a test key.
+
 Add these Info properties, using Xcode build-setting substitution:
 
 ```yaml
         SUFeedURL: $(INKBEAM_APPCAST_URL)
         SUPublicEDKey: $(INKBEAM_SPARKLE_PUBLIC_KEY)
+        InkbeamReleaseChannel: $(INKBEAM_RELEASE_CHANNEL_NAME)
         SUScheduledCheckInterval: 86400
         SUAutomaticallyUpdate: false
         SUAllowsAutomaticUpdates: false
@@ -157,6 +171,7 @@ from the generator's environment into the generated project:
       base:
         INKBEAM_APPCAST_URL: ${INKBEAM_GENERATED_APPCAST_URL}
         INKBEAM_SPARKLE_PUBLIC_KEY: ${INKBEAM_SPARKLE_PUBLIC_KEY}
+        INKBEAM_RELEASE_CHANNEL_NAME: ${INKBEAM_GENERATED_CHANNEL_NAME}
 ```
 
 Do not add `SUEnableAutomaticChecks` or `SUAllowedURLSchemes`.
@@ -178,14 +193,21 @@ KEY="$(tr -d '\r\n' < "${KEY_FILE}")"
 [[ "${KEY}" =~ '^[A-Za-z0-9+/]{43}=$' ]]
 
 case "${CHANNEL}" in
-  beta) FEED='https://gihwan-dev.github.io/inkbeam/appcast-beta.xml' ;;
-  stable) FEED='https://gihwan-dev.github.io/inkbeam/appcast.xml' ;;
+  beta)
+    FEED='https://gihwan-dev.github.io/inkbeam/appcast-beta.xml'
+    CHANNEL_NAME='Release Candidate'
+    ;;
+  stable)
+    FEED='https://gihwan-dev.github.io/inkbeam/appcast.xml'
+    CHANNEL_NAME='Stable'
+    ;;
   *) echo 'INKBEAM_RELEASE_CHANNEL must be beta or stable' >&2; exit 64 ;;
 esac
 
 cd "${ROOT}"
 INKBEAM_GENERATED_APPCAST_URL="${FEED}" \
 INKBEAM_SPARKLE_PUBLIC_KEY="${KEY}" \
+INKBEAM_GENERATED_CHANNEL_NAME="${CHANNEL_NAME}" \
 xcodegen generate
 ```
 
@@ -199,7 +221,7 @@ Scripts/generate-project.sh
 node --test Tests/Release/identity-contract.test.mjs
 xcodebuild test -project Inkbeam.xcodeproj -scheme Inkbeam \
   -destination 'platform=macOS' -only-testing:InkbeamTests/AppInfoPlistTests
-git add project.yml Config Scripts/generate-project.sh Tests
+git add project.yml Config Scripts/generate-project.sh Tests .gitignore
 git commit -m "build(update): pin Sparkle and signed-feed metadata"
 ```
 
@@ -277,6 +299,11 @@ struct InstallLocationPolicy {
 }
 ```
 
+The live adapter passes `Bundle.main.bundleURL` and
+`FileManager.default.isWritableFile(atPath: Bundle.main.bundleURL.path)`.
+Compile `isDebugBuild` as `true` only inside `#if DEBUG`; Release always passes
+`false`.
+
 At the beginning of `applicationDidFinishLaunching`, evaluate the policy. On rejection, activate the app, present an `installLocation` error saying to drag Inkbeam to Applications and relaunch, then return before all normal service setup.
 
 - [ ] **Step 4: Run GREEN and commit**
@@ -314,9 +341,19 @@ func testManualCheckForwardsExactlyOnce() throws {
     let controller = FakeUpdaterController()
     let service = UpdateService(controller: controller, configuration: .stableFixture)
     try service.start()
-    service.checkForUpdates()
+    try service.checkForUpdates()
     XCTAssertEqual(controller.startCount, 1)
     XCTAssertEqual(controller.manualCheckCount, 1)
+}
+
+func testManualCheckRejectsBeforeSuccessfulStart() {
+    let controller = FakeUpdaterController()
+    let service = UpdateService(controller: controller, configuration: .stableFixture)
+
+    XCTAssertThrowsError(try service.checkForUpdates()) { error in
+        XCTAssertEqual(error as? UpdateServiceError, .notStarted)
+    }
+    XCTAssertEqual(controller.manualCheckCount, 0)
 }
 ```
 
@@ -331,6 +368,10 @@ protocol StandardUpdaterControlling: AnyObject {
 }
 
 extension SPUStandardUpdaterController: StandardUpdaterControlling {}
+
+enum UpdateServiceError: Error, Equatable {
+    case notStarted
+}
 ```
 
 Implement `UpdateService`:
@@ -353,7 +394,7 @@ final class UpdateService: UpdateServing {
         self.diagnostics = diagnostics
     }
 
-    var canCheckForUpdates: Bool { controller.canCheckForUpdates }
+    var canCheckForUpdates: Bool { started && controller.canCheckForUpdates }
 
     func start() throws {
         guard !started else { return }
@@ -363,14 +404,18 @@ final class UpdateService: UpdateServing {
         diagnostics.record(.started(channel: configuration.channel))
     }
 
-    func checkForUpdates() {
+    func checkForUpdates() throws {
+        guard started else { throw UpdateServiceError.notStarted }
         diagnostics.record(.manualCheckStarted(host: configuration.feedURL.host ?? ""))
         controller.checkForUpdates(nil)
     }
 }
 ```
 
-The live factory constructs `SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)`. Do not expose feed setters or Sparkle preferences from this wrapper.
+Make `UpdateServing.checkForUpdates()` throwing as well. The live factory
+constructs `SPUStandardUpdaterController(startingUpdater: false,
+updaterDelegate: nil, userDriverDelegate: nil)`. Do not expose feed setters or
+Sparkle preferences from this wrapper.
 
 - [ ] **Step 3: Restrict diagnostics**
 
@@ -381,22 +426,31 @@ Use `Logger(subsystem: "dev.gihwan.inkbeam", category: "updates")` and accept on
 ```bash
 Scripts/generate-project.sh
 xcodebuild test -project Inkbeam.xcodeproj -scheme Inkbeam \
-  -destination 'platform=macOS' -only-testing:InkbeamTests/Update
+  -destination 'platform=macOS' \
+  -only-testing:InkbeamTests/UpdateConfigurationTests \
+  -only-testing:InkbeamTests/UpdateServiceTests
 git add Sources/InkbeamApp/Update Tests/InkbeamTests/Update
 git commit -m "feat(update): wrap Sparkle updater service"
 ```
 
-### Task 4: Add Manual Check UI and Consent-Preserving Startup
+### Task 4: Add Manual Check, Read-Only Channel Diagnostics, and Consent-Preserving Startup
 
 **Files:**
 - Modify: `Sources/InkbeamApp/App/AppDelegate.swift`
 - Modify: `Sources/InkbeamApp/App/MenuBarController.swift`
 - Modify: `Sources/InkbeamApp/App/AppDependencies.swift`
+- Create: `Sources/InkbeamApp/App/AboutDiagnostics.swift`
+- Create: `Tests/InkbeamTests/App/AboutDiagnosticsTests.swift`
 - Modify: menu and lifecycle tests
 
 - [ ] **Step 1: Add failing menu/lifecycle tests**
 
-Assert the status menu order is Capture, Open, separator, `Check for Updates…`, separator, Quit; the update item invokes once; launch calls `UpdateService.start()` only after the install-location gate; and no call to `checkForUpdates()` occurs during launch.
+Assert the status menu order is About, separator, Capture, Open, separator,
+`Check for Updates…`, separator, Quit; the update item invokes once; launch
+calls `UpdateService.start()` only after the install-location gate; and no call
+to `checkForUpdates()` occurs during launch. Add tests that beta metadata renders
+`0.2.0 (2) · Release Candidate` and final metadata renders
+`0.2.0 (4) · Stable`.
 
 - [ ] **Step 2: Inject one updater factory**
 
@@ -419,7 +473,58 @@ canCheckForUpdates: @escaping () -> Bool,
 
 Create `Check for Updates…` with no key equivalent. Its action calls the closure, and validation reads `canCheckForUpdates()`.
 
-- [ ] **Step 4: Run GREEN and commit**
+AppDelegate passes a non-throwing menu closure that calls
+`try updateService.checkForUpdates()` inside `do/catch` and presents the exact
+error through the existing `UserFacingErrorPresenter`. It does not retry,
+construct a second updater, or invoke Sparkle after an error. The retained
+service is already started before menu construction, while the throwing API
+keeps every non-UI caller fail closed.
+
+- [ ] **Step 4: Add read-only About diagnostics with no channel control**
+
+```swift
+struct AboutDiagnostics: Equatable {
+    let version: String
+    let build: String
+    let channel: UpdateChannel
+
+    init(info: [String: Any]) throws {
+        version = try Self.requiredString("CFBundleShortVersionString", in: info)
+        build = try Self.requiredString("CFBundleVersion", in: info)
+        let value = try Self.requiredString("InkbeamReleaseChannel", in: info)
+        switch value {
+        case "Release Candidate": channel = .beta
+        case "Stable": channel = .stable
+        default: throw AboutDiagnosticsError.invalidChannel
+        }
+    }
+
+    var displayVersion: String {
+        "\(version) (\(build)) · \(channel.rawValue)"
+    }
+
+    private static func requiredString(
+        _ key: String,
+        in info: [String: Any]
+    ) throws -> String {
+        guard let value = info[key] as? String, !value.isEmpty else {
+            throw AboutDiagnosticsError.missingValue(key)
+        }
+        return value
+    }
+}
+
+enum AboutDiagnosticsError: Error, Equatable {
+    case missingValue(String)
+    case invalidChannel
+}
+```
+
+`About Inkbeam` opens the standard About panel with this display version. It
+contains no feed URL editor, beta switch, update preference, or mutable channel
+state.
+
+- [ ] **Step 5: Run GREEN and commit**
 
 ```bash
 xcodebuild test -project Inkbeam.xcodeproj -scheme Inkbeam \
