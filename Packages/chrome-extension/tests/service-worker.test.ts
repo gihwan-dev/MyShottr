@@ -75,12 +75,46 @@ describe("capture request boundary", () => {
     ["a missing mode", {}],
     ["an unknown mode", { mode: "futureMode" }],
     ["an extra field", { mode: "visibleViewport", extra: true }],
+    [
+      "an inherited mode with an own extra field",
+      Object.assign(Object.create({ mode: "visibleViewport" }) as object, {
+        extra: true,
+      }),
+    ],
+    [
+      "a mode getter that changes after validation",
+      (() => {
+        let reads = 0;
+        return {
+          get mode() {
+            reads += 1;
+            return reads === 1 ? "visibleViewport" : "futureMode";
+          },
+        };
+      })(),
+    ],
   ])("rejects %s before capture or native messaging", async (_name, request) => {
     captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
     sendNativeMessage.mockResolvedValue({ ok: true, captureId });
     const { handleCaptureRequest } = await loadServiceWorker();
 
     const error = await handleCaptureRequest(request).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect([
+      captureVisibleTab.mock.calls.length,
+      sendNativeMessage.mock.calls.length,
+    ]).toEqual([0, 0]);
+    expect(error).toMatchObject({ code: "UNSUPPORTED_CAPTURE_MODE" });
+  });
+
+  it("rejects an actual no-argument call before capture or native messaging", async () => {
+    captureVisibleTab.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
+    sendNativeMessage.mockResolvedValue({ ok: true, captureId });
+    const { handleCaptureRequest } = await loadServiceWorker();
+
+    const error = await Reflect.apply(handleCaptureRequest, undefined, []).catch(
       (caught: unknown) => caught,
     );
 

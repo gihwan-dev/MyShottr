@@ -20,6 +20,8 @@ export async function handleCaptureRequest(request: unknown): Promise<void> {
       throw new CaptureActionError("UNSUPPORTED_CAPTURE_MODE");
     case "visibleViewport":
       break;
+    default:
+      throw new CaptureActionError("UNSUPPORTED_CAPTURE_MODE");
   }
 
   try {
@@ -53,11 +55,25 @@ function parseCaptureRequest(request: unknown): BrowserCaptureRequest {
     typeof request !== "object"
     || request === null
     || Array.isArray(request)
-    || Object.keys(request).length !== 1
-    || !("mode" in request)
-    || (request.mode !== "visibleViewport" && request.mode !== "fullPage")
   ) {
     throw new CaptureActionError("UNSUPPORTED_CAPTURE_MODE");
   }
-  return { mode: request.mode };
+
+  const ownEnumerableKeys = Object.keys(request);
+  const modeDescriptor = Object.getOwnPropertyDescriptor(request, "mode");
+  if (
+    ownEnumerableKeys.length !== 1
+    || ownEnumerableKeys[0] !== "mode"
+    || modeDescriptor === undefined
+    || !modeDescriptor.enumerable
+    || !("value" in modeDescriptor)
+  ) {
+    throw new CaptureActionError("UNSUPPORTED_CAPTURE_MODE");
+  }
+
+  const mode = modeDescriptor.value;
+  if (mode !== "visibleViewport" && mode !== "fullPage") {
+    throw new CaptureActionError("UNSUPPORTED_CAPTURE_MODE");
+  }
+  return { mode };
 }

@@ -131,6 +131,67 @@ test("rejects full-page mode before capture or native messaging", async ({
   });
 });
 
+test("rejects inherited, changing-getter, and no-argument requests", async ({
+  serviceWorker,
+}) => {
+  await expect
+    .poll(() => serviceWorker.evaluate(() => "__inkbeamE2E" in globalThis))
+    .toBe(true);
+
+  const result = await serviceWorker.evaluate(async () => {
+    const seam = (
+      globalThis as typeof globalThis & { __inkbeamE2E: TestSeam }
+    ).__inkbeamE2E;
+    const inheritedRequest = Object.assign(
+      Object.create({ mode: "visibleViewport" }) as object,
+      { extra: true },
+    );
+    let modeReads = 0;
+    const changingGetterRequest = {
+      get mode() {
+        modeReads += 1;
+        return modeReads === 1 ? "visibleViewport" : "futureMode";
+      },
+    };
+    const attempts = [
+      () => seam.handleCaptureRequest(inheritedRequest),
+      () => seam.handleCaptureRequest(changingGetterRequest),
+      () => Reflect.apply(seam.handleCaptureRequest, seam, []),
+    ];
+    const codes: Array<string | undefined> = [];
+
+    for (const attempt of attempts) {
+      try {
+        await attempt();
+        codes.push(undefined);
+      } catch (error) {
+        codes.push(
+          typeof error === "object"
+            && error !== null
+            && "code" in error
+            && typeof error.code === "string"
+            ? error.code
+            : undefined,
+        );
+      }
+    }
+
+    return { codes, snapshot: seam.snapshot() };
+  });
+
+  expect(result).toEqual({
+    codes: [
+      "UNSUPPORTED_CAPTURE_MODE",
+      "UNSUPPORTED_CAPTURE_MODE",
+      "UNSUPPORTED_CAPTURE_MODE",
+    ],
+    snapshot: {
+      captureVisibleTabInvocationCount: 0,
+      nativeMessageInvocationCount: 0,
+    },
+  });
+});
+
 test("shows the actionable durable-capture activation failure", async ({
   serviceWorker,
 }) => {
