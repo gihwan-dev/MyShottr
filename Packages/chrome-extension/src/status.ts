@@ -10,16 +10,16 @@ export type CaptureErrorCode =
   | "UNSUPPORTED_CAPTURE_MODE";
 
 const FAILURE_TITLES: Record<CaptureErrorCode, string> = {
-  APP_ACTIVATION_FAILED: "Capture saved. Open MyShottr to import.",
-  CAPTURE_FAILED: "MyShottr could not capture this page.",
-  CAPTURE_TOO_LARGE: "Capture is too large for MyShottr.",
-  HOST_UNAVAILABLE: "Open MyShottr once, then retry.",
-  IMAGE_TOO_LARGE: "Capture is too large for MyShottr.",
+  APP_ACTIVATION_FAILED: "Capture saved. Open Inkbeam to import.",
+  CAPTURE_FAILED: "Inkbeam could not capture this page.",
+  CAPTURE_TOO_LARGE: "Capture is too large for Inkbeam.",
+  HOST_UNAVAILABLE: "Open Inkbeam once, then retry.",
+  IMAGE_TOO_LARGE: "Capture is too large for Inkbeam.",
   INVALID_CAPTURE_DATA: "Chrome returned invalid capture data.",
-  INVALID_HOST_RESPONSE: "MyShottr returned an invalid response.",
-  INVALID_IMAGE: "MyShottr could not read the captured PNG.",
-  INVALID_MESSAGE: "MyShottr rejected the capture request.",
-  STAGING_FAILED: "MyShottr could not import the capture.",
+  INVALID_HOST_RESPONSE: "Inkbeam returned an invalid response.",
+  INVALID_IMAGE: "Inkbeam could not read the captured PNG.",
+  INVALID_MESSAGE: "Inkbeam rejected the capture request.",
+  STAGING_FAILED: "Inkbeam could not import the capture.",
   UNSUPPORTED_CAPTURE_MODE: "Only visible viewport capture is supported.",
 };
 
@@ -45,7 +45,7 @@ export function toCaptureActionError(
 export async function showCaptureSuccess(): Promise<void> {
   await Promise.all([
     chrome.action.setBadgeText({ text: "OK" }),
-    chrome.action.setTitle({ title: "Captured visible viewport in MyShottr" }),
+    chrome.action.setTitle({ title: "Captured visible viewport in Inkbeam" }),
   ]);
   scheduleBadgeClear();
 }

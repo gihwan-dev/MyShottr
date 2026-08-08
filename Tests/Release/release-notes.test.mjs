@@ -6,21 +6,21 @@ import {
   renderReleaseNotes,
 } from "../../Scripts/render-release-notes.mjs";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const COMMIT_SHA = "1234567890abcdef1234567890abcdef12345678";
 const APP_HASH = "a".repeat(64);
 const EXTENSION_HASH = "b".repeat(64);
 const CHECKSUMS = [
-  `${APP_HASH}  MyShottr-${VERSION}-macos.zip`,
-  `${EXTENSION_HASH}  MyShottr-Chrome-${VERSION}.zip`,
+  `${APP_HASH}  Inkbeam-${VERSION}-macos.zip`,
+  `${EXTENSION_HASH}  Inkbeam-Chrome-${VERSION}.zip`,
   "",
 ].join("\n");
-const TEMPLATE = `# MyShottr v${VERSION}
+const TEMPLATE = `# Inkbeam v${VERSION}
 
 ## Downloads
 
-- \`MyShottr-${VERSION}-macos.zip\`
-- \`MyShottr-Chrome-${VERSION}.zip\`
+- \`Inkbeam-${VERSION}-macos.zip\`
+- \`Inkbeam-Chrome-${VERSION}.zip\`
 - \`SHA256SUMS.txt\`
 
 ## SHA-256 checksums
@@ -52,7 +52,7 @@ for (const [label, template, checksums, version, commit] of [
   ["extra checksum", TEMPLATE, `${CHECKSUMS}${APP_HASH}  extra.zip\n`, VERSION, COMMIT_SHA],
   ["uppercase checksum", TEMPLATE, CHECKSUMS.replace(APP_HASH, APP_HASH.toUpperCase()), VERSION, COMMIT_SHA],
   ["wrong version", TEMPLATE, CHECKSUMS, "0.1", COMMIT_SHA],
-  ["wrong title version", TEMPLATE.replace("v0.1.0", "v0.1.1"), CHECKSUMS, VERSION, COMMIT_SHA],
+  ["wrong title version", TEMPLATE.replace("v0.2.0", "v0.2.1"), CHECKSUMS, VERSION, COMMIT_SHA],
   [
     "stale release commit",
     TEMPLATE.replace(COMMIT_MARKER, `Release source: \`${"f".repeat(40)}\`\n\n${COMMIT_MARKER}`),

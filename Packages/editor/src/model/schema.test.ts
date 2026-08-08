@@ -4,10 +4,8 @@ import {
   fixtureBlur,
   fixtureDocument,
   fixtureRect,
-  schemaOneFixture,
-  schemaTwoFixture,
 } from "../test/fixtures";
-import { EditorDocumentSchema, EditorElementSchema, parseEditorDocument } from "./schema";
+import { EditorDocumentSchema, EditorElementSchema } from "./schema";
 
 describe("EditorDocumentSchema", () => {
   it("rejects an unknown element type", () => {
@@ -51,42 +49,51 @@ describe("EditorDocumentSchema", () => {
     }))).toThrow();
   });
 
-  it("migrates schema 1 to schema 3 with approved new defaults", () => {
-    const legacy = schemaOneFixture();
+  it("rejects schema 1 without injecting current defaults", () => {
+    const {
+      presentation: _presentation,
+      defaults: currentDefaults,
+      ...document
+    } = fixtureDocument();
+    const {
+      rectangleFillColor: _rectangleFillColor,
+      highlighterOpacity: _highlighterOpacity,
+      ...legacyDefaults
+    } = currentDefaults;
+    const legacy = { ...document, schemaVersion: 1, defaults: legacyDefaults };
+    const original = structuredClone(legacy);
 
-    expect(parseEditorDocument(legacy)).toMatchObject({
-      schemaVersion: 3,
-      presentation: { type: "none" },
-      defaults: {
-        rectangleFillColor: null,
-        highlighterOpacity: 0.5,
-      },
-    });
+    expect(EditorDocumentSchema.safeParse(legacy).success).toBe(false);
+    expect(legacy).toEqual(original);
+    expect(legacy.defaults).not.toHaveProperty("rectangleFillColor");
+    expect(legacy.defaults).not.toHaveProperty("highlighterOpacity");
   });
 
-  it("migrates schema 2 to schema 3 without changing legacy defaults", () => {
-    const legacy = schemaTwoFixture();
+  it("rejects schema 2 without injecting current defaults", () => {
+    const { defaults: currentDefaults, ...document } = fixtureDocument();
+    const {
+      rectangleFillColor: _rectangleFillColor,
+      highlighterOpacity: _highlighterOpacity,
+      ...legacyDefaults
+    } = currentDefaults;
+    const legacy = { ...document, schemaVersion: 2, defaults: legacyDefaults };
+    const original = structuredClone(legacy);
 
-    expect(parseEditorDocument(legacy)).toEqual({
-      ...legacy,
-      schemaVersion: 3,
-      defaults: {
-        ...legacy.defaults,
-        rectangleFillColor: null,
-        highlighterOpacity: 0.5,
-      },
-    });
+    expect(EditorDocumentSchema.safeParse(legacy).success).toBe(false);
+    expect(legacy).toEqual(original);
+    expect(legacy.defaults).not.toHaveProperty("rectangleFillColor");
+    expect(legacy.defaults).not.toHaveProperty("highlighterOpacity");
   });
 
   it("requires every schema 3 defaults key", () => {
     const current = fixtureDocument();
     const { highlighterOpacity: _removed, ...defaults } = current.defaults;
 
-    expect(() => parseEditorDocument({ ...current, defaults })).toThrow();
+    expect(() => EditorDocumentSchema.parse({ ...current, defaults })).toThrow();
   });
 
   it("rejects schema 4", () => {
-    expect(() => parseEditorDocument({ ...fixtureDocument(), schemaVersion: 4 })).toThrow();
+    expect(() => EditorDocumentSchema.parse({ ...fixtureDocument(), schemaVersion: 4 })).toThrow();
   });
 
   it("requires presentation none in schema 3", () => {

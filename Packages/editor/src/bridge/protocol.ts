@@ -9,6 +9,10 @@ const RequestIDSchema = z.string().regex(
   /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i,
   "requestId must be a UUID",
 );
+const CanonicalDocumentIDSchema = z.string().regex(
+  /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/,
+  "documentId must be a canonical uppercase UUID",
+);
 
 const payloadIsWithinLimit = (payload: unknown) =>
   new TextEncoder().encode(JSON.stringify(payload)).byteLength <= MAX_PAYLOAD_BYTES;
@@ -69,12 +73,12 @@ const EditorToNativeMessageSchema = z.discriminatedUnion("type", [
 ]);
 
 const LoadDocumentPayloadSchema = z.object({
-  documentId: RequestIDSchema,
+  documentId: CanonicalDocumentIDSchema,
   sourceImageURL: z.string(),
   annotationDocument: EditorDocumentSchema,
   initialTool: z.enum(["selection", "rectangle", "arrow", "line", "text", "freehand", "highlighter", "blur", "redaction", "numberMarker"]),
 }).strict().superRefine((payload, context) => {
-  const expectedURL = `myshottr-editor://editor/document/${payload.documentId}/original.png`;
+  const expectedURL = `inkbeam-editor://editor/document/${payload.documentId}/original.png`;
   if (payload.sourceImageURL !== expectedURL) {
     context.addIssue({
       code: z.ZodIssueCode.custom,

@@ -1,0 +1,11 @@
+import Foundation
+
+enum ProjectPackageError: Error, Equatable, Sendable {
+    case notDirectoryPackage
+    case invalidMemberSet([String])
+    case invalidManifest
+    case unsupportedFormatVersion(Int)
+    case invalidAnnotationJSON
+    case invalidPNG
+    case sourceDimensionsMismatch
+}

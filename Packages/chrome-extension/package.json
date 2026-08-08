@@ -1,5 +1,5 @@
 {
-  "name": "@myshottr/chrome-extension",
+  "name": "@inkbeam/chrome-extension",
   "private": true,
   "type": "module",
   "scripts": {

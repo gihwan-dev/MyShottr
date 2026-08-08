@@ -30,7 +30,7 @@ function renderHarness() {
 
 function receive(detail: unknown) {
   act(() => {
-    window.dispatchEvent(new CustomEvent("myshottr:native-message", { detail }));
+    window.dispatchEvent(new CustomEvent("inkbeam:native-message", { detail }));
   });
 }
 
@@ -39,7 +39,7 @@ beforeEach(() => {
   document.documentElement.style.removeProperty("color-scheme");
   window.webkit = {
     messageHandlers: {
-      myshottr: {
+      inkbeam: {
         postMessage: vi.fn(),
       },
     },

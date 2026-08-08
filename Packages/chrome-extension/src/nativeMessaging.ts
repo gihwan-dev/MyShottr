@@ -1,7 +1,7 @@
 import type { CaptureMessage } from "./captureVisibleViewport";
 import { CaptureActionError } from "./status";
 
-const NATIVE_HOST_NAME = "com.myshottr.capture";
+export const NATIVE_HOST_NAME = "dev.gihwan.inkbeam.capture";
 const CANONICAL_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

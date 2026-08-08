@@ -12,7 +12,7 @@ declare global {
   interface Window {
     webkit?: {
       messageHandlers?: {
-        myshottr?: {
+        inkbeam?: {
           postMessage(message: unknown): void;
         };
       };
@@ -28,7 +28,8 @@ export type NativeBridge = {
 
 export type NativeBridgeMessageHandler = (message: NativeToEditorEnvelope) => void;
 
-const nativeMessageEvent = "myshottr:native-message";
+const nativeMessageEvent = "inkbeam:native-message";
+export const ANNOTATION_SNAPSHOT_REQUEST_EVENT = "inkbeam:request-annotation-snapshot";
 const uuidPattern = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 
 export function createNativeBridge(): NativeBridge {
@@ -39,8 +40,8 @@ export function createNativeBridge(): NativeBridge {
       type,
       payload,
     });
-    const handler = window.webkit?.messageHandlers?.myshottr;
-    if (!handler) throw new Error("MyShottr native bridge is unavailable");
+    const handler = window.webkit?.messageHandlers?.inkbeam;
+    if (!handler) throw new Error("Inkbeam native bridge is unavailable");
     handler.postMessage(message);
   };
   return {

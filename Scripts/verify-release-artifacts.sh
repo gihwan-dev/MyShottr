@@ -74,8 +74,8 @@ done
 SCRIPT_PATH="${0:A}"
 REPO_ROOT="${SCRIPT_PATH:h:h}"
 DIRECTORY="${DIRECTORY_INPUT:A}"
-APP_ARCHIVE="${DIRECTORY}/MyShottr-${VERSION}-macos.zip"
-EXTENSION_ARCHIVE="${DIRECTORY}/MyShottr-Chrome-${VERSION}.zip"
+APP_ARCHIVE="${DIRECTORY}/Inkbeam-${VERSION}-macos.zip"
+EXTENSION_ARCHIVE="${DIRECTORY}/Inkbeam-Chrome-${VERSION}.zip"
 CHECKSUMS="${DIRECTORY}/SHA256SUMS.txt"
 SOURCE_EXTENSION_KEY="${REPO_ROOT}/Config/chrome-extension-key.b64"
 TEMP_ROOT=""
@@ -84,7 +84,7 @@ TEMP_ROOT_PARENT=""
 cleanup() {
   [[ -n "${TEMP_ROOT}" ]] || return 0
   case "${TEMP_ROOT:t}" in
-    myshottr-release-verify.*)
+    inkbeam-release-verify.*)
       [[ "${TEMP_ROOT:h}" == "${TEMP_ROOT_PARENT}" ]] \
         || {
           echo "verify-release-artifacts: refusing to clean moved path: ${TEMP_ROOT}" >&2
@@ -124,8 +124,8 @@ EXPECTED_TOP_LEVEL="$(
 
 node --input-type=module - \
   "${CHECKSUMS}" \
-  "MyShottr-${VERSION}-macos.zip" \
-  "MyShottr-Chrome-${VERSION}.zip" <<'NODE'
+  "Inkbeam-${VERSION}-macos.zip" \
+  "Inkbeam-Chrome-${VERSION}.zip" <<'NODE'
 import { readFileSync } from "node:fs";
 
 const [checksumPath, appName, extensionName] = process.argv.slice(2);
@@ -251,17 +251,17 @@ if (
 NODE
 }
 
-inspect_archive "${APP_ARCHIVE}" "MyShottr.app" "app"
+inspect_archive "${APP_ARCHIVE}" "Inkbeam.app" "app"
 inspect_archive \
-  "${EXTENSION_ARCHIVE}" "MyShottr-Chrome-${VERSION}" "extension"
+  "${EXTENSION_ARCHIVE}" "Inkbeam-Chrome-${VERSION}" "extension"
 
 TEMP_ROOT="$(
-  mktemp -d -t myshottr-release-verify
+  mktemp -d -t inkbeam-release-verify
 )" || fail "could not create a temporary verification root"
 [[ -d "${TEMP_ROOT}" && ! -L "${TEMP_ROOT}" ]] \
   || fail "mktemp did not create a safe temporary verification root"
 TEMP_ROOT="${TEMP_ROOT:A}"
-[[ "${TEMP_ROOT:t}" == myshottr-release-verify.* ]] \
+[[ "${TEMP_ROOT:t}" == inkbeam-release-verify.* ]] \
   || fail "mktemp returned an unexpected temporary verification root"
 TEMP_ROOT_PARENT="${TEMP_ROOT:h}"
 trap cleanup EXIT
@@ -270,8 +270,8 @@ mkdir -p "${TEMP_ROOT}/app" "${TEMP_ROOT}/extension"
 ditto -x -k "${APP_ARCHIVE}" "${TEMP_ROOT}/app"
 ditto -x -k "${EXTENSION_ARCHIVE}" "${TEMP_ROOT}/extension"
 
-APP="${TEMP_ROOT}/app/MyShottr.app"
-EXTENSION="${TEMP_ROOT}/extension/MyShottr-Chrome-${VERSION}"
+APP="${TEMP_ROOT}/app/Inkbeam.app"
+EXTENSION="${TEMP_ROOT}/extension/Inkbeam-Chrome-${VERSION}"
 [[ -d "${APP}" && ! -L "${APP}" ]] \
   || fail "app archive did not contain the expected bundle root"
 [[ -d "${EXTENSION}" && ! -L "${EXTENSION}" ]] \
@@ -297,8 +297,8 @@ while IFS= read -r extracted_path; do
     || fail "release artifacts contain a prohibited ACL"
 done < <(find "${APP}" "${EXTENSION}" -print)
 
-APP_EXECUTABLE="${APP}/Contents/MacOS/MyShottr"
-HELPER="${APP}/Contents/Helpers/MyShottrNativeHost"
+APP_EXECUTABLE="${APP}/Contents/MacOS/Inkbeam"
+HELPER="${APP}/Contents/Helpers/InkbeamNativeHost"
 INFO_PLIST="${APP}/Contents/Info.plist"
 EDITOR_ROOT="${APP}/Contents/Resources/Editor"
 EDITOR_INDEX="${EDITOR_ROOT}/index.html"
@@ -363,7 +363,7 @@ function scanSensitiveFile(entry) {
     fail("release artifact contains private key material");
   }
   if (
-    /__myshottrE2E|MYSHOTTR_E2E|E2E seam|TEST_PNG_DATA_URL/.test(text)
+    /__inkbeamE2E|INKBEAM_E2E|E2E seam|TEST_PNG_DATA_URL/.test(text)
   ) {
     fail("release artifact contains a test seam");
   }
@@ -389,9 +389,9 @@ const expectedDirectories = new Set([
   "Contents/Resources/Editor/assets",
 ]);
 const expectedFiles = new Set([
-  "Contents/Helpers/MyShottrNativeHost",
+  "Contents/Helpers/InkbeamNativeHost",
   "Contents/Info.plist",
-  "Contents/MacOS/MyShottr",
+  "Contents/MacOS/Inkbeam",
   "Contents/PkgInfo",
   "Contents/Resources/AppIcon.icns",
   "Contents/Resources/Assets.car",
@@ -399,8 +399,8 @@ const expectedFiles = new Set([
   "Contents/Resources/chrome-extension-key.b64",
 ]);
 const executableFiles = new Set([
-  "Contents/Helpers/MyShottrNativeHost",
-  "Contents/MacOS/MyShottr",
+  "Contents/Helpers/InkbeamNativeHost",
+  "Contents/MacOS/Inkbeam",
 ]);
 const editorAssetPattern =
   /^Contents\/Resources\/Editor\/assets\/index-[A-Za-z0-9_-]+\.(css|js)$/;
@@ -495,22 +495,22 @@ for resource in \
 done
 
 MAIN_COUNT="$(
-  find "${APP}" -type f -name MyShottr -print | wc -l | tr -d ' '
+  find "${APP}" -type f -name Inkbeam -print | wc -l | tr -d ' '
 )"
 HELPER_COUNT="$(
-  find "${APP}" -type f -name MyShottrNativeHost -print | wc -l | tr -d ' '
+  find "${APP}" -type f -name InkbeamNativeHost -print | wc -l | tr -d ' '
 )"
 [[ "${MAIN_COUNT}" == "1" ]] \
-  || fail "app archive must contain exactly one MyShottr executable"
+  || fail "app archive must contain exactly one Inkbeam executable"
 [[ "${HELPER_COUNT}" == "1" ]] \
   || fail "app archive must contain exactly one Native Messaging helper"
 
 [[ "$(
   plutil -extract CFBundleIdentifier raw "${INFO_PLIST}"
-)" == "com.myshottr.app" ]] || fail "unexpected app bundle identifier"
+)" == "dev.gihwan.inkbeam" ]] || fail "unexpected app bundle identifier"
 [[ "$(
   plutil -extract CFBundleExecutable raw "${INFO_PLIST}"
-)" == "MyShottr" ]] || fail "unexpected app executable name"
+)" == "Inkbeam" ]] || fail "unexpected app executable name"
 [[ "$(
   plutil -extract CFBundleIconName raw "${INFO_PLIST}"
 )" == "AppIcon" ]] || fail "app icon name is not AppIcon"
@@ -666,7 +666,7 @@ if (!sourceKey || manifest.key !== sourceKey || appKey !== sourceKey) {
   fail("extension identity key mismatch");
 }
 if (
-  /__myshottrE2E|MYSHOTTR_E2E|E2E seam|TEST_PNG_DATA_URL/.test(worker)
+  /__inkbeamE2E|INKBEAM_E2E|E2E seam|TEST_PNG_DATA_URL/.test(worker)
 ) {
   fail("production extension contains a test seam");
 }
@@ -681,5 +681,5 @@ EXTENSION_FILES="$(
   || fail "extension archive must contain only manifest.json and service-worker.js"
 
 echo "Release artifact verification passed."
-echo "WARNING: MyShottr ${VERSION} has no Developer ID identity and is not notarized."
+echo "WARNING: Inkbeam ${VERSION} has no Developer ID identity and is not notarized."
 echo "Link-time ad-hoc executable signatures may be present."

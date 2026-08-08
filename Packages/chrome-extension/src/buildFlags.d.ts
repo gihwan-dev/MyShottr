@@ -1,1 +1,1 @@
-declare const __MYSHOTTR_E2E__: boolean;
+declare const __INKBEAM_E2E__: boolean;

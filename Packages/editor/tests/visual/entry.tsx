@@ -326,7 +326,7 @@ function VisualHarness() {
     <>
       <main
         className="editor-app"
-        aria-label="MyShottr editor"
+        aria-label="Inkbeam editor"
         data-fixture-state={fixtureState}
         data-rail-visible={contextRailModel.kind !== "hidden"}
         style={{ cursor: cursorForTool(tool) }}

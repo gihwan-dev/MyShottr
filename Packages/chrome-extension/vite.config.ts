@@ -31,7 +31,7 @@ export default defineConfig(({ mode }) => {
   return {
     publicDir: "public",
     define: {
-      __MYSHOTTR_E2E__: JSON.stringify(isE2EBuild),
+      __INKBEAM_E2E__: JSON.stringify(isE2EBuild),
     },
     plugins: [injectStableKey(outputDirectory)],
     build: {

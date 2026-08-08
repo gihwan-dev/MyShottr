@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SOURCE="${REPO_ROOT}/Assets/AppIcon/QuickInk-1024.png"
+SOURCE="${REPO_ROOT}/Assets/AppIcon/Inkbeam-1024.png"
 DESTINATION="${REPO_ROOT}/Resources/Assets.xcassets/AppIcon.appiconset"
 
 test -f "${SOURCE}"
@@ -18,5 +18,5 @@ sips -z 256 256 "${SOURCE}" --out "${DESTINATION}/icon_256x256.png" >/dev/null
 sips -z 512 512 "${SOURCE}" --out "${DESTINATION}/icon_256x256@2x.png" >/dev/null
 sips -z 512 512 "${SOURCE}" --out "${DESTINATION}/icon_512x512.png" >/dev/null
 cp "${SOURCE}" "${DESTINATION}/icon_512x512@2x.png"
-cp "${REPO_ROOT}/Assets/StatusBar/QuickInkStatus.svg" \
-  "${REPO_ROOT}/Resources/Assets.xcassets/StatusBarIcon.imageset/QuickInkStatus.svg"
+cp "${REPO_ROOT}/Assets/StatusBar/InkbeamStatus.svg" \
+  "${REPO_ROOT}/Resources/Assets.xcassets/StatusBarIcon.imageset/InkbeamStatus.svg"

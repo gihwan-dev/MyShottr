@@ -36,7 +36,10 @@ import {
   EditorWorkspace,
   type EditorWorkspaceHandle,
 } from "./components/EditorWorkspace";
-import { useNativeBridge } from "./bridge/nativeBridge";
+import {
+  ANNOTATION_SNAPSHOT_REQUEST_EVENT,
+  useNativeBridge,
+} from "./bridge/nativeBridge";
 import { useNativeAppearance } from "./appearance/useNativeAppearance";
 import { renderDocumentToBlob } from "./export/renderDocumentToBlob";
 import { sendComposite } from "./export/sendComposite";
@@ -546,7 +549,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
   return (
     <main
       className="editor-app"
-      aria-label="MyShottr editor"
+      aria-label="Inkbeam editor"
       style={{ cursor: cursorForTool(tool) }}
     >
       <EditorWorkspace
@@ -801,12 +804,12 @@ export function App() {
         return;
       }
     });
-    window.addEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
+    window.addEventListener(ANNOTATION_SNAPSHOT_REQUEST_EVENT, receiveAnnotationSnapshotRequest);
     void bridge.send("editorReady", {});
     return () => {
       latestLoadRequestSequence.current += 1;
       unsubscribe();
-      window.removeEventListener("myshottr:request-annotation-snapshot", receiveAnnotationSnapshotRequest);
+      window.removeEventListener(ANNOTATION_SNAPSHOT_REQUEST_EVENT, receiveAnnotationSnapshotRequest);
     };
   }, [bridge, receiveOperationStatus]);
 
@@ -836,7 +839,7 @@ export function App() {
               void bridge.send("editorPreferencesChanged", { tool, defaults });
             }}
           />
-        : <main aria-label="MyShottr editor">Waiting for document</main>}
+        : <main aria-label="Inkbeam editor">Waiting for document</main>}
       <EditorFeedback state={feedbackState} />
     </>
   );

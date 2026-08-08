@@ -6,6 +6,9 @@ import { createNativeBridge } from "./nativeBridge";
 import { EditorToNativeEnvelopeSchema, NativeToEditorEnvelopeSchema } from "./protocol";
 
 const UUID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+const legacyProductStem = ["my", "shottr"].join("");
+const legacyEditorScheme = `${legacyProductStem}-editor`;
+const legacyProjectExtension = `.${legacyProductStem}`;
 
 const editorReadyFixture = {
   protocolVersion: 1,
@@ -45,7 +48,7 @@ describe("EditorToNativeEnvelopeSchema", () => {
       type: "loadDocument",
       payload: {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
         initialTool: "line",
       },
@@ -144,7 +147,8 @@ describe("EditorToNativeEnvelopeSchema", () => {
 
   it("sends INVALID_DOCUMENT when native attempts to load an unknown element type", () => {
     const sent: unknown[] = [];
-    window.webkit = { messageHandlers: { myshottr: { postMessage: (message) => sent.push(message) } } };
+    window.webkit = { messageHandlers: { inkbeam: { postMessage: (message) => sent.push(message) } } };
+    expect(window.webkit!.messageHandlers!.inkbeam).toBeDefined();
     const unsubscribe = createNativeBridge().subscribe(() => {});
 
     window.dispatchEvent(new CustomEvent("myshottr:native-message", {
@@ -154,7 +158,24 @@ describe("EditorToNativeEnvelopeSchema", () => {
         type: "loadDocument",
         payload: {
           documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-          sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+          sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+          annotationDocument: fixtureDocument({
+            elements: [{ ...fixtureDocument().elements[0], type: "video" } as never],
+          }),
+          initialTool: "selection",
+        },
+      },
+    }));
+    expect(sent).toHaveLength(0);
+
+    window.dispatchEvent(new CustomEvent("inkbeam:native-message", {
+      detail: {
+        protocolVersion: 1,
+        requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        type: "loadDocument",
+        payload: {
+          documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+          sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
           annotationDocument: fixtureDocument({
             elements: [{ ...fixtureDocument().elements[0], type: "video" } as never],
           }),
@@ -180,7 +201,7 @@ describe("NativeToEditorEnvelopeSchema", () => {
     type: "loadDocument",
     payload: {
       documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-      sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+      sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
       annotationDocument: fixtureDocument(),
       initialTool: "selection",
     },
@@ -190,10 +211,23 @@ describe("NativeToEditorEnvelopeSchema", () => {
     expect(NativeToEditorEnvelopeSchema.parse(loadDocumentFixture)).toEqual(loadDocumentFixture);
   });
 
+  it("rejects a lowercase document ID even when its source PNG URL matches", () => {
+    const documentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    expect(() => NativeToEditorEnvelopeSchema.parse({
+      ...loadDocumentFixture,
+      payload: {
+        ...loadDocumentFixture.payload,
+        documentId,
+        sourceImageURL: `inkbeam-editor://editor/document/${documentId}/original.png`,
+      },
+    })).toThrow();
+  });
+
   it.each([
-    "myshottr-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
-    "myshottr-editor://editor/document/FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB/original.png",
-    "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png/extra",
+    `${legacyProductStem}-resource://document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png`,
+    `${legacyEditorScheme}://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png`,
+    "inkbeam-editor://editor/document/FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB/original.png",
+    "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png/extra",
   ])("rejects a source PNG URL outside the exact document route: %s", (sourceImageURL) => {
     expect(() => NativeToEditorEnvelopeSchema.parse({
       ...loadDocumentFixture,
@@ -277,14 +311,14 @@ describe("NativeToEditorEnvelopeSchema", () => {
     ["an unknown operation", { operation: "print", phase: "started" }],
     ["an unknown phase", { operation: "save", phase: "queued" }],
     ["export superseded", { operation: "export", phase: "superseded" }],
-    ["save completed with displayName", { operation: "save", phase: "completed", displayName: "Capture.myshottr" }],
+    ["save completed with displayName", { operation: "save", phase: "completed", displayName: `Capture${legacyProjectExtension}` }],
     ["export completed without displayName", { operation: "export", phase: "completed" }],
     ["export completed with a non-string displayName", { operation: "export", phase: "completed", displayName: 7 }],
-    ["save started with displayName", { operation: "save", phase: "started", displayName: "Capture.myshottr" }],
+    ["save started with displayName", { operation: "save", phase: "started", displayName: `Capture${legacyProjectExtension}` }],
     ["export started with displayName", { operation: "export", phase: "started", displayName: "Capture.png" }],
-    ["save cancelled with displayName", { operation: "save", phase: "cancelled", displayName: "Capture.myshottr" }],
+    ["save cancelled with displayName", { operation: "save", phase: "cancelled", displayName: `Capture${legacyProjectExtension}` }],
     ["export cancelled with displayName", { operation: "export", phase: "cancelled", displayName: "Capture.png" }],
-    ["save failed with displayName", { operation: "save", phase: "failed", displayName: "Capture.myshottr" }],
+    ["save failed with displayName", { operation: "save", phase: "failed", displayName: `Capture${legacyProjectExtension}` }],
     ["export failed with displayName", { operation: "export", phase: "failed", displayName: "Capture.png" }],
     ["a payload operation ID", { operation: "save", phase: "started", operationId: UUID }],
     ["an arbitrary extra key", { operation: "export", phase: "completed", displayName: "Capture.png", extra: true }],

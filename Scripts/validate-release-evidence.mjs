@@ -22,7 +22,7 @@ export const ACCEPTANCE_CHECKS = Object.freeze([
   "8. Annotation editing and shortcut ownership",
   "9. Clipboard PNG",
   "10. Export dimensions",
-  "11. Project round trip and migration",
+  "11. Project round trip and legacy rejection",
   "12. Modified-document close",
   "13. Direct capture launch",
   "14. Screen Recording denial",
@@ -47,8 +47,8 @@ const ACCEPTANCE_CANDIDATE_FIELDS = Object.freeze([
   "macOS version",
   "Google Chrome version",
   "Tested commit SHA",
-  "`Scripts/verify-v1.sh` result",
-  "`Scripts/verify-v1.sh` evidence",
+  "`Scripts/verify-inkbeam.sh` result",
+  "`Scripts/verify-inkbeam.sh` evidence",
 ]);
 
 const RELEASE_INSTALL_CANDIDATE_FIELDS = Object.freeze([
@@ -224,7 +224,7 @@ export function validateAcceptanceReport(source, expectedSHA) {
   rejectPlaceholders(source, "acceptance report");
 
   const h1 = markdownHeadings(source, 1);
-  if (JSON.stringify(h1) !== JSON.stringify(["MyShottr v1 manual acceptance record"])) {
+  if (JSON.stringify(h1) !== JSON.stringify(["Inkbeam manual acceptance record"])) {
     fail("acceptance report must contain the exact H1 title");
   }
 
@@ -248,8 +248,8 @@ export function validateAcceptanceReport(source, expectedSHA) {
   if (unwrapCode(candidate["Tested commit SHA"]) !== expectedSHA) {
     fail("acceptance tested commit SHA does not match the expected SHA");
   }
-  if (unwrapCode(candidate["`Scripts/verify-v1.sh` result"]) !== "PASS") {
-    fail("Scripts/verify-v1.sh result must be PASS");
+  if (unwrapCode(candidate["`Scripts/verify-inkbeam.sh` result"]) !== "PASS") {
+    fail("Scripts/verify-inkbeam.sh result must be PASS");
   }
 
   if ((source.match(/^- Result:/gm) ?? []).length !== ACCEPTANCE_CHECKS.length) {
@@ -284,8 +284,8 @@ export function validateAcceptanceReport(source, expectedSHA) {
 
 function parseChecksumEntries(source, version) {
   const expectedNames = [
-    `MyShottr-${version}-macos.zip`,
-    `MyShottr-Chrome-${version}.zip`,
+    `Inkbeam-${version}-macos.zip`,
+    `Inkbeam-Chrome-${version}.zip`,
   ];
   const normalized = source.endsWith("\n") ? source.slice(0, -1) : source;
   const lines = normalized.split("\n");
@@ -303,8 +303,8 @@ function parseChecksumEntries(source, version) {
 }
 
 function validateWorkflowURL(value, label) {
-  if (!/^https:\/\/github\.com\/gihwan-dev\/MyShottr\/actions\/runs\/[1-9][0-9]*$/.test(value)) {
-    fail(`${label} must be an exact MyShottr GitHub Actions run URL`);
+  if (!/^https:\/\/github\.com\/gihwan-dev\/inkbeam\/actions\/runs\/[1-9][0-9]*$/.test(value)) {
+    fail(`${label} must be an exact Inkbeam GitHub Actions run URL`);
   }
 }
 
@@ -354,15 +354,15 @@ export function validateReleaseInstallReport(
 
   const h1 = markdownHeadings(source, 1);
   if (JSON.stringify(h1) !== JSON.stringify([
-    `MyShottr ${expectedTag} release-installation record`,
+    `Inkbeam ${expectedTag} release-installation record`,
   ])) {
     fail("release-install report must contain the exact H1 title");
   }
 
   const version = expectedTag.slice(1);
   const checksumEntries = parseChecksumEntries(checksumSource, version);
-  const liveReleaseURL = `https://github.com/gihwan-dev/MyShottr/releases/tag/${expectedTag}`;
-  const downloadURL = `https://github.com/gihwan-dev/MyShottr/releases/download/${expectedTag}/`;
+  const liveReleaseURL = `https://github.com/gihwan-dev/inkbeam/releases/tag/${expectedTag}`;
+  const downloadURL = `https://github.com/gihwan-dev/inkbeam/releases/download/${expectedTag}/`;
 
   const h2 = markdownHeadings(source, 2);
   const expectedH2 = [
@@ -419,12 +419,12 @@ export function validateReleaseInstallReport(
   );
   const artifacts = parseArtifactRows(artifactSection, [
     {
-      name: `MyShottr-${version}-macos.zip`,
-      sha256: checksumEntries[`MyShottr-${version}-macos.zip`],
+      name: `Inkbeam-${version}-macos.zip`,
+      sha256: checksumEntries[`Inkbeam-${version}-macos.zip`],
     },
     {
-      name: `MyShottr-Chrome-${version}.zip`,
-      sha256: checksumEntries[`MyShottr-Chrome-${version}.zip`],
+      name: `Inkbeam-Chrome-${version}.zip`,
+      sha256: checksumEntries[`Inkbeam-Chrome-${version}.zip`],
     },
     { name: "SHA256SUMS.txt", sha256: checksumAssetSHA },
   ]);

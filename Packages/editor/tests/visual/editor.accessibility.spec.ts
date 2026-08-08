@@ -24,7 +24,7 @@ async function sendNativeMessage(
 ): Promise<void> {
   await page.evaluate((detail) => {
     window.dispatchEvent(
-      new CustomEvent("myshottr:native-message", { detail }),
+      new CustomEvent("inkbeam:native-message", { detail }),
     );
   }, message);
 }
@@ -52,7 +52,7 @@ async function gotoFixture(
 ) {
   await page.goto(`/tests/visual/visual.html?state=${state}`);
   await expect(
-    page.getByRole("main", { name: "MyShottr editor" }),
+    page.getByRole("main", { name: "Inkbeam editor" }),
   ).toBeVisible();
   await page.waitForFunction(
     (expected) => document.documentElement.dataset.visualFixtureReady === expected,
@@ -333,14 +333,14 @@ async function captureRailReflow(
     );
     if (!probe) throw new Error("Viewport probe is unavailable");
     const target = window as typeof window & {
-      __myShottrPanTrace?: string[];
-      __myShottrPanObserver?: MutationObserver;
+      __inkbeamPanTrace?: string[];
+      __inkbeamPanObserver?: MutationObserver;
     };
-    target.__myShottrPanTrace = [probe.dataset.canvasTransform!];
-    target.__myShottrPanObserver = new MutationObserver(() => {
-      target.__myShottrPanTrace!.push(probe.dataset.canvasTransform!);
+    target.__inkbeamPanTrace = [probe.dataset.canvasTransform!];
+    target.__inkbeamPanObserver = new MutationObserver(() => {
+      target.__inkbeamPanTrace!.push(probe.dataset.canvasTransform!);
     });
-    target.__myShottrPanObserver.observe(probe, {
+    target.__inkbeamPanObserver.observe(probe, {
       attributes: true,
       attributeFilter: ["data-canvas-transform"],
     });
@@ -355,23 +355,23 @@ async function captureRailReflow(
       );
       if (!probe) throw new Error("Viewport probe is unavailable");
       const target = window as typeof window & {
-        __myShottrPanTrace?: string[];
-        __myShottrLastStableTransform?: string;
-        __myShottrStableTransformFrames?: number;
+        __inkbeamPanTrace?: string[];
+        __inkbeamLastStableTransform?: string;
+        __inkbeamStableTransformFrames?: number;
       };
       const transform = probe.dataset.canvasTransform!;
-      if (target.__myShottrLastStableTransform === transform) {
-        target.__myShottrStableTransformFrames =
-          (target.__myShottrStableTransformFrames ?? 0) + 1;
+      if (target.__inkbeamLastStableTransform === transform) {
+        target.__inkbeamStableTransformFrames =
+          (target.__inkbeamStableTransformFrames ?? 0) + 1;
       } else {
-        target.__myShottrLastStableTransform = transform;
-        target.__myShottrStableTransformFrames = 0;
+        target.__inkbeamLastStableTransform = transform;
+        target.__inkbeamStableTransformFrames = 0;
       }
       const distinctTraceLength = new Set(
-        target.__myShottrPanTrace ?? [],
+        target.__inkbeamPanTrace ?? [],
       ).size;
       return distinctTraceLength >= minimumTraceLength
-        && (target.__myShottrStableTransformFrames ?? 0) >= 2;
+        && (target.__inkbeamStableTransformFrames ?? 0) >= 2;
     },
     { minimumTraceLength: reducedMotion === "reduce" ? 2 : 3 },
     { polling: "raf" },
@@ -379,11 +379,11 @@ async function captureRailReflow(
   const after = await readViewportProbe(page);
   const trace = await page.evaluate(() => {
     const target = window as typeof window & {
-      __myShottrPanTrace?: string[];
-      __myShottrPanObserver?: MutationObserver;
+      __inkbeamPanTrace?: string[];
+      __inkbeamPanObserver?: MutationObserver;
     };
-    target.__myShottrPanObserver?.disconnect();
-    return target.__myShottrPanTrace ?? [];
+    target.__inkbeamPanObserver?.disconnect();
+    return target.__inkbeamPanTrace ?? [];
   });
   return { before, after, trace: [...new Set(trace)] };
 }

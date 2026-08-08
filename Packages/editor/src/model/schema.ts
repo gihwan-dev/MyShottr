@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { EditorDefaults, EditorDocument } from "./elements";
 
 const PaletteColorSchema = z.enum(["#000000", "#FF4D4F", "#1677FF", "#FADB14"]);
 const StrokeWidthSchema = z.union([z.literal(2), z.literal(4), z.literal(8)]);
@@ -106,15 +105,12 @@ export const EditorElementSchema = z.discriminatedUnion("type", [
   NumberMarkerElementSchema,
 ]);
 
-const LegacyEditorDefaultsSchema = z.object({
+export const EditorDefaultsSchema = z.object({
   color: PaletteColorSchema,
   strokeWidth: StrokeWidthSchema,
   textSize: TextSizeSchema,
   roughness: RoughnessSchema,
   opacity: OpacitySchema,
-}).strict();
-
-export const EditorDefaultsSchema = LegacyEditorDefaultsSchema.extend({
   rectangleFillColor: PaletteColorSchema.nullable(),
   highlighterOpacity: z.union([z.literal(0.25), z.literal(0.5)]),
 }).strict();
@@ -163,50 +159,3 @@ export const EditorDocumentSchema = z.object({
   presentation: PresentationSchema,
   defaults: EditorDefaultsSchema,
 }).strict().superRefine(validateUniqueElementIdentity);
-
-const SchemaOneDocumentSchema = z.object({
-  schemaVersion: z.literal(1),
-  ...documentBody,
-  defaults: LegacyEditorDefaultsSchema,
-}).strict().superRefine(validateUniqueElementIdentity);
-
-const SchemaTwoDocumentSchema = z.object({
-  schemaVersion: z.literal(2),
-  ...documentBody,
-  presentation: PresentationSchema,
-  defaults: LegacyEditorDefaultsSchema,
-}).strict().superRefine(validateUniqueElementIdentity);
-
-const upgradeLegacyDefaults = (
-  defaults: z.infer<typeof LegacyEditorDefaultsSchema>,
-): EditorDefaults => ({
-  ...defaults,
-  rectangleFillColor: null,
-  highlighterOpacity: 0.5,
-});
-
-export function parseEditorDocument(input: unknown): EditorDocument {
-  const current = EditorDocumentSchema.safeParse(input);
-  if (current.success) return current.data;
-
-  const versionTwo = SchemaTwoDocumentSchema.safeParse(input);
-  if (versionTwo.success) {
-    return EditorDocumentSchema.parse({
-      ...versionTwo.data,
-      schemaVersion: 3,
-      defaults: upgradeLegacyDefaults(versionTwo.data.defaults),
-    });
-  }
-
-  const versionOne = SchemaOneDocumentSchema.safeParse(input);
-  if (versionOne.success) {
-    return EditorDocumentSchema.parse({
-      ...versionOne.data,
-      schemaVersion: 3,
-      presentation: { type: "none" },
-      defaults: upgradeLegacyDefaults(versionOne.data.defaults),
-    });
-  }
-
-  throw current.error;
-}

@@ -40,6 +40,6 @@ jobs:
           XCODE_MAJOR="${XCODE_VERSION%%.*}"
           [[ "${XCODE_MAJOR}" == <-> ]]
           (( XCODE_MAJOR >= 26 ))
-      - name: Verify v1
+      - name: Verify Inkbeam
         shell: /bin/zsh {0}
-        run: Scripts/verify-v1.sh
+        run: Scripts/verify-inkbeam.sh

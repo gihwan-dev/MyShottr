@@ -11,7 +11,7 @@ import {
 } from "../../Scripts/validate-release-evidence.mjs";
 
 const ACCEPTANCE_TEMPLATE = readFileSync(
-  "docs/testing/v1-acceptance.md",
+  "docs/testing/inkbeam-acceptance.md",
   "utf8",
 );
 const INSTALL_TEMPLATE = readFileSync(
@@ -21,12 +21,12 @@ const INSTALL_TEMPLATE = readFileSync(
 const SCRIPT_PATH = "Scripts/validate-release-evidence.mjs";
 const EXPECTED_SHA = "1234567890abcdef1234567890abcdef12345678";
 const OTHER_SHA = "0234567890abcdef1234567890abcdef12345678";
-const TAG = "v0.1.0";
+const TAG = "v0.2.0";
 const APP_HASH = "a".repeat(64);
 const EXTENSION_HASH = "b".repeat(64);
 const CHECKSUM_SOURCE = [
-  `${APP_HASH}  MyShottr-0.1.0-macos.zip`,
-  `${EXTENSION_HASH}  MyShottr-Chrome-0.1.0.zip`,
+  `${APP_HASH}  Inkbeam-0.2.0-macos.zip`,
+  `${EXTENSION_HASH}  Inkbeam-Chrome-0.2.0.zip`,
   "",
 ].join("\n");
 const CHECKSUM_ASSET_HASH = createHash("sha256")
@@ -44,7 +44,7 @@ const EXPECTED_ACCEPTANCE_CHECKS = [
   "8. Annotation editing and shortcut ownership",
   "9. Clipboard PNG",
   "10. Export dimensions",
-  "11. Project round trip and migration",
+  "11. Project round trip and legacy rejection",
   "12. Modified-document close",
   "13. Direct capture launch",
   "14. Screen Recording denial",
@@ -80,12 +80,12 @@ function validAcceptanceReport() {
     .replace("- Google Chrome version:", "- Google Chrome version: `150.0.7339.0`")
     .replace("- Tested commit SHA:", `- Tested commit SHA: \`${EXPECTED_SHA}\``)
     .replace(
-      "- `Scripts/verify-v1.sh` result:",
-      "- `Scripts/verify-v1.sh` result: `PASS`",
+      "- `Scripts/verify-inkbeam.sh` result:",
+      "- `Scripts/verify-inkbeam.sh` result: `PASS`",
     )
     .replace(
-      "- `Scripts/verify-v1.sh` evidence:",
-      "- `Scripts/verify-v1.sh` evidence: full gate completed with exit code 0",
+      "- `Scripts/verify-inkbeam.sh` evidence:",
+      "- `Scripts/verify-inkbeam.sh` evidence: full gate completed with exit code 0",
     )
     .replaceAll("- Result: `<PASS|FAIL|BLOCKED>`", "- Result: `PASS`")
     .replace(/^- Evidence:$/gm, () => {
@@ -99,28 +99,28 @@ function validAcceptanceReport() {
 
 function validReleaseInstallReport() {
   let evidenceIndex = 0;
-  const liveURL = `https://github.com/gihwan-dev/MyShottr/releases/tag/${TAG}`;
+  const liveURL = `https://github.com/gihwan-dev/inkbeam/releases/tag/${TAG}`;
   let report = INSTALL_TEMPLATE
     .replace("- Exact release commit SHA: `<40-hex SHA>`", `- Exact release commit SHA: \`${EXPECTED_SHA}\``)
     .replace(
-      /- CI workflow URL:\n  `https:\/\/github\.com\/gihwan-dev\/MyShottr\/actions\/runs\/<run-id>`/,
-      "- CI workflow URL: `https://github.com/gihwan-dev/MyShottr/actions/runs/1001`",
+      /- CI workflow URL:\n  `https:\/\/github\.com\/gihwan-dev\/inkbeam\/actions\/runs\/<run-id>`/,
+      "- CI workflow URL: `https://github.com/gihwan-dev/inkbeam/actions/runs/1001`",
     )
     .replace(
-      /- Release workflow URL:\n  `https:\/\/github\.com\/gihwan-dev\/MyShottr\/actions\/runs\/<run-id>`/,
-      "- Release workflow URL: `https://github.com/gihwan-dev/MyShottr/actions/runs/1002`",
+      /- Release workflow URL:\n  `https:\/\/github\.com\/gihwan-dev\/inkbeam\/actions\/runs\/<run-id>`/,
+      "- Release workflow URL: `https://github.com/gihwan-dev/inkbeam/actions/runs/1002`",
     )
     .replace("- Test date and timezone:", "- Test date and timezone: `2026-08-02 13:00 KST`")
     .replace("- macOS version:", "- macOS version: `26.5.2`")
     .replace("- Google Chrome version:", "- Google Chrome version: `150.0.7339.0`")
     .replace("- Tester:", "- Tester: `gihwan-dev`")
     .replace(
-      /^\| `MyShottr-0\.1\.0-macos\.zip` .*$/m,
-      `| \`MyShottr-0.1.0-macos.zip\` | \`${APP_HASH}\` | \`123456\` | \`PASS\` |`,
+      /^\| `Inkbeam-0\.2\.0-macos\.zip` .*$/m,
+      `| \`Inkbeam-0.2.0-macos.zip\` | \`${APP_HASH}\` | \`123456\` | \`PASS\` |`,
     )
     .replace(
-      /^\| `MyShottr-Chrome-0\.1\.0\.zip` .*$/m,
-      `| \`MyShottr-Chrome-0.1.0.zip\` | \`${EXTENSION_HASH}\` | \`23456\` | \`PASS\` |`,
+      /^\| `Inkbeam-Chrome-0\.2\.0\.zip` .*$/m,
+      `| \`Inkbeam-Chrome-0.2.0.zip\` | \`${EXTENSION_HASH}\` | \`23456\` | \`PASS\` |`,
     )
     .replace(
       /^\| `SHA256SUMS\.txt` .*$/m,
@@ -141,14 +141,14 @@ function validReleaseInstallReport() {
 
   report = replaceExact(
     report,
-    "- Live release URL:\n  `https://github.com/gihwan-dev/MyShottr/releases/tag/v0.1.0`",
+    "- Live release URL:\n  `https://github.com/gihwan-dev/inkbeam/releases/tag/v0.2.0`",
     `- Live release URL: \`${liveURL}\``,
     "live release URL",
   );
   report = replaceExact(
     report,
-    "- Download source URL:\n  `https://github.com/gihwan-dev/MyShottr/releases/download/v0.1.0/`",
-    "- Download source URL: `https://github.com/gihwan-dev/MyShottr/releases/download/v0.1.0/`",
+    "- Download source URL:\n  `https://github.com/gihwan-dev/inkbeam/releases/download/v0.2.0/`",
+    "- Download source URL: `https://github.com/gihwan-dev/inkbeam/releases/download/v0.2.0/`",
     "download URL",
   );
   return report;
@@ -261,8 +261,8 @@ expectAcceptanceRejected(
 expectAcceptanceRejected(
   replaceExact(
     acceptance,
-    "- `Scripts/verify-v1.sh` result: `PASS`",
-    "- `Scripts/verify-v1.sh` result: `BLOCKED`",
+    "- `Scripts/verify-inkbeam.sh` result: `PASS`",
+    "- `Scripts/verify-inkbeam.sh` result: `BLOCKED`",
     "blocked automated gate",
   ),
   "a blocked automated gate must fail",
@@ -308,35 +308,35 @@ assert.equal(installResult.checkCount, 7);
 assert.deepEqual(
   installResult.artifacts.map((artifact) => artifact.name),
   [
-    "MyShottr-0.1.0-macos.zip",
-    "MyShottr-Chrome-0.1.0.zip",
+    "Inkbeam-0.2.0-macos.zip",
+    "Inkbeam-Chrome-0.2.0.zip",
     "SHA256SUMS.txt",
   ],
 );
 
-const TAG_011 = "v0.1.1";
-const CHECKSUM_SOURCE_011 = CHECKSUM_SOURCE.replaceAll("0.1.0", "0.1.1");
-const installation011 = installation.replaceAll("0.1.0", "0.1.1");
+const TAG_021 = "v0.2.1";
+const CHECKSUM_SOURCE_021 = CHECKSUM_SOURCE.replaceAll("0.2.0", "0.2.1");
+const installation021 = installation.replaceAll("0.2.0", "0.2.1");
 assert.equal(
   validateReleaseInstallReport(
-    installation011,
+    installation021,
     EXPECTED_SHA,
-    TAG_011,
-    CHECKSUM_SOURCE_011,
+    TAG_021,
+    CHECKSUM_SOURCE_021,
     CHECKSUM_ASSET_HASH,
   ).expectedTag,
-  TAG_011,
+  TAG_021,
   "release-install validation must derive all versioned contracts from the tag",
 );
 assert.throws(
   () => validateReleaseInstallReport(
-    installation011.replace(
-      "# MyShottr v0.1.1 release-installation record",
-      "# MyShottr v0.1.0 release-installation record",
+    installation021.replace(
+      "# Inkbeam v0.2.1 release-installation record",
+      "# Inkbeam v0.2.0 release-installation record",
     ),
     EXPECTED_SHA,
-    TAG_011,
-    CHECKSUM_SOURCE_011,
+    TAG_021,
+    CHECKSUM_SOURCE_021,
     CHECKSUM_ASSET_HASH,
   ),
   ReleaseEvidenceError,
@@ -344,10 +344,10 @@ assert.throws(
 );
 assert.throws(
   () => validateReleaseInstallReport(
-    installation011.replace("reports version `0.1.1`", "reports version `0.1.0`"),
+    installation021.replace("reports version `0.2.1`", "reports version `0.2.0`"),
     EXPECTED_SHA,
-    TAG_011,
-    CHECKSUM_SOURCE_011,
+    TAG_021,
+    CHECKSUM_SOURCE_021,
     CHECKSUM_ASSET_HASH,
   ),
   ReleaseEvidenceError,
@@ -369,8 +369,8 @@ expectInstallRejected(
 expectInstallRejected(
   replaceExact(
     installation,
-    "https://github.com/gihwan-dev/MyShottr/actions/runs/1001",
-    "https://github.com/gihwan-dev/MyShottr/actions/runs/latest",
+    "https://github.com/gihwan-dev/inkbeam/actions/runs/1001",
+    "https://github.com/gihwan-dev/inkbeam/actions/runs/latest",
     "invalid workflow URL",
   ),
   "a non-run workflow URL must fail",

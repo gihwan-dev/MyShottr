@@ -1,0 +1,54 @@
+import Foundation
+
+protocol NewProjectCreating: Sendable {
+    func make(artifact: CaptureArtifact, now: Date) throws -> InkbeamProject
+}
+
+struct NewProjectFactory: NewProjectCreating {
+    private let preferences: any EditorPreferencesStoring
+
+    init(preferences: any EditorPreferencesStoring = UserDefaultsEditorPreferencesStore()) {
+        self.preferences = preferences
+    }
+
+    func make(artifact: CaptureArtifact, now: Date = .now) throws -> InkbeamProject {
+        let preferences = preferences.load()
+        let annotationJSON = try JSONSerialization.data(withJSONObject: [
+            "schemaVersion": 3,
+            "sourcePixelWidth": artifact.pixelWidth,
+            "sourcePixelHeight": artifact.pixelHeight,
+            "elements": [],
+            "presentation": ["type": "none"],
+            "defaults": [
+                "color": preferences.color,
+                "strokeWidth": preferences.strokeWidth,
+                "textSize": preferences.textSize,
+                "roughness": preferences.roughness,
+                "opacity": preferences.opacity,
+                "rectangleFillColor": preferences
+                    .rectangleFillColor ?? NSNull(),
+                "highlighterOpacity": preferences
+                    .highlighterOpacity,
+            ],
+        ], options: [.sortedKeys])
+        try EditorDocumentValidator.validate(
+            annotationJSON,
+            expectedPixelWidth: artifact.pixelWidth,
+            expectedPixelHeight: artifact.pixelHeight
+        )
+        return InkbeamProject(
+            manifest: ProjectManifest(
+                formatVersion: ProjectManifest.currentFormatVersion,
+                documentId: artifact.id,
+                createdAt: now,
+                updatedAt: now,
+                sourcePixelWidth: artifact.pixelWidth,
+                sourcePixelHeight: artifact.pixelHeight,
+                sourceKind: artifact.sourceKind,
+                sourceScale: artifact.scale
+            ),
+            originalPNG: artifact.pngData,
+            annotationJSON: annotationJSON
+        )
+    }
+}

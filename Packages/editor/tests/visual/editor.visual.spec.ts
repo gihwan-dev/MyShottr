@@ -21,7 +21,7 @@ async function sendNativeMessage(
 ): Promise<void> {
   await page.evaluate((detail) => {
     window.dispatchEvent(
-      new CustomEvent("myshottr:native-message", { detail }),
+      new CustomEvent("inkbeam:native-message", { detail }),
     );
   }, message);
 }
@@ -35,7 +35,7 @@ for (const appearance of ["light", "dark"] as const) {
       });
       await page.goto(`/tests/visual/visual.html?state=${state}`);
       await expect(
-        page.getByRole("main", { name: "MyShottr editor" }),
+        page.getByRole("main", { name: "Inkbeam editor" }),
       ).toBeVisible();
       await page.waitForFunction(
         (expected) => document.documentElement.dataset.visualFixtureReady === expected,

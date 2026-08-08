@@ -3,7 +3,11 @@ import { createRef, forwardRef, useImperativeHandle, useRef, type ReactNode } fr
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App, EditorApp, type EditorAppHandle } from "./App";
-import { NativeBridgeProvider, type NativeBridge } from "./bridge/nativeBridge";
+import {
+  ANNOTATION_SNAPSHOT_REQUEST_EVENT,
+  NativeBridgeProvider,
+  type NativeBridge,
+} from "./bridge/nativeBridge";
 import type { EditorCanvasHandle } from "./canvas/EditorCanvas";
 import { keyboardCommandFor } from "./input/ShortcutRouter";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorTool, Point } from "./model/elements";
@@ -294,7 +298,7 @@ function nativeLoadMessage(
     type: "loadDocument",
     payload: {
       documentId: primaryDocumentId,
-      sourceImageURL: `myshottr-editor://editor/document/${primaryDocumentId}/original.png`,
+      sourceImageURL: `inkbeam-editor://editor/document/${primaryDocumentId}/original.png`,
       annotationDocument,
       initialTool,
     },
@@ -2192,7 +2196,7 @@ describe("EditorApp", () => {
     fireEvent.click(screen.getByRole("button", { name: "Update first element" }));
     expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:201,0");
 
-    window.dispatchEvent(new CustomEvent("myshottr:request-annotation-snapshot", {
+    window.dispatchEvent(new CustomEvent(ANNOTATION_SNAPSHOT_REQUEST_EVENT, {
       detail: { requestId: secondaryRequestId },
     }));
     harness.receive({
@@ -2215,7 +2219,7 @@ describe("EditorApp", () => {
       expect.objectContaining({
         elements: [expect.objectContaining({ id: "rect-1", x: 201 })],
       }),
-      `myshottr-editor://editor/document/${primaryDocumentId}/original.png`,
+      `inkbeam-editor://editor/document/${primaryDocumentId}/original.png`,
     );
     await vi.waitFor(() => expect(exportMocks.sendComposite).toHaveBeenCalledOnce());
     expect(historyStatePayloads(harness)).toEqual([
@@ -2329,7 +2333,7 @@ describe("EditorApp", () => {
       ) return;
       exercisedGap = true;
       harness.receive(nativeHistoryMessage("undo"));
-      window.dispatchEvent(new CustomEvent("myshottr:request-annotation-snapshot", {
+      window.dispatchEvent(new CustomEvent(ANNOTATION_SNAPSHOT_REQUEST_EVENT, {
         detail: { requestId: gapSnapshotRequestId },
       }));
       harness.receive({
@@ -2390,13 +2394,13 @@ describe("EditorApp", () => {
       type: "loadDocument",
       payload: {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
         initialTool: "selection",
       },
     });
 
-    expect(await screen.findByRole("main", { name: "MyShottr editor" })).toBeTruthy();
+    expect(await screen.findByRole("main", { name: "Inkbeam editor" })).toBeTruthy();
     expect(sent).toContainEqual({
       requestId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
       type: "annotationSnapshot",
@@ -2426,7 +2430,7 @@ describe("EditorApp", () => {
         return () => { receiveNative = undefined; };
       },
     };
-    const sourceImageURL = "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png";
+    const sourceImageURL = "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png";
     const firstDocument = fixtureDocument({
       elements: [{ ...fixtureRect(), x: 20, y: 20 }],
     });
@@ -2494,7 +2498,7 @@ describe("EditorApp", () => {
         return () => { receiveNative = undefined; };
       },
     };
-    const sourceImageURL = "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png";
+    const sourceImageURL = "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png";
     const firstRequestId = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     const secondRequestId = "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB";
     const firstDocument = fixtureDocument({ elements: [fixtureText()] });
@@ -2560,8 +2564,8 @@ describe("EditorApp", () => {
     };
     const firstRequestId = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     const secondRequestId = "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB";
-    const firstSourceURL = `myshottr-editor://editor/document/${firstRequestId}/original.png`;
-    const secondSourceURL = `myshottr-editor://editor/document/${secondRequestId}/original.png`;
+    const firstSourceURL = `inkbeam-editor://editor/document/${firstRequestId}/original.png`;
+    const secondSourceURL = `inkbeam-editor://editor/document/${secondRequestId}/original.png`;
     const firstDocument = fixtureDocument();
     const secondDocument = fixtureDocument({ elements: [fixtureLine()] });
 
@@ -2615,7 +2619,7 @@ describe("EditorApp", () => {
     }]);
   });
 
-  it("returns a correlated annotation snapshot through the local native request event", async () => {
+  it("ignores the old snapshot event and returns a snapshot only for the current event", async () => {
     vi.stubGlobal("Image", class {
       naturalWidth = 1440;
       naturalHeight = 900;
@@ -2637,14 +2641,23 @@ describe("EditorApp", () => {
       type: "loadDocument",
       payload: {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
         initialTool: "selection",
       },
     });
-    await screen.findByRole("main", { name: "MyShottr editor" });
+    await screen.findByRole("main", { name: "Inkbeam editor" });
+    await vi.waitFor(() => expect(sent.some(({ type }) => type === "historyStateChanged")).toBe(true));
+    sent.length = 0;
 
-    window.dispatchEvent(new CustomEvent("myshottr:request-annotation-snapshot", {
+    const oldSnapshotRequestEvent = ["my", "shottr", ":request-annotation-snapshot"].join("");
+    window.dispatchEvent(new CustomEvent(oldSnapshotRequestEvent, {
+      detail: { requestId: "11111111-2222-3333-4444-555555555555" },
+    }));
+    await act(async () => {});
+    expect(sent).toEqual([]);
+
+    window.dispatchEvent(new CustomEvent(ANNOTATION_SNAPSHOT_REQUEST_EVENT, {
       detail: { requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB" },
     }));
 
@@ -2682,18 +2695,18 @@ describe("EditorApp", () => {
       type: "loadDocument",
       payload: {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
         initialTool: "selection",
       },
     });
-    await screen.findByRole("main", { name: "MyShottr editor" });
+    await screen.findByRole("main", { name: "Inkbeam editor" });
     fireEvent.click(screen.getByRole("button", { name: "Highlighter, shortcut H" }));
     fireEvent.change(screen.getByRole("slider", { name: "Opacity" }), {
       target: { value: "25" },
     });
 
-    window.dispatchEvent(new CustomEvent("myshottr:request-annotation-snapshot", {
+    window.dispatchEvent(new CustomEvent(ANNOTATION_SNAPSHOT_REQUEST_EVENT, {
       detail: { requestId: "FFFFFFFF-EEEE-DDDD-CCCC-BBBBBBBBBBBB" },
     }));
 
@@ -2735,7 +2748,7 @@ describe("EditorApp", () => {
       type: "loadDocument",
       payload: {
         documentId: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        sourceImageURL: "myshottr-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
+        sourceImageURL: "inkbeam-editor://editor/document/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/original.png",
         annotationDocument: fixtureDocument(),
         initialTool: "selection",
       },
