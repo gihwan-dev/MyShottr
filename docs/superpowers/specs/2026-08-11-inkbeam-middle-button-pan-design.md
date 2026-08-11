@@ -1,7 +1,7 @@
 # Inkbeam Middle-Button Canvas Pan Design
 
 - Date: 2026-08-11
-- Status: Proposed; interaction direction approved, written specification pending review
+- Status: Approved
 - Target: Inkbeam editor after `v0.2.0`
 - Authority: Extends the viewport interaction in
   [`2026-07-31-myshottr-editor-ux-polish-design.md`](./2026-07-31-myshottr-editor-ux-polish-design.md)
@@ -95,8 +95,9 @@ coupling between two distinct input devices. This is rejected.
 - It starts without Space being held and under every selected tool.
 - It has priority over the hit annotation, selection, transformer, and canvas
   creation handlers.
-- It is ignored when the editor is locked or another pointer interaction is
-  already active.
+- It is ignored when viewport pan is explicitly locked or another pointer
+  interaction is already active. An annotation-interaction lock caused by an
+  active text editor does not lock middle-button viewport pan.
 - A middle-button press arriving after a left-button annotation interaction
   has begun does not convert or hijack that interaction.
 - Right-button input remains inert and left-button behavior remains unchanged.
@@ -169,6 +170,13 @@ Transformer handlers or the textarea can consume it.
 gesture was selected, not whether the gesture came from Space or a particular
 mouse button. `ViewportController` remains input-device agnostic.
 
+`EditorCanvas` receives separate annotation-interaction and viewport-pan lock
+signals. In `App`, an active nudge transaction locks both; an active text edit
+locks annotation creation/selection/transform but leaves middle-button pan
+available. This prevents panning from committing the textarea's `onBlur` while
+preserving the existing rule that ordinary canvas editing is disabled during a
+text session.
+
 The implementation should generalize keyboard-specific internal names toward
 semantic names such as `viewportPanRequested`, `viewportPanActive`, or a small
 pan-source value. It must not introduce a second viewport state or bypass
@@ -181,7 +189,7 @@ For a new pointer-down, evaluation order is:
 1. at the canvas-shell capture boundary, classify a middle-button pointer,
    prevent its browser default, and stop it before Konva or text-editor target
    handling;
-2. reject when locked or another interaction is active;
+2. reject when viewport pan is locked or another interaction is active;
 3. classify accepted middle-button or Space-held input as viewport pan;
 4. suppress the compatibility middle-button `mousedown` so Konva's default
    `[left, middle]` draggable configuration and Transformer anchor handling do
@@ -217,6 +225,8 @@ Required regression contracts:
    `Space + drag`.
 8. A middle drag starting on the active text-editor textarea pans without
    moving focus, changing text, committing the edit, or closing the editor.
+   The test passes an annotation-interaction lock together with an unlocked
+   viewport-pan signal to mirror the real App state.
 9. An App-level Escape test proves the first Escape cancels active middle-pan
    and a later shortcut works normally.
 
