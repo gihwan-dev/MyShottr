@@ -143,7 +143,26 @@ struct RegionSelectionState: Sendable {
             guard isActive else {
                 return
             }
+            let completedCreation: Bool
+            if case .creating = interaction {
+                completedCreation = true
+            } else {
+                completedCreation = false
+            }
             interaction = nil
+            guard
+                completedCreation,
+                let selectionRect,
+                !selectionRect.isEmpty
+            else {
+                return
+            }
+            result = .confirmed(
+                RegionSelection(
+                    display: display,
+                    rectInDisplayPoints: selectionRect
+                )
+            )
 
         case .confirm:
             guard
@@ -232,9 +251,12 @@ final class RegionSelectionController: RegionSelecting {
         _ display: DisplayDescriptor,
         _ view: RegionSelectionView
     ) -> RegionSelectionPanel
+    typealias CursorAction = @MainActor () -> Void
 
     private let displays: DisplayProvider
     private let panelFactory: PanelFactory
+    private let activateCrosshair: CursorAction
+    private let restoreCursor: CursorAction
 
     private var continuation: CheckedContinuation<
         RegionSelectionOutcome,
@@ -245,6 +267,7 @@ final class RegionSelectionController: RegionSelecting {
     private var states: [UInt32: RegionSelectionState] = [:]
     private var activeDisplayID: UInt32?
     private var keyEventMonitor: Any?
+    private var isCursorOverrideActive = false
 
     var isSelecting: Bool {
         continuation != nil
@@ -254,10 +277,18 @@ final class RegionSelectionController: RegionSelecting {
         displays: @escaping DisplayProvider = RegionSelectionController.currentDisplays,
         panelFactory: @escaping PanelFactory = {
             RegionSelectionPanel(display: $0, contentView: $1)
+        },
+        activateCrosshair: @escaping CursorAction = {
+            NSCursor.crosshair.push()
+        },
+        restoreCursor: @escaping CursorAction = {
+            NSCursor.pop()
         }
     ) {
         self.displays = displays
         self.panelFactory = panelFactory
+        self.activateCrosshair = activateCrosshair
+        self.restoreCursor = restoreCursor
     }
 
     func selectRegion() async throws -> RegionSelectionOutcome {
@@ -342,6 +373,9 @@ final class RegionSelectionController: RegionSelecting {
             panel.beginCapture()
         }
 
+        activateCrosshair()
+        isCursorOverrideActive = true
+
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(
             matching: .keyDown
         ) { [weak self] event in
@@ -404,6 +438,11 @@ final class RegionSelectionController: RegionSelecting {
             panel.onCancel = nil
             panel.onConfirm = nil
             panel.orderOut(nil)
+        }
+
+        if isCursorOverrideActive {
+            restoreCursor()
+            isCursorOverrideActive = false
         }
 
         activeDisplayID = nil

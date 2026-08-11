@@ -16,6 +16,35 @@ final class RegionSelectionStateTests: XCTestCase {
         )
     }
 
+    func testPointerUpConfirmsNewlyDraggedSelection() {
+        let expectedRect = CGRect(x: 100, y: 80, width: 300, height: 220)
+        var state = RegionSelectionState(display: CaptureFixtures.retinaDisplay)
+
+        state.reduce(.pointerDown(CGPoint(x: 400, y: 300)))
+        state.reduce(.pointerDragged(CGPoint(x: 100, y: 80)))
+        state.reduce(.pointerUp)
+
+        XCTAssertEqual(
+            state.result,
+            .confirmed(
+                RegionSelection(
+                    display: CaptureFixtures.retinaDisplay,
+                    rectInDisplayPoints: expectedRect
+                )
+            )
+        )
+    }
+
+    func testPointerUpDoesNotConfirmClickWithoutDrag() {
+        let point = CGPoint(x: 400, y: 300)
+        var state = RegionSelectionState(display: CaptureFixtures.retinaDisplay)
+
+        state.reduce(.pointerDown(point))
+        state.reduce(.pointerUp)
+
+        XCTAssertNil(state.result)
+    }
+
     func testSecondPointerDownReplacesExistingSelection() {
         var state = RegionSelectionState(
             display: CaptureFixtures.retinaDisplay,
@@ -39,9 +68,11 @@ final class RegionSelectionStateTests: XCTestCase {
 
         state.reduce(.beginMove(CGPoint(x: 150, y: 150)))
         state.reduce(.pointerDragged(CGPoint(x: -500, y: -500)))
+        state.reduce(.pointerUp)
 
         XCTAssertEqual(state.selectionRect?.origin, .zero)
         XCTAssertEqual(state.selectionRect?.size, CGSize(width: 300, height: 200))
+        XCTAssertNil(state.result)
     }
 
     func testEveryResizeHandleMovesItsEdges() {
@@ -126,11 +157,13 @@ final class RegionSelectionStateTests: XCTestCase {
 
         state.reduce(.beginResize(.southWest, CGPoint(x: 100, y: 100)))
         state.reduce(.pointerDragged(CGPoint(x: -500, y: -500)))
+        state.reduce(.pointerUp)
 
         XCTAssertEqual(
             state.selectionRect,
             CGRect(x: 0, y: 0, width: 400, height: 300)
         )
+        XCTAssertNil(state.result)
     }
 
     func testInactiveDisplayIgnoresInteractionAndConfirmationEvents() {
@@ -279,7 +312,7 @@ extension RegionSelectionStateTests {
         _ = try await selection.value
     }
 
-    func testConfirmedSelectionOrdersOutEveryPanelBeforeReturning() async throws {
+    func testPointerUpOrdersOutEveryPanelBeforeReturningSelection() async throws {
         let harness = makeHarness()
         let selection = Task { try await harness.controller.selectRegion() }
         await Task.yield()
@@ -293,7 +326,7 @@ extension RegionSelectionStateTests {
             from: CaptureFixtures.retinaDisplay.displayID
         )
         harness.controller.handle(
-            .confirm,
+            .pointerUp,
             from: CaptureFixtures.retinaDisplay.displayID
         )
 
@@ -314,6 +347,7 @@ extension RegionSelectionStateTests {
         )
         XCTAssertTrue(harness.panels.allSatisfy { $0.orderOutCount == 1 })
         XCTAssertFalse(harness.controller.isSelecting)
+        XCTAssertEqual(harness.storage.cursorEvents, [.crosshair, .restored])
     }
 
     func testCancelResolvesAndClearsContinuationExactlyOnce() async throws {
@@ -328,6 +362,7 @@ extension RegionSelectionStateTests {
         XCTAssertEqual(outcome, .cancelled)
         XCTAssertTrue(harness.panels.allSatisfy { $0.orderOutCount == 1 })
         XCTAssertFalse(harness.controller.isSelecting)
+        XCTAssertEqual(harness.storage.cursorEvents, [.crosshair, .restored])
     }
 
     func testClosingAnyPanelCancelsAndClearsSelection() async throws {
@@ -340,6 +375,7 @@ extension RegionSelectionStateTests {
         let outcome = try await selection.value
         XCTAssertEqual(outcome, .cancelled)
         XCTAssertFalse(harness.controller.isSelecting)
+        XCTAssertEqual(harness.storage.cursorEvents, [.crosshair, .restored])
     }
 
     func testEscapeKeyResolvesAndClearsSelection() async throws {
@@ -414,6 +450,7 @@ extension RegionSelectionStateTests {
         )
         XCTAssertTrue(harness.panels.allSatisfy { $0.orderOutCount == 1 })
         XCTAssertFalse(harness.controller.isSelecting)
+        XCTAssertEqual(harness.storage.cursorEvents, [.crosshair, .restored])
     }
 
     func testSecondSelectionWhileContinuationIsPendingThrows() async throws {
@@ -432,6 +469,19 @@ extension RegionSelectionStateTests {
         harness.controller.cancel()
         let outcome = try await firstSelection.value
         XCTAssertEqual(outcome, .cancelled)
+    }
+
+    func testCancelRestoresCursorExactlyOnce() async throws {
+        let harness = makeHarness()
+        let selection = Task { try await harness.controller.selectRegion() }
+        await Task.yield()
+
+        XCTAssertEqual(harness.storage.cursorEvents, [.crosshair])
+
+        harness.controller.cancel()
+        _ = try await selection.value
+
+        XCTAssertEqual(harness.storage.cursorEvents, [.crosshair, .restored])
     }
 
     func testOverlayMetricsUseSourcePixelsAndEightPointHandles() {
@@ -476,6 +526,12 @@ extension RegionSelectionStateTests {
                 storage.panels.append(panel)
                 storage.views[display.displayID] = view
                 return panel
+            },
+            activateCrosshair: {
+                storage.cursorEvents.append(.crosshair)
+            },
+            restoreCursor: {
+                storage.cursorEvents.append(.restored)
             }
         )
         return RegionSelectionControllerHarness(
@@ -503,6 +559,12 @@ private struct RegionSelectionControllerHarness {
 private final class RegionSelectionControllerHarnessStorage {
     var panels: [RecordingRegionSelectionPanel] = []
     var views: [UInt32: RegionSelectionView] = [:]
+    var cursorEvents: [RegionSelectionCursorEvent] = []
+}
+
+private enum RegionSelectionCursorEvent: Equatable {
+    case crosshair
+    case restored
 }
 
 @MainActor
