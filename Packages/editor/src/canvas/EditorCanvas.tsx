@@ -1,4 +1,13 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import type Konva from "konva";
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Transformer } from "react-konva";
 import type { EditorCommand, EditorDefaults, EditorDocument, EditorElement, EditorTool, Point } from "../model/elements";
@@ -33,6 +42,7 @@ export type EditorCanvasProps = {
   viewport: ViewportSnapshot;
   spacePanReady: boolean;
   interactionLocked: boolean;
+  viewportPanLocked: boolean;
   selectedIds: readonly string[];
   onSelect: (id: string | undefined, toggle?: boolean) => void;
   onEditText: (id: string) => void;
@@ -54,7 +64,9 @@ export type EditorCanvasProps = {
   textEditorOverlay: ReactNode;
 };
 
-export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePanReady, interactionLocked, selectedIds, onSelect, onEditText, onBeginNewText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onViewportWheel, onViewportPanBy, onInteractionActiveChange, toSourcePoint, textEditorOverlay }, ref) {
+type ViewportPanSource = "space" | "middle";
+
+export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function EditorCanvas({ document, sourceImageURL, tool, viewport, spacePanReady, interactionLocked, viewportPanLocked, selectedIds, onSelect, onEditText, onBeginNewText, onCommand, onBeginTransaction, onCommitTransaction, onCancelTransaction, onViewportWheel, onViewportPanBy, onInteractionActiveChange, toSourcePoint, textEditorOverlay }, ref) {
   const image = useSourceImage(sourceImageURL);
   const blurredSource = useMemo(
     () => image
@@ -76,7 +88,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   const interactionController = interactionControllerRef.current;
   const captureContainer = useRef<HTMLDivElement | undefined>(undefined);
   const capturedPointerId = useRef<number | undefined>(undefined);
-  const spacePanActive = useRef(false);
+  const viewportPanSource = useRef<ViewportPanSource | undefined>(undefined);
   const appliedViewportPan = useRef<Point>({ x: 0, y: 0 });
   const latestMove = useRef<{
     point: Point;
@@ -87,7 +99,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   const pendingAnnotationPointer = useRef<AnnotationPointerSnapshot | undefined>(undefined);
   const activeAnnotationInteraction = useRef<ActiveAnnotationInteraction | undefined>(undefined);
   const [isTransforming, setIsTransforming] = useState(false);
-  const [isSpacePanning, setIsSpacePanning] = useState(false);
+  const [isViewportPanning, setIsViewportPanning] = useState(false);
   const [creationPreview, setCreationPreview] = useState<EditorElement | undefined>(undefined);
   const [marqueePreview, setMarqueePreview] = useState<SourceRect | undefined>(undefined);
   const [duplicationPreview, setDuplicationPreview] = useState<readonly EditorElement[]>([]);
@@ -110,7 +122,16 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   };
   const interactionPoint = (stage: Konva.Stage): Point => {
     const point = workspacePoint(stage);
-    return spacePanActive.current ? point : toSourcePoint(point);
+    return viewportPanSource.current ? point : toSourcePoint(point);
+  };
+  const workspacePointFromPointer = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ): Point => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return {
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+    };
   };
   const consumeMovePointer = (
     elementId: string,
@@ -193,8 +214,8 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     setDuplicationPreview([]);
     releasePointerCapture();
     appliedViewportPan.current = { x: 0, y: 0 };
-    spacePanActive.current = false;
-    setIsSpacePanning(false);
+    viewportPanSource.current = undefined;
+    setIsViewportPanning(false);
     onInteractionActiveChange(false);
   };
   const routeSelection = (nextSelectedIds: readonly string[]) => {
@@ -220,6 +241,67 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
         return;
       case "viewport":
         applyPreview(result);
+    }
+  };
+  const beginPointerInteraction = ({
+    pointerId,
+    point,
+    modifiers,
+    panSource,
+    captureOwner,
+  }: {
+    pointerId: number;
+    point: Point;
+    modifiers: InteractionModifiers;
+    panSource: ViewportPanSource | undefined;
+    captureOwner: HTMLDivElement;
+  }): boolean => {
+    if (interactionController.active) return false;
+    viewportPanSource.current = panSource;
+    appliedViewportPan.current = { x: 0, y: 0 };
+    const preview = interactionController.begin({
+      pointerId,
+      tool,
+      point,
+      modifiers,
+      defaults: document.defaults,
+      document,
+      selectedIds,
+      viewportPan: panSource !== undefined,
+      zoom: viewport.zoom,
+    });
+    captureOwner.setPointerCapture(pointerId);
+    captureContainer.current = captureOwner;
+    capturedPointerId.current = pointerId;
+    if (preview) applyPreview(preview);
+    setIsViewportPanning(panSource !== undefined);
+    onInteractionActiveChange(true);
+    return true;
+  };
+  const schedulePointerMove = (
+    point: Point,
+    modifiers: InteractionModifiers,
+  ): void => {
+    latestMove.current = { point, modifiers };
+    if (frame.current !== null) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      if (disposed.current) return;
+      const latest = latestMove.current;
+      latestMove.current = undefined;
+      if (latest) applyPreview(interactionController.update(latest.point, latest.modifiers));
+    });
+  };
+  const commitPointerInteraction = (
+    point: Point,
+    modifiers: InteractionModifiers,
+  ): void => {
+    try {
+      flushScheduledMove();
+      applyPreview(interactionController.update(point, modifiers));
+      routeCommit(interactionController.commit(point, modifiers));
+    } finally {
+      finishPointerInteraction();
     }
   };
   const cancelAnnotationTransaction = () => {
@@ -256,8 +338,8 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       setDuplicationPreview([]);
       releasePointerCapture();
       appliedViewportPan.current = { x: 0, y: 0 };
-      spacePanActive.current = false;
-      setIsSpacePanning(false);
+      viewportPanSource.current = undefined;
+      setIsViewportPanning(false);
       if (pointerWasActive) onInteractionActiveChange(false);
     }
     return true;
@@ -321,11 +403,67 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     <div
       className="canvas-shell"
       data-testid="editor-canvas"
+      onPointerDownCapture={(event) => {
+        if (event.button === 0) return;
+        event.stopPropagation();
+        if (event.button !== 1) return;
+        event.preventDefault();
+        if (
+          viewportPanLocked
+          || interactionController.active
+          || activeAnnotationInteraction.current
+          || pendingAnnotationPointer.current
+        ) return;
+        beginPointerInteraction({
+          pointerId: event.pointerId,
+          point: workspacePointFromPointer(event),
+          modifiers: modifiersFor(event),
+          panSource: "middle",
+          captureOwner: event.currentTarget,
+        });
+      }}
+      onPointerMoveCapture={(event) => {
+        if (
+          viewportPanSource.current !== "middle"
+          || capturedPointerId.current !== event.pointerId
+        ) return;
+        event.preventDefault();
+        event.stopPropagation();
+        schedulePointerMove(workspacePointFromPointer(event), modifiersFor(event));
+      }}
+      onPointerUpCapture={(event) => {
+        if (
+          viewportPanSource.current !== "middle"
+          || capturedPointerId.current !== event.pointerId
+        ) return;
+        event.preventDefault();
+        event.stopPropagation();
+        commitPointerInteraction(workspacePointFromPointer(event), modifiersFor(event));
+      }}
+      onPointerCancelCapture={(event) => {
+        if (
+          viewportPanSource.current !== "middle"
+          || capturedPointerId.current !== event.pointerId
+        ) return;
+        event.preventDefault();
+        event.stopPropagation();
+        cancelPointerInteraction();
+      }}
+      onMouseDownCapture={(event) => {
+        if (event.button === 0) return;
+        event.stopPropagation();
+        if (event.button === 1) event.preventDefault();
+      }}
+      onAuxClick={(event) => {
+        if (event.button !== 1) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
       style={{
         position: "relative",
         cursor: cursorForTool(
           tool,
-          isSpacePanning ? "active" : spacePanReady ? "ready" : "inactive",
+          isViewportPanning ? "active" : spacePanReady ? "ready" : "inactive",
         ),
       }}
     >
@@ -349,7 +487,9 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
         onPointerDown={(event) => {
           const stage = event.target.getStage();
           if (!stage) throw new Error("Canvas stage is unavailable");
+          if (event.evt.button !== 0) return;
           if (interactionLocked) return;
+          if (spacePanReady && viewportPanLocked) return;
           if (!spacePanReady && tool === "selection") {
             const pendingPointer = pendingAnnotationPointer.current;
             if (pendingPointer) {
@@ -362,28 +502,16 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
           } else if (!spacePanReady && isTransforming) {
             return;
           }
-          if (interactionController.active) return;
-          spacePanActive.current = spacePanReady;
-          appliedViewportPan.current = { x: 0, y: 0 };
-          const start = interactionPoint(stage);
-          const preview = interactionController.begin({
+          const panSource = spacePanReady ? "space" : undefined;
+          const stagePoint = workspacePoint(stage);
+          const point = panSource ? stagePoint : toSourcePoint(stagePoint);
+          beginPointerInteraction({
             pointerId: event.evt.pointerId,
-            tool,
-            point: start,
+            point,
             modifiers: modifiersFor(event.evt),
-            defaults: document.defaults,
-            document,
-            selectedIds,
-            viewportPan: spacePanReady,
-            zoom: viewport.zoom,
+            panSource,
+            captureOwner: stage.getContent(),
           });
-          const container = stage.getContent();
-          container.setPointerCapture(event.evt.pointerId);
-          captureContainer.current = container;
-          capturedPointerId.current = event.evt.pointerId;
-          if (preview) applyPreview(preview);
-          setIsSpacePanning(spacePanReady);
-          onInteractionActiveChange(true);
         }}
         onPointerMove={(event) => {
           if (
@@ -392,21 +520,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
           ) return;
           const stage = event.target.getStage();
           if (!stage) throw new Error("Canvas stage is unavailable");
-          latestMove.current = {
-            point: interactionPoint(stage),
-            modifiers: modifiersFor(event.evt),
-          };
-          if (frame.current === null) {
-            frame.current = requestAnimationFrame(() => {
-              frame.current = null;
-              if (disposed.current) return;
-              const latest = latestMove.current;
-              latestMove.current = undefined;
-              if (latest) {
-                applyPreview(interactionController.update(latest.point, latest.modifiers));
-              }
-            });
-          }
+          schedulePointerMove(interactionPoint(stage), modifiersFor(event.evt));
         }}
         onPointerUp={(event) => {
           const pendingPointer = pendingAnnotationPointer.current;
@@ -422,15 +536,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
           ) return;
           const stage = event.target.getStage();
           if (!stage) throw new Error("Canvas stage is unavailable");
-          try {
-            flushScheduledMove();
-            const point = interactionPoint(stage);
-            const modifiers = modifiersFor(event.evt);
-            applyPreview(interactionController.update(point, modifiers));
-            routeCommit(interactionController.commit(point, modifiers));
-          } finally {
-            finishPointerInteraction();
-          }
+          commitPointerInteraction(interactionPoint(stage), modifiersFor(event.evt));
         }}
         onPointerCancel={(event) => {
           if (

@@ -355,6 +355,7 @@ function VisualHarness() {
                   viewport={viewport}
                   spacePanReady={spacePanReady}
                   interactionLocked={false}
+                  viewportPanLocked={false}
                   selectedIds={selectedIds}
                   onSelect={(id, toggle = false) => {
                     if (!id) {

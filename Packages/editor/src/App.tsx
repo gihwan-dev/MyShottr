@@ -571,6 +571,7 @@ export const EditorApp = forwardRef<EditorAppHandle, EditorAppProps>(function Ed
               viewport={viewport}
               spacePanReady={spacePanReady}
               interactionLocked={nudgeSession !== undefined || textLocked}
+              viewportPanLocked={nudgeSession !== undefined}
               selectedIds={selectedIds}
               onSelect={select}
               onEditText={beginTextEdit}

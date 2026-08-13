@@ -36,6 +36,7 @@ vi.mock("./canvas/EditorCanvas", async () => {
     viewport: ViewportSnapshot;
     spacePanReady: boolean;
     interactionLocked: boolean;
+    viewportPanLocked: boolean;
     selectedIds: readonly string[];
     onCommand: (command: EditorCommand) => void;
     onSelect: (id: string | undefined, toggle?: boolean) => void;
@@ -46,8 +47,9 @@ vi.mock("./canvas/EditorCanvas", async () => {
     onBeginNewText: (point: Point, defaults: EditorDefaults) => void;
     onInteractionActiveChange: (active: boolean) => void;
     textEditorOverlay: ReactNode;
-    }>(function MockEditorCanvas({ document, tool, viewport, spacePanReady, interactionLocked, selectedIds, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onBeginNewText, onInteractionActiveChange, textEditorOverlay }, ref) {
+    }>(function MockEditorCanvas({ document, tool, viewport, spacePanReady, interactionLocked, viewportPanLocked, selectedIds, onCommand, onSelect, onBeginTransaction, onCommitTransaction, onCancelTransaction, onEditText, onBeginNewText, onInteractionActiveChange, textEditorOverlay }, ref) {
       const pointerGesture = useRef<{
+        kind: "viewport" | "tool";
         pointerId: number;
         tool: EditorTool;
         document: EditorDocument;
@@ -71,6 +73,7 @@ vi.mock("./canvas/EditorCanvas", async () => {
       </output>
       <output data-testid="canvas-selection">{selectedIds.join(",")}</output>
       <output data-testid="canvas-interaction-lock">{String(interactionLocked === true)}</output>
+      <output data-testid="canvas-viewport-pan-lock">{String(viewportPanLocked === true)}</output>
       <output
         data-testid="canvas-viewport"
         data-available={`${viewport.availableRect.x},${viewport.availableRect.y},${viewport.availableRect.width},${viewport.availableRect.height}`}
@@ -87,12 +90,16 @@ vi.mock("./canvas/EditorCanvas", async () => {
       <div
         data-testid="mock-canvas-pointer-surface"
         onPointerDown={(event) => {
+          const middlePan = event.button === 1;
+          const spacePan = spacePanReady && event.button === 0;
           if (
-            interactionLocked
-            || (!spacePanReady && tool === "selection")
-            || pointerGesture.current
+            pointerGesture.current
+            || (middlePan && viewportPanLocked)
+            || (!middlePan && interactionLocked)
+            || (!middlePan && !spacePan && tool === "selection")
           ) return;
           pointerGesture.current = {
+            kind: middlePan || spacePan ? "viewport" : "tool",
             pointerId: event.pointerId,
             tool,
             document: structuredClone(document),
@@ -106,6 +113,10 @@ vi.mock("./canvas/EditorCanvas", async () => {
           if (!active || active.pointerId !== event.pointerId) return;
           pointerGesture.current = undefined;
           const end = { x: event.clientX, y: event.clientY };
+          if (active.kind === "viewport") {
+            onInteractionActiveChange(false);
+            return;
+          }
           if (active.tool === "text") {
             onBeginNewText(active.start, active.document.defaults);
           } else if (active.tool !== "selection") {
@@ -627,6 +638,7 @@ describe("EditorApp", () => {
     expect((editor as HTMLTextAreaElement).value).toBe("");
     expect(screen.getByTestId("canvas-positions").textContent).toBe("");
     expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("true");
+    expect(screen.getByTestId("canvas-viewport-pan-lock").textContent).toBe("false");
     expect(changes).toHaveLength(0);
 
     fireEvent.keyDown(window, { code: "KeyD", key: "d", metaKey: true });
@@ -852,6 +864,43 @@ describe("EditorApp", () => {
     expect(onChange).not.toHaveBeenCalled();
 
     fireEvent.keyUp(window, { code: "Space", key: " " });
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    expect(selection.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("cancels an active middle-button pan on the first Escape and resumes idle Escape priority", () => {
+    const onChange = vi.fn();
+    render(<EditorApp
+      initialDocument={fixtureDocument({ elements: [] })}
+      initialTool="rectangle"
+      sourceImageURL="data:image/png;base64,iVBORw0KGgo="
+      onChange={onChange}
+      onPreferencesChange={() => {}}
+    />);
+    const canvas = screen.getByTestId("mock-canvas-pointer-surface");
+    const rectangle = screen.getByRole("button", { name: "Rectangle, shortcut R" });
+    const selection = screen.getByRole("button", { name: "Selection, shortcut V" });
+
+    fireEvent.pointerDown(canvas, {
+      button: 1,
+      buttons: 4,
+      clientX: 10,
+      clientY: 20,
+      pointerId: 72,
+    });
+    fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
+    fireEvent.pointerUp(canvas, {
+      button: 1,
+      buttons: 0,
+      clientX: 40,
+      clientY: 50,
+      pointerId: 72,
+    });
+
+    expect(rectangle.getAttribute("aria-pressed")).toBe("true");
+    expect(selection.getAttribute("aria-pressed")).toBe("false");
+    expect(onChange).not.toHaveBeenCalled();
+
     fireEvent.keyDown(window, { code: "Escape", key: "Escape" });
     expect(selection.getAttribute("aria-pressed")).toBe("true");
   });
@@ -1281,6 +1330,7 @@ describe("EditorApp", () => {
 
     expect(screen.getByTestId("canvas-positions").textContent).toBe("rect-1:22,30");
     expect(screen.getByTestId("canvas-interaction-lock").textContent).toBe("true");
+    expect(screen.getByTestId("canvas-viewport-pan-lock").textContent).toBe("true");
     expect(changes).toHaveLength(0);
 
     fireEvent.keyUp(window, { code: "ArrowRight", key: "ArrowRight" });

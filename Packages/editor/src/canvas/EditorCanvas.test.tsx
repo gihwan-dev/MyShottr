@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, createEvent, fireEvent, render, screen, within } from "@testing-library/react";
 import Konva from "konva";
 import { createRef, type RefAttributes } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -255,6 +255,8 @@ vi.mock("react-konva", async () => {
       return {
         evt: {
           pointerId: "pointerId" in event ? event.pointerId : 0,
+          button: "button" in event ? event.button : 0,
+          buttons: "buttons" in event ? event.buttons : 0,
           shiftKey: event.shiftKey,
           altKey: event.altKey,
           metaKey: event.metaKey,
@@ -305,6 +307,7 @@ const VIEWPORT_PROPS = {
   viewport: VIEWPORT,
   spacePanReady: false,
   interactionLocked: false,
+  viewportPanLocked: false,
   onViewportWheel: () => {},
   onViewportPanBy: () => {},
   onInteractionActiveChange: () => {},
@@ -352,6 +355,20 @@ afterEach(() => {
   animationFrames.clear();
   vi.unstubAllGlobals();
 });
+
+function installCanvasShellPointerCapture() {
+  const shell = screen.getByTestId("editor-canvas") as HTMLDivElement;
+  const captured = new Set<number>();
+  const setPointerCapture = vi.fn((pointerId: number) => captured.add(pointerId));
+  const releasePointerCapture = vi.fn((pointerId: number) => captured.delete(pointerId));
+  const hasPointerCapture = vi.fn((pointerId: number) => captured.has(pointerId));
+  Object.assign(shell, {
+    setPointerCapture,
+    releasePointerCapture,
+    hasPointerCapture,
+  });
+  return { shell, captured, setPointerCapture, releasePointerCapture };
+}
 
 function annotationLifecycleEvent(): MouseEvent | { pointerId: number } {
   const pointerId = konvaControl.annotationLifecyclePointerId;
@@ -513,6 +530,246 @@ describe("EditorCanvas gesture terminals", () => {
     expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
       .toEqual([true, false]);
     expect(history.document.elements).toHaveLength(0);
+  });
+
+  it("pans by raw workspace delta from a middle-button drag at non-default zoom", () => {
+    const onViewportPanBy = vi.fn();
+    const onInteractionActiveChange = vi.fn();
+    const onCommand = vi.fn();
+    renderCreationCanvas("rectangle", {
+      viewport: { ...VIEWPORT, zoom: 2 },
+      onViewportPanBy,
+      onInteractionActiveChange,
+      onCommand,
+    });
+    const { shell, setPointerCapture, releasePointerCapture } = installCanvasShellPointerCapture();
+    const stage = screen.getByTestId("stage");
+    const pointerDown = createEvent.pointerDown(stage, {
+      button: 1,
+      buttons: 4,
+      clientX: 110,
+      clientY: 120,
+      pointerId: 41,
+      cancelable: true,
+    });
+
+    fireEvent(stage, pointerDown);
+    expect(pointerDown.defaultPrevented).toBe(true);
+    expect(shell.style.cursor).toBe("grabbing");
+    fireEvent.pointerUp(stage, {
+      button: 1,
+      buttons: 0,
+      clientX: 999,
+      clientY: 999,
+      pointerId: 99,
+    });
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true]);
+    fireEvent.pointerMove(stage, {
+      button: 1,
+      buttons: 4,
+      clientX: 145,
+      clientY: 168,
+      pointerId: 41,
+    });
+    fireEvent.pointerUp(stage, {
+      button: 1,
+      buttons: 0,
+      clientX: 145,
+      clientY: 168,
+      pointerId: 41,
+    });
+
+    expect(onViewportPanBy).toHaveBeenCalledWith({ x: 35, y: 48 });
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true, false]);
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(setPointerCapture).toHaveBeenCalledWith(41);
+    expect(releasePointerCapture).toHaveBeenCalledWith(41);
+    expect(shell.style.cursor).toBe("crosshair");
+  });
+
+  it.each([
+    ["annotation", "annotation-node"],
+    ["transformer handle", "transformer"],
+  ] as const)("gives middle-button pan precedence over a selected %s", (_label, testId) => {
+    const initial = fixtureDocument();
+    const history = createHistoryStore(initial);
+    const onSelect = vi.fn();
+    const onViewportPanBy = vi.fn();
+    renderSelectionCanvas(initial, history, ["rect-1"], { onSelect, onViewportPanBy });
+    installCanvasShellPointerCapture();
+    const target = screen.getByTestId(testId);
+
+    fireEvent.pointerDown(target, {
+      button: 1, buttons: 4, clientX: 200, clientY: 210, pointerId: 42,
+    });
+    fireEvent.pointerMove(target, {
+      button: 1, buttons: 4, clientX: 245, clientY: 250, pointerId: 42,
+    });
+    flushAnimationFrame();
+    fireEvent.pointerUp(target, {
+      button: 1, buttons: 0, clientX: 245, clientY: 250, pointerId: 42,
+    });
+
+    expect(onViewportPanBy).toHaveBeenCalledWith({ x: 45, y: 40 });
+    expect(history.document).toEqual(initial);
+    expect(history.canUndo).toBe(false);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(konvaControl.stopDrag).not.toHaveBeenCalled();
+    expect(konvaControl.stopTransform).not.toHaveBeenCalled();
+  });
+
+  it("pans from an active textarea while preserving focus, draft, and edit state", () => {
+    const onViewportPanBy = vi.fn();
+    const onTextResult = vi.fn();
+    renderCreationCanvas("rectangle", {
+      interactionLocked: true,
+      viewportPanLocked: false,
+      onViewportPanBy,
+      textEditorOverlay: <textarea aria-label="Edit annotation text" defaultValue="Draft stays here" onBlur={onTextResult} />,
+    });
+    installCanvasShellPointerCapture();
+    const textarea = screen.getByRole("textbox", { name: "Edit annotation text" }) as HTMLTextAreaElement;
+    textarea.focus();
+
+    fireEvent.pointerDown(textarea, {
+      button: 1, buttons: 4, clientX: 300, clientY: 250, pointerId: 43,
+    });
+    fireEvent.pointerMove(textarea, {
+      button: 1, buttons: 4, clientX: 330, clientY: 290, pointerId: 43,
+    });
+    flushAnimationFrame();
+    fireEvent.pointerUp(textarea, {
+      button: 1, buttons: 0, clientX: 330, clientY: 290, pointerId: 43,
+    });
+
+    expect(onViewportPanBy).toHaveBeenCalledWith({ x: 30, y: 40 });
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.value).toBe("Draft stays here");
+    expect(onTextResult).not.toHaveBeenCalled();
+  });
+
+  it("keeps viewport pan locked during a nudge-style lock", () => {
+    const onViewportPanBy = vi.fn();
+    renderCreationCanvas("rectangle", {
+      interactionLocked: true,
+      viewportPanLocked: true,
+      onViewportPanBy,
+    });
+    installCanvasShellPointerCapture();
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { button: 1, buttons: 4, pointerId: 44 });
+    fireEvent.pointerMove(stage, { button: 1, buttons: 4, clientX: 40, clientY: 50, pointerId: 44 });
+
+    expect(onViewportPanBy).not.toHaveBeenCalled();
+  });
+
+  it.each(["pointercancel", "blur"] as const)(
+    "ends middle-button pan exactly once on %s and permits the next gesture",
+    (terminal) => {
+      const onViewportPanBy = vi.fn();
+      const onInteractionActiveChange = vi.fn();
+      renderCreationCanvas("rectangle", { onViewportPanBy, onInteractionActiveChange });
+      installCanvasShellPointerCapture();
+      const stage = screen.getByTestId("stage");
+
+      fireEvent.pointerDown(stage, { button: 1, buttons: 4, clientX: 10, clientY: 20, pointerId: 51 });
+      fireEvent.pointerMove(stage, { button: 1, buttons: 4, clientX: 30, clientY: 45, pointerId: 51 });
+      flushAnimationFrame();
+      if (terminal === "pointercancel") {
+        fireEvent.pointerCancel(stage, { pointerId: 51 });
+        fireEvent.pointerCancel(stage, { pointerId: 51 });
+      } else {
+        window.dispatchEvent(new Event("blur"));
+        window.dispatchEvent(new Event("blur"));
+      }
+      fireEvent.pointerMove(stage, { button: 1, buttons: 4, clientX: 80, clientY: 90, pointerId: 51 });
+      fireEvent.pointerUp(stage, { button: 1, buttons: 0, clientX: 80, clientY: 90, pointerId: 51 });
+
+      expect(onViewportPanBy).toHaveBeenCalledTimes(1);
+      expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true, false]);
+
+      fireEvent.pointerDown(stage, { button: 1, buttons: 4, clientX: 100, clientY: 110, pointerId: 52 });
+      fireEvent.pointerMove(stage, { button: 1, buttons: 4, clientX: 120, clientY: 140, pointerId: 52 });
+      flushAnimationFrame();
+      fireEvent.pointerUp(stage, { button: 1, buttons: 0, clientX: 120, clientY: 140, pointerId: 52 });
+
+      expect(onViewportPanBy).toHaveBeenLastCalledWith({ x: 20, y: 30 });
+      expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true, false, true, false]);
+    },
+  );
+
+  it("does not let a late middle press convert an active left-button creation", () => {
+    const onCommand = vi.fn();
+    const onViewportPanBy = vi.fn();
+    renderCreationCanvas("rectangle", { onCommand, onViewportPanBy });
+    installCanvasShellPointerCapture();
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { button: 0, buttons: 1, clientX: 10, clientY: 20, pointerId: 61 });
+    fireEvent.pointerDown(stage, { button: 1, buttons: 5, clientX: 15, clientY: 25, pointerId: 62 });
+    fireEvent.pointerMove(stage, { button: 0, buttons: 1, clientX: 50, clientY: 60, pointerId: 61 });
+    fireEvent.pointerUp(stage, { button: 0, buttons: 0, clientX: 50, clientY: 60, pointerId: 61 });
+
+    expect(onCommand).toHaveBeenCalledOnce();
+    expect(onCommand).toHaveBeenCalledWith({
+      type: "create",
+      element: expect.objectContaining({ type: "rectangle", x: 10, y: 20, width: 40, height: 40 }),
+    });
+    expect(onViewportPanBy).not.toHaveBeenCalled();
+  });
+
+  it("keeps right-button input inert and ordinary left creation unchanged", () => {
+    const onCommand = vi.fn();
+    renderCreationCanvas("rectangle", { onCommand });
+    installCanvasShellPointerCapture();
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { button: 2, buttons: 2, clientX: 10, clientY: 20, pointerId: 63 });
+    fireEvent.pointerMove(stage, { button: 2, buttons: 2, clientX: 40, clientY: 50, pointerId: 63 });
+    fireEvent.pointerUp(stage, { button: 2, buttons: 0, clientX: 40, clientY: 50, pointerId: 63 });
+    expect(onCommand).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(stage, { button: 0, buttons: 1, clientX: 10, clientY: 20, pointerId: 64 });
+    fireEvent.pointerUp(stage, { button: 0, buttons: 0, clientX: 40, clientY: 50, pointerId: 64 });
+    expect(onCommand).toHaveBeenCalledOnce();
+  });
+
+  it("prevents compatibility mousedown and auxclick for the middle button", () => {
+    const onCommand = vi.fn();
+    renderCreationCanvas("rectangle", { onCommand });
+    installCanvasShellPointerCapture();
+    const stage = screen.getByTestId("stage");
+    const mouseDown = new MouseEvent("mousedown", { bubbles: true, button: 1, cancelable: true });
+    const auxClick = new MouseEvent("auxclick", { bubbles: true, button: 1, cancelable: true });
+
+    fireEvent(stage, mouseDown);
+    fireEvent(stage, auxClick);
+
+    expect(mouseDown.defaultPrevented).toBe(true);
+    expect(auxClick.defaultPrevented).toBe(true);
+    expect(onCommand).not.toHaveBeenCalled();
+  });
+
+  it("releases middle-pointer capture and drops a queued frame on unmount", () => {
+    const onCommand = vi.fn();
+    const onViewportPanBy = vi.fn();
+    const view = renderCreationCanvas("rectangle", { onCommand, onViewportPanBy });
+    const { releasePointerCapture } = installCanvasShellPointerCapture();
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, { button: 1, buttons: 4, clientX: 10, clientY: 20, pointerId: 65 });
+    fireEvent.pointerMove(stage, { button: 1, buttons: 4, clientX: 40, clientY: 55, pointerId: 65 });
+    const queuedFrame = animationFrames.values().next().value as FrameRequestCallback | undefined;
+    if (!queuedFrame) throw new Error("Expected one queued animation frame");
+
+    view.unmount();
+    act(() => queuedFrame(0));
+
+    expect(cancelAnimationFrame).toHaveBeenCalledOnce();
+    expect(releasePointerCapture).toHaveBeenCalledWith(65);
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onViewportPanBy).not.toHaveBeenCalled();
   });
 
   it("ends Space-pan exactly once on window blur so shortcuts and the next pan recover", () => {
