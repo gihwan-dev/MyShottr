@@ -587,6 +587,45 @@ describe("EditorCanvas gesture terminals", () => {
     expect(shell.style.cursor).toBe("crosshair");
   });
 
+  it("flushes a queued middle-pan point before a distinct pointer-up point without a late RAF delta", () => {
+    const onViewportPanBy = vi.fn();
+    renderCreationCanvas("rectangle", { onViewportPanBy });
+    installCanvasShellPointerCapture();
+    const stage = screen.getByTestId("stage");
+
+    fireEvent.pointerDown(stage, {
+      button: 1,
+      buttons: 4,
+      clientX: 10,
+      clientY: 20,
+      pointerId: 46,
+    });
+    fireEvent.pointerMove(stage, {
+      button: 1,
+      buttons: 4,
+      clientX: 40,
+      clientY: 55,
+      pointerId: 46,
+    });
+    const queuedFrame = animationFrames.values().next().value as FrameRequestCallback | undefined;
+    if (!queuedFrame) throw new Error("Expected one queued animation frame");
+    fireEvent.pointerUp(stage, {
+      button: 1,
+      buttons: 0,
+      clientX: 65,
+      clientY: 85,
+      pointerId: 46,
+    });
+
+    expect(onViewportPanBy.mock.calls).toEqual([
+      [{ x: 30, y: 35 }],
+      [{ x: 25, y: 30 }],
+    ]);
+    expect(onViewportPanBy).toHaveBeenCalledTimes(2);
+    act(() => queuedFrame(0));
+    expect(onViewportPanBy).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     ["annotation", "annotation-node"],
     ["transformer handle", "transformer"],
@@ -754,7 +793,12 @@ describe("EditorCanvas gesture terminals", () => {
   it("releases middle-pointer capture and drops a queued frame on unmount", () => {
     const onCommand = vi.fn();
     const onViewportPanBy = vi.fn();
-    const view = renderCreationCanvas("rectangle", { onCommand, onViewportPanBy });
+    const onInteractionActiveChange = vi.fn();
+    const view = renderCreationCanvas("rectangle", {
+      onCommand,
+      onViewportPanBy,
+      onInteractionActiveChange,
+    });
     const { releasePointerCapture } = installCanvasShellPointerCapture();
     const stage = screen.getByTestId("stage");
 
@@ -770,6 +814,8 @@ describe("EditorCanvas gesture terminals", () => {
     expect(releasePointerCapture).toHaveBeenCalledWith(65);
     expect(onCommand).not.toHaveBeenCalled();
     expect(onViewportPanBy).not.toHaveBeenCalled();
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active))
+      .toEqual([true, false]);
   });
 
   it("ends Space-pan exactly once on window blur so shortcuts and the next pan recover", () => {
@@ -1191,7 +1237,7 @@ describe("EditorCanvas gesture terminals", () => {
     expect(konvaControl.releasePointerCapture).toHaveBeenCalledOnce();
     expect(onCommand).not.toHaveBeenCalled();
     expect(onViewportPanBy).not.toHaveBeenCalled();
-    expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true]);
+    expect(onInteractionActiveChange.mock.calls.map(([active]) => active)).toEqual([true, false]);
   });
 
   it("cancels and restores an active annotation move exactly once on unmount", () => {

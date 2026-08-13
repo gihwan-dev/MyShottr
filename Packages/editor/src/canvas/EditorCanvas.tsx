@@ -384,11 +384,13 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     disposed.current = false;
     return () => {
       disposed.current = true;
+      const pointerWasActive = interactionController.active;
       interactionController.cancel();
       clearScheduledMove();
       releasePointerCapture();
       pendingAnnotationPointer.current = undefined;
       cancelAnnotationTransaction();
+      if (pointerWasActive) onInteractionActiveChange(false);
     };
   }, []);
   const orderedElements = [...document.elements].sort(byZIndex);
