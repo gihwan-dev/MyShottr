@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -77,6 +77,26 @@ describe("shortcut UI", () => {
     expect(screen.getByText("Copy Image")).toBeTruthy();
     expect(screen.getByText("Save Project")).toBeTruthy();
     expect(screen.getByText("Export PNG")).toBeTruthy();
+  });
+
+  it("shows both Space-drag and middle-button pan in View and Navigation", () => {
+    renderEditor();
+    fireEvent.keyDown(window, {
+      code: "Slash",
+      key: "?",
+      shiftKey: true,
+    });
+
+    const navigationHeading = screen.getByRole("heading", {
+      name: "View and Navigation",
+    });
+    const navigation = navigationHeading.closest("section");
+    if (!navigation) throw new Error("View and Navigation section is missing");
+
+    expect(within(navigation).getByText("Pan")).toBeTruthy();
+    expect(within(navigation).getByLabelText("Space Drag")).toBeTruthy();
+    expect(within(navigation).getByText("Pan with Middle Button")).toBeTruthy();
+    expect(within(navigation).getByLabelText("Middle Drag")).toBeTruthy();
   });
 
   it("traps Tab and Shift-Tab within the dialog", () => {

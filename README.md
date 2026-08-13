@@ -48,9 +48,9 @@ instructions or compatibility contracts.
 - Press `Command-E` to export a source-resolution PNG.
 - Press `Command-C` and `Command-V` to copy and paste selected annotations.
 - Press `?` to open shortcut help. `Escape` closes it and restores focus.
-- Hold `Space` and drag, or scroll, to pan. Pinch or use `Command`-scroll to
-  zoom around the pointer. `Command-0` sets 100%, `Shift-1` fits the complete
-  image, and `Shift-2` fits the current selection.
+- Hold `Space` and drag, drag with the middle mouse button, or scroll to pan.
+  Pinch or use `Command`-scroll to zoom around the pointer. `Command-0` sets 100%,
+  `Shift-1` fits the complete image, and `Shift-2` fits the current selection.
 - Hold `Shift` while drawing to constrain rectangles, arrows, and lines.
 - With Selection (`V`), drag empty canvas to preview a marquee and select
   intersecting annotations. `Shift`-click toggles one annotation.
@@ -92,7 +92,7 @@ Selection and editing shortcuts:
 - Edit one selected text annotation: `Enter`
 - Toggle one annotation in the selection: `Shift`-click
 - 100% / Fit Image / Fit Selection: `Command-0` / `Shift-1` / `Shift-2`
-- Pan: `Space`-drag or scroll
+- Pan: `Space`-drag, middle-button drag, or scroll
 - Zoom around pointer: pinch or `Command`-scroll
 - Shortcut help: `?`
 

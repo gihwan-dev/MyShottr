@@ -220,6 +220,12 @@ export const SHORTCUT_REGISTRY: readonly ShortcutDefinition[] = [
     plainCode("Space"),
   ),
   helpOnly(
+    "view-middle-pan",
+    "View and Navigation",
+    "Pan with Middle Button",
+    ["Middle", "Drag"],
+  ),
+  helpOnly(
     "view-scroll-pan",
     "View and Navigation",
     "Pan View",
