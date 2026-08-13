@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
+import Konva from "konva";
 
 import "../../src/styles.css";
 
@@ -25,12 +26,14 @@ import {
 } from "../../src/components/EditorFeedback";
 import { FloatingToolPalette } from "../../src/components/FloatingToolPalette";
 import { ShortcutHelpDialog } from "../../src/components/ShortcutHelpDialog";
+import { TextEditorOverlay } from "../../src/components/TextEditorOverlay";
 import {
   EditorWorkspace,
   type EditorWorkspaceHandle,
 } from "../../src/components/EditorWorkspace";
 import { ZoomControls } from "../../src/components/ZoomControls";
 import { unionBounds } from "../../src/interaction/selectionGeometry";
+import type { TextEditSession } from "../../src/interaction/textEditSession";
 import type {
   EditorCommand,
   EditorDefaults,
@@ -52,6 +55,7 @@ export type VisualFixtureState =
   | "new-rectangle"
   | "selected-rectangle"
   | "mixed-rectangle-text"
+  | "editing-text"
   | "shortcut-help"
   | "save-success"
   | "rail-reduced-motion";
@@ -61,6 +65,7 @@ type Fixture = {
   tool: EditorTool;
   selectedIds: string[];
   shortcutHelpOpen: boolean;
+  textEditSession?: TextEditSession;
 };
 
 const VISUAL_STATES: readonly VisualFixtureState[] = [
@@ -68,6 +73,7 @@ const VISUAL_STATES: readonly VisualFixtureState[] = [
   "new-rectangle",
   "selected-rectangle",
   "mixed-rectangle-text",
+  "editing-text",
   "shortcut-help",
   "save-success",
   "rail-reduced-motion",
@@ -174,6 +180,18 @@ function fixtureFor(state: VisualFixtureState): Fixture {
       return { document, tool: "selection", selectedIds: [rectangle.id], shortcutHelpOpen: false };
     case "mixed-rectangle-text":
       return { document, tool: "selection", selectedIds: [rectangle.id, text.id], shortcutHelpOpen: false };
+    case "editing-text":
+      return {
+        document,
+        tool: "selection",
+        selectedIds: [text.id],
+        shortcutHelpOpen: false,
+        textEditSession: {
+          kind: "existing",
+          element: text,
+          initialText: text.text,
+        },
+      };
     case "shortcut-help":
       return { document, tool: "selection", selectedIds: [rectangle.id], shortcutHelpOpen: true };
     case "save-success":
@@ -229,6 +247,9 @@ function VisualHarness() {
   const [tool, setTool] = useState<EditorTool>("selection");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [commandCount, setCommandCount] = useState(0);
+  const [textEditActive, setTextEditActive] = useState(false);
+  const [textResultCount, setTextResultCount] = useState(0);
   const [sourceReady, setSourceReady] = useState(false);
   const [sourceError, setSourceError] = useState<Error>();
   const [configurationApplied, setConfigurationApplied] = useState(false);
@@ -260,6 +281,7 @@ function VisualHarness() {
       setTool(fixture.tool);
       setSelectedIds(fixture.selectedIds);
       setShortcutHelpOpen(fixture.shortcutHelpOpen);
+      setTextEditActive(fixture.textEditSession !== undefined);
       setConfigurationApplied(true);
     });
     return () => cancelAnimationFrame(frame);
@@ -267,6 +289,7 @@ function VisualHarness() {
     configurationApplied,
     fixture.selectedIds,
     fixture.shortcutHelpOpen,
+    fixture.textEditSession,
     fixture.tool,
     sourceReady,
     viewportSignature,
@@ -313,6 +336,47 @@ function VisualHarness() {
     };
   }, [fixtureState, viewportStable]);
 
+  useEffect(() => {
+    const target = window as typeof window & {
+      __inkbeamVisualCanvasProbe?: () => {
+        handle: { x: number; y: number };
+        geometry: Record<string, number>;
+      };
+    };
+    target.__inkbeamVisualCanvasProbe = () => {
+      const stage = Konva.stages.at(-1);
+      if (!stage) throw new Error("Visual fixture Konva stage is unavailable");
+      const transformer = stage.findOne(
+        (node) => node.getClassName() === "Transformer",
+      );
+      const anchor = transformer?.findOne(".top-left");
+      const selectedNode = stage.findOne(
+        (node) => node.getAttr("data-testid") === "element-rect-1",
+      );
+      if (!anchor || !selectedNode) {
+        throw new Error("Selected rectangle Transformer probe is unavailable");
+      }
+      const stageBounds = stage.container().getBoundingClientRect();
+      const handle = anchor.getAbsolutePosition();
+      return {
+        handle: {
+          x: stageBounds.left + handle.x,
+          y: stageBounds.top + handle.y,
+        },
+        geometry: {
+          x: selectedNode.x(),
+          y: selectedNode.y(),
+          scaleX: selectedNode.scaleX(),
+          scaleY: selectedNode.scaleY(),
+          rotation: selectedNode.rotation(),
+        },
+      };
+    };
+    return () => {
+      delete target.__inkbeamVisualCanvasProbe;
+    };
+  }, [configurationApplied, selectedIds]);
+
   const selectedElements = selectedIds.map((id) =>
     findElement(fixture.document, id),
   );
@@ -354,7 +418,7 @@ function VisualHarness() {
                   tool={tool}
                   viewport={viewport}
                   spacePanReady={spacePanReady}
-                  interactionLocked={false}
+                  interactionLocked={textEditActive}
                   viewportPanLocked={false}
                   selectedIds={selectedIds}
                   onSelect={(id, toggle = false) => {
@@ -370,7 +434,9 @@ function VisualHarness() {
                   }}
                   onEditText={() => {}}
                   onBeginNewText={(_: Point, __: EditorDefaults) => {}}
-                  onCommand={(_: EditorCommand) => {}}
+                  onCommand={(_: EditorCommand) => {
+                    setCommandCount((count) => count + 1);
+                  }}
                   onBeginTransaction={() => {}}
                   onCommitTransaction={() => {}}
                   onCancelTransaction={() => {}}
@@ -378,7 +444,21 @@ function VisualHarness() {
                   onViewportPanBy={panBy}
                   onInteractionActiveChange={() => {}}
                   toSourcePoint={toSourcePoint}
-                  textEditorOverlay={null}
+                  textEditorOverlay={
+                    textEditActive && fixture.textEditSession
+                      ? (
+                          <TextEditorOverlay
+                            session={fixture.textEditSession}
+                            zoom={viewport.zoom}
+                            pan={viewport.pan}
+                            onResult={() => {
+                              setTextResultCount((count) => count + 1);
+                              setTextEditActive(false);
+                            }}
+                          />
+                        )
+                      : null
+                  }
                 />
                 <ViewportProbe
                   transform={`translate(${viewport.pan.x},${viewport.pan.y}) scale(${viewport.zoom})`}
@@ -408,6 +488,14 @@ function VisualHarness() {
           <ShortcutHelpDialog onClose={() => setShortcutHelpOpen(false)} />
         )}
       </main>
+      <output
+        hidden
+        data-testid="visual-fixture-editor-state"
+        data-selected-ids={selectedIds.join(",")}
+        data-command-count={commandCount}
+        data-text-edit-active={String(textEditActive)}
+        data-text-result-count={textResultCount}
+      />
       <EditorFeedback state={feedbackState} />
     </>
   );
