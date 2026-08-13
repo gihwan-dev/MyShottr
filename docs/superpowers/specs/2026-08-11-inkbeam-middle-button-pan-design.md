@@ -3,8 +3,7 @@
 - Date: 2026-08-11
 - Status: Approved
 - Target: Inkbeam editor after `v0.2.0`
-- Authority: Extends the viewport interaction in
-  [`2026-07-31-myshottr-editor-ux-polish-design.md`](./2026-07-31-myshottr-editor-ux-polish-design.md)
+- Authority: Extends the established Inkbeam editor viewport interaction contract.
 
 ## 1. Outcome
 

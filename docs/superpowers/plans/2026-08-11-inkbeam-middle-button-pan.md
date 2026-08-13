@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Execute from `/Users/choegihwan/Documents/MyShottr/.worktrees/myshottr-v1` on branch `worktree/fix-region-auto-capture`.
+- Execute from the linked feature worktree on branch `worktree/fix-region-auto-capture`.
 - The approved source of truth is `docs/superpowers/specs/2026-08-11-inkbeam-middle-button-pan-design.md`.
 - Preserve the pre-existing uncommitted capture-cursor changes in `Sources/InkbeamApp/Capture/RegionSelectionController.swift` and `Tests/InkbeamTests/Capture/RegionSelectionStateTests.swift`. Never stage either file in an editor task.
 - Preserve commit `2edbb10` and the design commits `8d8e633` and `0e0a269`; do not rewrite or squash them while implementing this plan.
@@ -1648,7 +1648,7 @@ Expected final output:
 
 ```text
 Inkbeam automated verification passed.
-Signed Debug app: /Users/choegihwan/Documents/MyShottr/.worktrees/myshottr-v1/DerivedData/VerifyInkbeam/Build/Products/Debug/Inkbeam.app
+Signed Debug app: DerivedData/VerifyInkbeam/Build/Products/Debug/Inkbeam.app
 ```
 
 - [ ] **Step 4: Verify the artifact and launch it for manual acceptance**
