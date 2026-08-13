@@ -34,7 +34,7 @@ export type InteractionBeginInput = {
   defaults: EditorDefaults;
   document: EditorDocument;
   selectedIds: readonly string[];
-  spaceHeld: boolean;
+  viewportPan: boolean;
   zoom: number;
 };
 
@@ -103,11 +103,11 @@ export class InteractionController {
       },
       document,
       selectedIds: [...input.selectedIds],
-      spaceHeld: input.spaceHeld,
+      viewportPan: input.viewportPan,
       points: [{ ...input.point }],
       previewId: createElementId(),
     };
-    const preview = input.spaceHeld || input.tool === "numberMarker"
+    const preview = input.viewportPan || input.tool === "numberMarker"
       ? this.previewFor(this.interaction, input.point, input.modifiers, false)
       : { type: "none" } as const;
     this.currentPreview = preview.type === "none" ? null : preview;
@@ -128,7 +128,7 @@ export class InteractionController {
     this.interaction = undefined;
     this.currentPreview = null;
 
-    if (interaction.spaceHeld) {
+    if (interaction.viewportPan) {
       return { type: "viewport", pan: delta(interaction.snapshot.start, point) };
     }
     if (interaction.snapshot.tool === "selection") {
@@ -178,7 +178,7 @@ export class InteractionController {
     modifiers: InteractionModifiers,
     appendPathPoint: boolean,
   ): InteractionPreview {
-    if (interaction.spaceHeld) {
+    if (interaction.viewportPan) {
       return { type: "viewport", pan: delta(interaction.snapshot.start, point) };
     }
     const tool = interaction.snapshot.tool;
@@ -211,7 +211,7 @@ type ActiveInteraction = {
   snapshot: InteractionSnapshot;
   document: EditorDocument;
   selectedIds: readonly string[];
-  spaceHeld: boolean;
+  viewportPan: boolean;
   points: Point[];
   previewId: string;
 };

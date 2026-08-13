@@ -185,9 +185,12 @@ describe("InteractionController", () => {
     expect(controller.commit({ x: 80, y: 90 }, NO_MODIFIERS)).toEqual({ type: "none" });
   });
 
-  it("snapshots Space-held at pointer-down as a viewport interaction", () => {
+  it("snapshots viewport-pan intent at pointer-down independently of the active tool", () => {
     const controller = new InteractionController();
-    expect(controller.begin(beginInput({ spaceHeld: true }))).toEqual({
+    expect(controller.begin(beginInput({
+      tool: "rectangle",
+      viewportPan: true,
+    }))).toEqual({
       type: "viewport",
       pan: { x: 0, y: 0 },
     });
@@ -266,7 +269,7 @@ function beginInput(overrides: Partial<InteractionBeginInput> = {}): Interaction
     defaults: document.defaults,
     document,
     selectedIds: [],
-    spaceHeld: false,
+    viewportPan: false,
     zoom: 1,
     ...overrides,
   };

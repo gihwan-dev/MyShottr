@@ -374,7 +374,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
             defaults: document.defaults,
             document,
             selectedIds,
-            spaceHeld: spacePanReady,
+            viewportPan: spacePanReady,
             zoom: viewport.zoom,
           });
           const container = stage.getContent();
