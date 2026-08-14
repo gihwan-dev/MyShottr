@@ -644,8 +644,10 @@ function assertEvidencePathUnchanged(evidencePath) {
   }
 }
 
-function readRegularFile(surfacePath, label) {
-  const expectedStats = assertSafeFileTarget(surfacePath, label, { required: true });
+function openRegularFile(surfacePath, label) {
+  const expectedStats = assertSafeFileTarget(surfacePath, label, {
+    required: true,
+  });
   let descriptor;
   try {
     descriptor = fs.openSync(
@@ -656,12 +658,22 @@ function readRegularFile(surfacePath, label) {
     if (!openedStats.isFile() || !sameFileIdentity(expectedStats, openedStats)) {
       throw new Error(`unsafe release state ${label} target changed during read`);
     }
+    return { descriptor, stats: openedStats };
+  } catch (error) {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    throw error;
+  }
+}
+
+function readRegularFile(surfacePath, label) {
+  const opened = openRegularFile(surfacePath, label);
+  try {
     return {
-      contents: fs.readFileSync(descriptor, "utf8"),
-      stats: openedStats,
+      contents: fs.readFileSync(opened.descriptor, "utf8"),
+      stats: opened.stats,
     };
   } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
+    fs.closeSync(opened.descriptor);
   }
 }
 
@@ -678,13 +690,111 @@ function removeOwnedFile(surfacePath, expectedStats, label) {
   fs.unlinkSync(surfacePath);
 }
 
+function serializeLockMetadata(pid) {
+  return `${JSON.stringify({ schemaVersion: 1, pid })}\n`;
+}
+
+function parseLockMetadata(contents) {
+  let metadata;
+  try {
+    metadata = JSON.parse(contents);
+  } catch {
+    throw new Error("invalid release state lock metadata");
+  }
+  if (
+    !isPlainObject(metadata) ||
+    Object.keys(metadata).length !== 2 ||
+    !Object.hasOwn(metadata, "schemaVersion") ||
+    !Object.hasOwn(metadata, "pid") ||
+    metadata.schemaVersion !== 1 ||
+    !Number.isSafeInteger(metadata.pid) ||
+    metadata.pid <= 0
+  ) {
+    throw new Error("invalid release state lock metadata");
+  }
+  return metadata;
+}
+
+function lockOwnerIsStale(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error?.code === "ESRCH";
+  }
+}
+
+function removeStaleOwnerTemporaryFiles(evidencePath, ownerPID) {
+  assertEvidencePathUnchanged(evidencePath);
+  const prefix = `.release-state.${ownerPID}.`;
+  for (const entry of fs.readdirSync(evidencePath.directory)) {
+    if (!entry.startsWith(prefix) || !entry.endsWith(".tmp")) continue;
+    const temporaryPath = path.join(evidencePath.directory, entry);
+    const stats = assertSafeFileTarget(temporaryPath, "temporary");
+    if (!stats) continue;
+    removeOwnedFile(temporaryPath, stats, "temporary");
+  }
+  assertEvidencePathUnchanged(evidencePath);
+}
+
+function assertReclaimLockIdentity(lockPath, expectedStats) {
+  const current = assertSafeFileTarget(lockPath, "lock");
+  if (!current) {
+    throw new Error("release state writer lock is already held");
+  }
+  if (!sameFileIdentity(current, expectedStats)) {
+    throw new Error("release state writer lock changed during stale reclaim");
+  }
+}
+
+function reclaimStaleWriterLock(evidencePath, lockPath) {
+  let opened;
+  try {
+    opened = openRegularFile(lockPath, "lock");
+  } catch (error) {
+    if (!lstatIfExists(lockPath)) {
+      throw new Error("release state writer lock is already held");
+    }
+    throw error;
+  }
+  try {
+    const metadata = parseLockMetadata(
+      fs.readFileSync(opened.descriptor, "utf8"),
+    );
+    if (!lockOwnerIsStale(metadata.pid)) {
+      throw new Error("release state writer lock is already held");
+    }
+
+    assertEvidencePathUnchanged(evidencePath);
+    assertReclaimLockIdentity(lockPath, opened.stats);
+    removeStaleOwnerTemporaryFiles(evidencePath, metadata.pid);
+    assertReclaimLockIdentity(lockPath, opened.stats);
+
+    try {
+      fs.unlinkSync(lockPath);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        throw new Error("release state writer lock is already held");
+      }
+      throw error;
+    }
+    if (fs.fstatSync(opened.descriptor).nlink !== 0) {
+      installFailClosedLock(lockPath);
+      throw new Error("release state writer lock changed during stale reclaim");
+    }
+  } finally {
+    fs.closeSync(opened.descriptor);
+  }
+}
+
 function acquireWriterLock(evidencePath) {
   assertEvidencePathUnchanged(evidencePath);
   const lockPath = path.join(evidencePath.directory, "release-state.lock");
   const existing = lstatIfExists(lockPath);
   if (existing) {
     assertSafeFileTarget(lockPath, "lock");
-    throw new Error("release state writer lock is already held");
+    reclaimStaleWriterLock(evidencePath, lockPath);
+    assertEvidencePathUnchanged(evidencePath);
   }
 
   let descriptor;
@@ -715,7 +825,9 @@ function acquireWriterLock(evidencePath) {
       throw new Error("unsafe release state lock target is not a regular file");
     }
     assertEvidencePathUnchanged(evidencePath);
-    fs.writeFileSync(descriptor, `${process.pid}\n`, { encoding: "utf8" });
+    fs.writeFileSync(descriptor, serializeLockMetadata(process.pid), {
+      encoding: "utf8",
+    });
     fs.fsyncSync(descriptor);
     return { descriptor, evidencePath, lockPath, stats };
   } catch (error) {
