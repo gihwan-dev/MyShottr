@@ -6,6 +6,10 @@ enum UserFacingErrorAction: Equatable {
     case openChromeSetupInstructions
 }
 
+enum ApplicationLaunchUserFacingError: Error, Equatable {
+    case moveToApplications
+}
+
 struct UserFacingErrorViewModel: Equatable {
     let title: String
     let message: String
@@ -54,6 +58,7 @@ enum InkbeamUserFacingError: Error {
     case compositeTransfer(CompositeTransferError)
     case globalShortcut(GlobalHotKeyError)
     case documentSession(DocumentSessionError)
+    case applicationLaunch(ApplicationLaunchUserFacingError)
     case application
 
     static func wrapping(
@@ -154,6 +159,9 @@ enum InkbeamUserFacingError: Error {
             return .application
 
         case .application:
+            if let error = error as? ApplicationLaunchUserFacingError {
+                return .applicationLaunch(error)
+            }
             return .application
         }
     }
@@ -242,6 +250,18 @@ enum InkbeamUserFacingError: Error {
                     message:
                         "The document remains open and modified. "
                         + "Save the project before closing Inkbeam.",
+                    primaryAction: .dismiss
+                )
+            }
+        case .applicationLaunch(let error):
+            switch error {
+            case .moveToApplications:
+                return UserFacingErrorViewModel(
+                    title: "Move Inkbeam to Applications",
+                    message:
+                        "Move Inkbeam.app into an Applications folder, "
+                        + "then relaunch it. Inkbeam did not start updates, "
+                        + "Chrome capture import, or keyboard shortcuts.",
                     primaryAction: .dismiss
                 )
             }

@@ -57,6 +57,10 @@ final class AppDelegate:
 
     private let dependencies: AppDependencies
     private let applicationLifecycle: ApplicationLifecycle
+    private let installLocationPolicy: InstallLocationPolicy
+    private let bundleURLProvider: () -> URL
+    private let isBundleWritable: (URL) -> Bool
+    private let isDebugBuild: Bool
     private let documentWindowFactory: DocumentWindowFactory
     private let nativeMessagingHostInstaller:
         NativeMessagingHostInstaller
@@ -81,6 +85,12 @@ final class AppDelegate:
         self.init(
             dependencies: AppDependencies(),
             applicationLifecycle: .live,
+            installLocationPolicy: InstallLocationPolicy(),
+            bundleURLProvider: { Bundle.main.bundleURL },
+            isBundleWritable: {
+                FileManager.default.isWritableFile(atPath: $0.path)
+            },
+            isDebugBuild: Self.defaultIsDebugBuild,
             documentWindowFactory: {
                 project,
                 projectURL in
@@ -95,6 +105,14 @@ final class AppDelegate:
     init(
         dependencies: AppDependencies = AppDependencies(),
         applicationLifecycle: ApplicationLifecycle = .live,
+        installLocationPolicy: InstallLocationPolicy = InstallLocationPolicy(),
+        bundleURLProvider: @escaping () -> URL = {
+            Bundle.main.bundleURL
+        },
+        isBundleWritable: @escaping (URL) -> Bool = {
+            FileManager.default.isWritableFile(atPath: $0.path)
+        },
+        isDebugBuild: Bool = Self.defaultIsDebugBuild,
         documentWindowFactory: @escaping DocumentWindowFactory = {
             project,
             projectURL in
@@ -134,6 +152,10 @@ final class AppDelegate:
     ) {
         self.dependencies = dependencies
         self.applicationLifecycle = applicationLifecycle
+        self.installLocationPolicy = installLocationPolicy
+        self.bundleURLProvider = bundleURLProvider
+        self.isBundleWritable = isBundleWritable
+        self.isDebugBuild = isDebugBuild
         self.documentWindowFactory = documentWindowFactory
         self.nativeMessagingHostInstaller =
             nativeMessagingHostInstaller
@@ -146,6 +168,24 @@ final class AppDelegate:
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let bundleURL = bundleURLProvider()
+        let installLocationDecision = installLocationPolicy.decision(
+            bundleURL: bundleURL,
+            isWritable: isBundleWritable(bundleURL),
+            isDebugBuild: isDebugBuild
+        )
+        guard installLocationDecision == .eligible else {
+            applicationLifecycle.setActivationPolicy(.regular)
+            applicationLifecycle.activate()
+            launchErrorReporter(
+                InkbeamUserFacingError.wrapping(
+                    ApplicationLaunchUserFacingError.moveToApplications,
+                    context: .application
+                )
+            )
+            return
+        }
+
         if documentWindows.isEmpty {
             applicationLifecycle.setActivationPolicy(.accessory)
         }
@@ -347,6 +387,14 @@ final class AppDelegate:
 
     static func isEditableProjectURL(_ url: URL) -> Bool {
         url.pathExtension == editableProjectExtension
+    }
+
+    private static var defaultIsDebugBuild: Bool {
+#if DEBUG
+        true
+#else
+        false
+#endif
     }
 
     @discardableResult

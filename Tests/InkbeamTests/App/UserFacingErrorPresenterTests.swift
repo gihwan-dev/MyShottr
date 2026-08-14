@@ -534,6 +534,23 @@ final class UserFacingErrorPresenterTests: XCTestCase {
         }
     }
 
+    func testApplicationContextPreservesMoveToApplicationsMessage() {
+        XCTAssertEqual(
+            InkbeamUserFacingError.wrapping(
+                ApplicationLaunchUserFacingError.moveToApplications,
+                context: .application
+            ).viewModel,
+            UserFacingErrorViewModel(
+                title: "Move Inkbeam to Applications",
+                message:
+                    "Move Inkbeam.app into an Applications folder, "
+                    + "then relaunch it. Inkbeam did not start updates, "
+                    + "Chrome capture import, or keyboard shortcuts.",
+                primaryAction: .dismiss
+            )
+        )
+    }
+
     func testPresenterUsesSheetOnlyForProvidedDocumentWindow() {
         let recorder = AlertPresentationRecorder()
         var openedSettings = 0

@@ -124,6 +124,50 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(application.activationCount, 0)
     }
 
+    func testReleaseLaunchOutsideApplicationsReportsMoveAndSkipsStartupServices() {
+        let application = SpyApplicationLifecycle()
+        var reportedErrors: [InkbeamUserFacingError] = []
+        var installerCallCount = 0
+        var chromeCoordinatorCallCount = 0
+        let delegate = AppDelegate(
+            applicationLifecycle: application.lifecycle,
+            installLocationPolicy: InstallLocationPolicy(),
+            bundleURLProvider: {
+                URL(fileURLWithPath: "/Volumes/Inkbeam/Inkbeam.app")
+            },
+            isBundleWritable: { _ in false },
+            isDebugBuild: false,
+            nativeMessagingHostInstaller: {
+                installerCallCount += 1
+            },
+            chromeCaptureCoordinatorFactory: { _, _ in
+                chromeCoordinatorCallCount += 1
+                return try makeEmptyChromeCoordinator(
+                    projectFactory: StubNewProjectFactory(),
+                    windows: NoOpDocumentWindowPresenter()
+                )
+            },
+            launchErrorReporter: { reportedErrors.append($0) },
+            hotKeyAPI: makeNoOpHotKeyAPI()
+        )
+
+        delegate.applicationDidFinishLaunching(
+            Notification(
+                name: NSApplication.didFinishLaunchingNotification
+            )
+        )
+
+        XCTAssertEqual(
+            reportedErrors.map(\.viewModel.title),
+            ["Move Inkbeam to Applications"]
+        )
+        XCTAssertEqual(installerCallCount, 0)
+        XCTAssertEqual(chromeCoordinatorCallCount, 0)
+        XCTAssertEqual(application.activationPolicies, [.regular])
+        XCTAssertEqual(application.activationCount, 1)
+        XCTAssertEqual(delegate.activeDocumentWindowCount, 0)
+    }
+
     func testCommandShift2HotKeyActivatesAppBeforeAreaSelectionBegins()
         async throws
     {
@@ -1451,4 +1495,11 @@ private final class ActivationObservingRegionSelector: RegionSelecting {
     }
 
     func cancel() {}
+}
+
+@MainActor
+private final class NoOpDocumentWindowPresenter:
+    DocumentWindowPresenting
+{
+    func present(project: InkbeamProject) async throws {}
 }
