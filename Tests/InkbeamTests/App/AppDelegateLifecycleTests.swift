@@ -751,6 +751,156 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(window.focusCount, 1)
     }
 
+    func testUpdateRelaunchCancelRepliesFalseAndRetryPromptsAgain()
+        async throws
+    {
+        let window = SpyEditorWindowController()
+        window.hasModifiedDocument = true
+        window.resolutionResult = false
+        let firstReply = expectation(
+            description: "cancelled update relaunch reply"
+        )
+        let secondReply = expectation(
+            description: "retried update relaunch reply"
+        )
+        var replies: [Bool] = []
+        let delegate = AppDelegate(
+            documentWindowFactory: { _, _ in window },
+            terminationReply: {
+                replies.append($0)
+                if replies.count == 1 {
+                    firstReply.fulfill()
+                } else {
+                    secondReply.fulfill()
+                }
+            }
+        )
+        try await delegate.present(
+            project: ProjectFixtures.project(text: "modified")
+        )
+
+        XCTAssertEqual(
+            delegate.applicationShouldTerminate(NSApplication.shared),
+            .terminateLater
+        )
+        await fulfillment(of: [firstReply], timeout: 1)
+        XCTAssertEqual(replies, [false])
+        XCTAssertEqual(window.resolveCount, 1)
+
+        window.resolutionResult = true
+        XCTAssertEqual(
+            delegate.applicationShouldTerminate(NSApplication.shared),
+            .terminateLater
+        )
+        await fulfillment(of: [secondReply], timeout: 1)
+
+        XCTAssertEqual(replies, [false, true])
+        XCTAssertEqual(window.resolveCount, 2)
+    }
+
+    func testUpdateRelaunchWaitsForSaveAndRejectsSaveFailure()
+        async throws
+    {
+        var events: [String] = []
+        let savedWindow = SpyEditorWindowController()
+        savedWindow.hasModifiedDocument = true
+        savedWindow.pauseResolution = true
+        savedWindow.onResolutionComplete = { _ in
+            events.append("save-complete")
+        }
+        let savedReply = expectation(
+            description: "successful save relaunch reply"
+        )
+        let savedDelegate = AppDelegate(
+            documentWindowFactory: { _, _ in savedWindow },
+            terminationReply: {
+                events.append("reply-\($0)")
+                savedReply.fulfill()
+            }
+        )
+        try await savedDelegate.present(
+            project: ProjectFixtures.project(text: "save")
+        )
+
+        XCTAssertEqual(
+            savedDelegate.applicationShouldTerminate(
+                NSApplication.shared
+            ),
+            .terminateLater
+        )
+        await Task.yield()
+        XCTAssertTrue(events.isEmpty)
+        savedWindow.resumeResolution()
+        await fulfillment(of: [savedReply], timeout: 1)
+        XCTAssertEqual(events, ["save-complete", "reply-true"])
+
+        let failedWindow = SpyEditorWindowController()
+        failedWindow.hasModifiedDocument = true
+        failedWindow.resolutionResult = false
+        let failedReply = expectation(
+            description: "failed save relaunch reply"
+        )
+        var failedReplies: [Bool] = []
+        let failedDelegate = AppDelegate(
+            documentWindowFactory: { _, _ in failedWindow },
+            terminationReply: {
+                failedReplies.append($0)
+                failedReply.fulfill()
+            }
+        )
+        try await failedDelegate.present(
+            project: AdditionalProjectFixtures.project(
+                text: "failed save",
+                documentID: AdditionalProjectFixtures.secondDocumentID
+            )
+        )
+
+        XCTAssertEqual(
+            failedDelegate.applicationShouldTerminate(
+                NSApplication.shared
+            ),
+            .terminateLater
+        )
+        await fulfillment(of: [failedReply], timeout: 1)
+        XCTAssertEqual(failedReplies, [false])
+    }
+
+    func testUpdateRelaunchDiscardKeepsLastSavedProjectUnchanged()
+        async throws
+    {
+        let window = SpyEditorWindowController()
+        window.hasModifiedDocument = true
+        window.resolutionLabel = "discard"
+        window.lastSavedProjectText = "saved before annotations"
+        let reply = expectation(
+            description: "discard update relaunch reply"
+        )
+        var replies: [Bool] = []
+        let delegate = AppDelegate(
+            documentWindowFactory: { _, _ in window },
+            terminationReply: {
+                replies.append($0)
+                reply.fulfill()
+            }
+        )
+        try await delegate.present(
+            project: ProjectFixtures.project(text: "unsaved annotations")
+        )
+
+        XCTAssertEqual(
+            delegate.applicationShouldTerminate(NSApplication.shared),
+            .terminateLater
+        )
+        await fulfillment(of: [reply], timeout: 1)
+
+        XCTAssertEqual(replies, [true])
+        XCTAssertEqual(window.resolutionLabel, "discard")
+        XCTAssertEqual(
+            window.lastSavedProjectText,
+            "saved before annotations"
+        )
+    }
+
     func testNoModifiedWindowsTerminateImmediately()
         async throws
     {
@@ -1443,6 +1593,8 @@ private final class SpyEditorWindowController: EditorWindowControlling {
     var onPresent: (() -> Void)?
     var onEditorLoadWait: ((Int) -> Void)?
     var onResolve: ((Int) -> Void)?
+    var onResolutionComplete: ((Bool) -> Void)?
+    var lastSavedProjectText: String?
     private var editorLoadContinuations:
         [CheckedContinuation<Void, Never>] = []
     private var resolutionContinuation:
@@ -1491,6 +1643,7 @@ private final class SpyEditorWindowController: EditorWindowControlling {
                 resolutionContinuation = $0
             }
         }
+        onResolutionComplete?(resolutionResult)
         return resolutionResult
     }
 
