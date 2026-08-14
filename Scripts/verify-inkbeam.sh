@@ -144,6 +144,10 @@ run_step "Run Inkbeam app tests" \
     -derivedDataPath "${APP_TEST_DERIVED_DATA}" \
     CODE_SIGNING_ALLOWED=NO
 
+run_step "Verify the effective built Inkbeam updater privacy configuration" \
+  "${REPO_ROOT}/Scripts/verify-privacy.sh" \
+  "${APP_TEST_DERIVED_DATA}/Build/Products/Debug/Inkbeam.app"
+
 run_step "Run Native Messaging host tests" \
   xcodebuild test \
     -project "${REPO_ROOT}/Inkbeam.xcodeproj" \

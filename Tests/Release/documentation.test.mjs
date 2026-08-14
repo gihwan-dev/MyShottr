@@ -100,7 +100,7 @@ for (const updaterContract of [
   /no system profiling/i,
   /JavaScript release notes.*disabled/i,
   /https:\/\/gihwan-dev\.github\.io\/inkbeam\/(?:appcast|appcast-beta)\.xml/,
-  /https:\/\/github\.com\/gihwan-dev\/inkbeam\/releases/,
+  /https:\/\/github\.com\/gihwan-dev\/inkbeam\/releases\/download\/<tag>\/<asset>/,
   /\/Applications/,
   /Release Candidate[\s\S]*build-time/i,
   /real[\s\S]*Sparkle RC acceptance/i,
@@ -109,10 +109,11 @@ for (const updaterContract of [
 }
 
 for (const forbiddenUpdaterClaim of [
-  /silent installation (?:is|remains|occurs|enabled)/i,
-  /beta toggle (?:is|remains|allows|enables)/i,
-  /first-launch automatic check (?:is|remains|occurs|enabled)/i,
-  /(?:collects|sends|enables) analytics/i,
+  /(?:silent|background|automatic) (?:download|install)(?:ation)?\s+(?:is|remains|occurs|enabled|available)/i,
+  /(?:beta|release candidate) (?:toggle|selector|switch)\s+(?:is|remains|allows|enables|available)/i,
+  /first[ -]launch (?:automatic|background) (?:check|request)\s+(?:is|remains|occurs|enabled|available)/i,
+  /(?:collects|sends|enables|uploads) (?:analytics|usage|telemetry)/i,
+  /(?:runtime|at runtime) (?:feed|channel) (?:change|selection|switch)(?:ing)?\s+(?:is|remains|allowed|available)/i,
 ]) {
   assert.doesNotMatch(
     readme,

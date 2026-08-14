@@ -120,15 +120,19 @@ first automatic request is a GET for either
 `https://gihwan-dev.github.io/inkbeam/appcast-beta.xml`; later automatic
 checks are eligible every 24-hour interval. A download that you choose from
 an offered update is limited to the corresponding
-`https://github.com/gihwan-dev/inkbeam/releases` release asset. If you
+`https://github.com/gihwan-dev/inkbeam/releases/download/<tag>/<asset>` release
+asset. If you
 decline, only **Check for Updates** can make an update request.
 
-Inkbeam has no automatic download or installation, no system profiling, no
-analytics or telemetry, and JavaScript release notes are disabled. The updater
-does not change its feed at runtime. The standard Sparkle consent UI, its
+Inkbeam has no automatic download or installation, including silent or
+background installation, no system profiling, and no analytics, usage
+collection, or telemetry. It has no
+beta or release-candidate selector in the app, no first-launch automatic check,
+and no runtime feed or channel switching. JavaScript release notes are disabled.
+The standard Sparkle consent UI, its
 actual HTTPS request, and signed-update verification remain mandatory real
-Sparkle RC acceptance checks; the automated harness verifies only Inkbeam's
-orchestration policy.
+Sparkle RC acceptance checks; automated tests exercise the real Sparkle consent
+and request orchestration policy but do not claim TLS or signature verification.
 
 Run `Scripts/verify-privacy.sh` after building to check the local-only editor
 bundle and exact Chrome permission contract.
