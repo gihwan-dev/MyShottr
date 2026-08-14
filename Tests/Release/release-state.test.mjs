@@ -253,23 +253,8 @@ async function waitForFile(filePath, timeoutMilliseconds = 5_000) {
 }
 
 function saveProcessSource({ repositoryRoot, stateFixture, pauseBeforeRename }) {
-  const pauseSource = pauseBeforeRename
-    ? `
-const originalRename = fs.renameSync.bind(fs);
-fs.renameSync = (source, destination) => {
-  fs.writeFileSync(${JSON.stringify(pauseBeforeRename.ready)}, "ready");
-  const waiter = new Int32Array(new SharedArrayBuffer(4));
-  const deadline = Date.now() + 5000;
-  while (!fs.existsSync(${JSON.stringify(pauseBeforeRename.release)})) {
-    if (Date.now() >= deadline) throw new Error("timed out while holding release-state lock");
-    Atomics.wait(waiter, 0, 0, 10);
-  }
-  return originalRename(source, destination);
-};`
-    : "";
   return `
 import fs from "node:fs";
-${pauseSource}
 const { saveReleaseState } = await import(${JSON.stringify(STATE_MODULE_URL)});
 const state = JSON.parse(fs.readFileSync(${JSON.stringify(stateFixture)}, "utf8"));
 try {
@@ -298,7 +283,15 @@ async function killWriterHoldingLock({ repositoryRoot, state, t, label }) {
         pauseBeforeRename: { ready: readySignal, release: releaseSignal },
       }),
     ],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        INKBEAM_RELEASE_STATE_TEST_PAUSE_READY: readySignal,
+        INKBEAM_RELEASE_STATE_TEST_PAUSE_RELEASE: releaseSignal,
+      },
+    },
   );
   let writerError = "";
   writer.stderr.setEncoding("utf8");
@@ -310,12 +303,13 @@ async function killWriterHoldingLock({ repositoryRoot, state, t, label }) {
   const exit = once(writer, "exit");
 
   await waitForFile(readySignal);
-  const ownerPID = writer.pid;
-  assert.equal(writer.kill("SIGKILL"), true);
+  const ownerPID = Number(fs.readFileSync(readySignal, "utf8"));
+  assert.equal(Number.isSafeInteger(ownerPID), true);
+  process.kill(ownerPID, "SIGKILL");
   const [status, signal] = await exit;
   exited = true;
-  assert.equal(status, null, writerError);
-  assert.equal(signal, "SIGKILL", writerError);
+  assert.equal(status, 1, writerError);
+  assert.equal(signal, null, writerError);
 
   const evidenceDirectory = path.dirname(
     statePathFor(repositoryRoot, "v0.2.0-rc.1"),
@@ -738,7 +732,15 @@ test("exclusive writer lock lets only one stale process commit and cleans up", a
         pauseBeforeRename: { ready: readySignal, release: releaseSignal },
       }),
     ],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        INKBEAM_RELEASE_STATE_TEST_PAUSE_READY: readySignal,
+        INKBEAM_RELEASE_STATE_TEST_PAUSE_RELEASE: releaseSignal,
+      },
+    },
   );
   let writerAError = "";
   writerA.stderr.setEncoding("utf8");
@@ -779,14 +781,15 @@ test("exclusive writer lock lets only one stale process commit and cleans up", a
   const evidenceDirectory = path.dirname(
     statePathFor(repositoryRoot, "v0.2.0-rc.1"),
   );
-  assert.equal(fs.existsSync(path.join(evidenceDirectory, "release-state.lock")), false);
+  const lockStats = fs.lstatSync(path.join(evidenceDirectory, "release-state.lock"));
+  assert.equal(lockStats.isFile(), true);
   assert.deepEqual(
     fs.readdirSync(evidenceDirectory).filter((entry) => entry.endsWith(".tmp")),
     [],
   );
 });
 
-test("a writer killed while holding the lock is reclaimed and the save resumes", async (t) => {
+test("a writer killed while holding the lock releases the kernel lock and the save resumes", async (t) => {
   const repositoryRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "inkbeam-lock-crash-"),
   );
@@ -805,10 +808,8 @@ test("a writer killed while holding the lock is reclaimed and the save resumes",
     label: "crashed-writer",
   });
 
-  assert.deepEqual(
-    JSON.parse(fs.readFileSync(orphan.lockPath, "utf8")),
-    { schemaVersion: 1, pid: orphan.ownerPID },
-  );
+  const lockStats = fs.lstatSync(orphan.lockPath);
+  assert.equal(lockStats.isFile(), true);
   assert.equal(
     fs.readdirSync(orphan.evidenceDirectory).filter(
       (entry) => entry.endsWith(".tmp"),
@@ -826,213 +827,13 @@ test("a writer killed while holding the lock is reclaimed and the save resumes",
     statePathFor(repositoryRoot, "v0.2.0-rc.1"),
   );
   assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), resumedState);
-  assert.equal(fs.existsSync(orphan.lockPath), false);
+  assert.equal(fs.lstatSync(orphan.lockPath).isFile(), true);
   assert.deepEqual(
     fs.readdirSync(orphan.evidenceDirectory).filter(
       (entry) => entry.endsWith(".tmp"),
     ),
     [],
   );
-});
-
-test("only one writer can reclaim the same killed-owner lock", async (t) => {
-  const repositoryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "inkbeam-lock-reclaim-race-"),
-  );
-  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
-  saveReleaseState(repositoryRoot, initialState());
-
-  const crashedState = completePhase(
-    initialState(),
-    "preflight",
-    TIMESTAMPS.preflight,
-  );
-  const orphan = await killWriterHoldingLock({
-    repositoryRoot,
-    state: crashedState,
-    t,
-    label: "reclaim-race-owner",
-  });
-  const candidates = [
-    completePhase(initialState(), "preflight", "2026-08-14T01:00:00.600Z"),
-    completePhase(initialState(), "preflight", "2026-08-14T01:00:00.700Z"),
-  ];
-  const fixtures = candidates.map((state, index) => {
-    const fixture = path.join(repositoryRoot, `reclaimer-${index}.json`);
-    writeStateFixture(fixture, state);
-    return fixture;
-  });
-
-  const writers = fixtures.map((stateFixture) => startSaveProcess({
-    repositoryRoot,
-    stateFixture,
-  }));
-  t.after(() => {
-    for (const { writer } of writers) {
-      if (writer.exitCode === null && writer.signalCode === null) {
-        writer.kill("SIGKILL");
-      }
-    }
-  });
-  const results = await Promise.all(writers.map(({ completion }) => completion));
-  const successes = results.filter(({ status }) => status === 0);
-  const failures = results.filter(({ status }) => status !== 0);
-
-  assert.equal(successes.length, 1, JSON.stringify(results));
-  assert.equal(failures.length, 1, JSON.stringify(results));
-  assert.match(
-    failures[0].stderr,
-    /release state writer lock (?:is already held|changed during stale reclaim)|release state cannot change phases\.preflight/i,
-  );
-  const persisted = loadReleaseState(repositoryRoot, "v0.2.0-rc.1");
-  assert.equal(
-    candidates.some((candidate) => isDeepStrictEqual(candidate, persisted)),
-    true,
-  );
-  assert.equal(fs.existsSync(orphan.lockPath), false);
-  assert.deepEqual(
-    fs.readdirSync(orphan.evidenceDirectory).filter(
-      (entry) => entry.endsWith(".tmp"),
-    ),
-    [],
-  );
-});
-
-test("a stale PID reused by an unrelated live process remains held", async (t) => {
-  const repositoryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "inkbeam-lock-held-"),
-  );
-  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
-
-  const unrelatedProcess = spawn(
-    process.execPath,
-    ["-e", "setInterval(() => {}, 1000)"],
-    { stdio: "ignore" },
-  );
-  const unrelatedExit = once(unrelatedProcess, "exit");
-  try {
-    process.kill(unrelatedProcess.pid, 0);
-
-    saveReleaseState(repositoryRoot, initialState());
-    const evidenceDirectory = path.dirname(
-      statePathFor(repositoryRoot, "v0.2.0-rc.1"),
-    );
-    const lockPath = path.join(evidenceDirectory, "release-state.lock");
-    const reusedPIDLock = lockContentsFor(unrelatedProcess.pid);
-    fs.writeFileSync(lockPath, reusedPIDLock, { mode: 0o600 });
-
-    assert.throws(
-      () => saveReleaseState(
-        repositoryRoot,
-        completePhase(initialState(), "preflight", TIMESTAMPS.preflight),
-      ),
-      /release state writer lock is already held/i,
-    );
-    assert.equal(fs.readFileSync(lockPath, "utf8"), reusedPIDLock);
-    assert.deepEqual(
-      loadReleaseState(repositoryRoot, "v0.2.0-rc.1"),
-      initialState(),
-    );
-  } finally {
-    unrelatedProcess.kill("SIGKILL");
-    await unrelatedExit;
-  }
-});
-
-test("malformed, empty, foreign-format, and invalid-PID locks fail closed", async (t) => {
-  const invalidLocks = new Map([
-    ["empty", ""],
-    ["malformed", "not JSON\n"],
-    ["legacy", `${process.pid}\n`],
-    [
-      "foreign",
-      `${JSON.stringify({ schemaVersion: 1, pid: process.pid, owner: "other" })}\n`,
-    ],
-    ["schema", `${JSON.stringify({ schemaVersion: 2, pid: process.pid })}\n`],
-    ["zero-pid", lockContentsFor(0)],
-    ["fractional-pid", lockContentsFor(1.5)],
-    [
-      "string-pid",
-      `${JSON.stringify({ schemaVersion: 1, pid: String(process.pid) })}\n`,
-    ],
-  ]);
-
-  for (const [label, contents] of invalidLocks) {
-    await t.test(label, () => {
-      const repositoryRoot = fs.mkdtempSync(
-        path.join(os.tmpdir(), `inkbeam-lock-invalid-${label}-`),
-      );
-      t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
-      saveReleaseState(repositoryRoot, initialState());
-      const lockPath = path.join(
-        path.dirname(statePathFor(repositoryRoot, "v0.2.0-rc.1")),
-        "release-state.lock",
-      );
-      fs.writeFileSync(lockPath, contents, { mode: 0o600 });
-
-      assert.throws(
-        () => saveReleaseState(
-          repositoryRoot,
-          completePhase(initialState(), "preflight", TIMESTAMPS.preflight),
-        ),
-        /invalid release state lock metadata/i,
-      );
-      assert.equal(fs.readFileSync(lockPath, "utf8"), contents);
-      assert.deepEqual(
-        loadReleaseState(repositoryRoot, "v0.2.0-rc.1"),
-        initialState(),
-      );
-    });
-  }
-});
-
-test("permission and unknown liveness errors remain held", async (t) => {
-  for (const errorCode of ["EPERM", "EINVAL"]) {
-    await t.test(errorCode, () => {
-      const repositoryRoot = fs.mkdtempSync(
-        path.join(os.tmpdir(), `inkbeam-lock-${errorCode.toLowerCase()}-`),
-      );
-      t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
-      saveReleaseState(repositoryRoot, initialState());
-      const lockPath = path.join(
-        path.dirname(statePathFor(repositoryRoot, "v0.2.0-rc.1")),
-        "release-state.lock",
-      );
-      const unknownOwnerPID = 2_000_000_000;
-      const lockContents = lockContentsFor(unknownOwnerPID);
-      fs.writeFileSync(lockPath, lockContents, { mode: 0o600 });
-
-      const originalKill = process.kill;
-      let livenessChecks = 0;
-      process.kill = (pid, signal) => {
-        if (pid === unknownOwnerPID && signal === 0) {
-          livenessChecks += 1;
-          const error = new Error(`liveness check failed with ${errorCode}`);
-          error.code = errorCode;
-          throw error;
-        }
-        return originalKill(pid, signal);
-      };
-      try {
-        assert.throws(
-          () => saveReleaseState(
-            repositoryRoot,
-            completePhase(initialState(), "preflight", TIMESTAMPS.preflight),
-          ),
-          /release state writer lock is already held/i,
-        );
-      } finally {
-        process.kill = originalKill;
-      }
-
-      assert.equal(livenessChecks, 1);
-      assert.equal(fs.readFileSync(lockPath, "utf8"), lockContents);
-      assert.deepEqual(
-        loadReleaseState(repositoryRoot, "v0.2.0-rc.1"),
-        initialState(),
-      );
-    });
-  }
 });
 
 test("writer lock is removed when validation fails inside the critical section", (t) => {
@@ -1049,46 +850,29 @@ test("writer lock is removed when validation fails inside the critical section",
   const evidenceDirectory = path.dirname(
     statePathFor(repositoryRoot, "v0.2.0-rc.1"),
   );
-  assert.equal(fs.existsSync(path.join(evidenceDirectory, "release-state.lock")), false);
+  assert.equal(
+    fs.lstatSync(path.join(evidenceDirectory, "release-state.lock")).isFile(),
+    true,
+  );
   assert.deepEqual(
     fs.readdirSync(evidenceDirectory).filter((entry) => entry.endsWith(".tmp")),
     [],
   );
 });
 
-test("writer lock cleanup detects replacement and leaves a fail-closed lock", (t) => {
+test("mere lock-file existence does not block a save after the kernel lock is released", (t) => {
   const repositoryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "inkbeam-lock-replaced-"),
+    path.join(os.tmpdir(), "inkbeam-lock-exists-"),
   );
   t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
-  const destination = statePathFor(repositoryRoot, "v0.2.0-rc.1");
-  const evidenceDirectory = path.dirname(destination);
-  const lockPath = path.join(evidenceDirectory, "release-state.lock");
-  const displacedLockPath = path.join(evidenceDirectory, "displaced-release-state.lock");
-  const originalUnlink = fs.unlinkSync;
-  let replaced = false;
-
-  fs.unlinkSync = (target) => {
-    if (!replaced && target === lockPath) {
-      replaced = true;
-      fs.renameSync(lockPath, displacedLockPath);
-      fs.writeFileSync(lockPath, "replacement writer\n", { mode: 0o600 });
-    }
-    return originalUnlink(target);
-  };
-  try {
-    assert.throws(
-      () => saveReleaseState(repositoryRoot, initialState()),
-      /release state lock target changed before unlink/i,
-    );
-  } finally {
-    fs.unlinkSync = originalUnlink;
-  }
-
-  assert.equal(replaced, true);
-  assert.equal(fs.lstatSync(lockPath).isFile(), true);
-  assert.notEqual(fs.readFileSync(lockPath, "utf8"), "replacement writer\n");
-  assert.equal(fs.lstatSync(displacedLockPath).isFile(), true);
+  const first = initialState();
+  const second = completePhase(first, "preflight", TIMESTAMPS.preflight);
+  saveReleaseState(repositoryRoot, first);
+  assert.equal(
+    saveReleaseState(repositoryRoot, second),
+    statePathFor(repositoryRoot, "v0.2.0-rc.1"),
+  );
+  assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), second);
 });
 
 test("save refuses a state target that appears or changes before commit", async (t) => {
@@ -1099,21 +883,10 @@ test("save refuses a state target that appears or changes before commit", async 
       );
       t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
       const destination = statePathFor(repositoryRoot, "v0.2.0-rc.1");
-      const displacedState = path.join(repositoryRoot, "displaced-state.json");
-      const foreignContents = "foreign writer contents\n";
       if (scenario === "changes") saveReleaseState(repositoryRoot, initialState());
 
-      const originalFsync = fs.fsyncSync;
-      let fsyncCalls = 0;
-      fs.fsyncSync = (descriptor) => {
-        const result = originalFsync(descriptor);
-        fsyncCalls += 1;
-        if (fsyncCalls === 2) {
-          if (scenario === "changes") fs.renameSync(destination, displacedState);
-          fs.writeFileSync(destination, foreignContents, { mode: 0o600 });
-        }
-        return result;
-      };
+      const previousScenario = process.env.INKBEAM_RELEASE_STATE_TEST_PRECOMMIT_INTERFERENCE;
+      process.env.INKBEAM_RELEASE_STATE_TEST_PRECOMMIT_INTERFERENCE = scenario;
       try {
         assert.throws(
           () => saveReleaseState(
@@ -1125,13 +898,17 @@ test("save refuses a state target that appears or changes before commit", async 
           /release state target (?:appeared|changed) before commit/i,
         );
       } finally {
-        fs.fsyncSync = originalFsync;
+        if (previousScenario === undefined) {
+          delete process.env.INKBEAM_RELEASE_STATE_TEST_PRECOMMIT_INTERFERENCE;
+        } else {
+          process.env.INKBEAM_RELEASE_STATE_TEST_PRECOMMIT_INTERFERENCE = previousScenario;
+        }
       }
 
-      assert.equal(fs.readFileSync(destination, "utf8"), foreignContents);
+      assert.equal(fs.readFileSync(destination, "utf8"), "foreign writer contents\n");
       assert.equal(
-        fs.existsSync(path.join(path.dirname(destination), "release-state.lock")),
-        false,
+        fs.lstatSync(path.join(path.dirname(destination), "release-state.lock")).isFile(),
+        true,
       );
       assert.deepEqual(
         fs.readdirSync(path.dirname(destination)).filter(

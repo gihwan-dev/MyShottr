@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import { contractFor } from "./release-contract.mjs";
@@ -84,6 +86,14 @@ const NOTARIZATION_STATUSES = new Set([
   "Invalid",
   "Rejected",
 ]);
+const LOCKF_PATH = "/usr/bin/lockf";
+const INTERNAL_WRITE_MODE = "--internal-write";
+const INTERNAL_WRITE_TOKEN_ENV = "INKBEAM_RELEASE_STATE_INTERNAL_TOKEN";
+const TEST_PAUSE_READY_ENV = "INKBEAM_RELEASE_STATE_TEST_PAUSE_READY";
+const TEST_PAUSE_RELEASE_ENV = "INKBEAM_RELEASE_STATE_TEST_PAUSE_RELEASE";
+const TEST_PRECOMMIT_INTERFERENCE_ENV =
+  "INKBEAM_RELEASE_STATE_TEST_PRECOMMIT_INTERFERENCE";
+const STATE_MODULE_PATH = fileURLToPath(import.meta.url);
 
 export const releasePhaseDependencies = Object.freeze({
   preflight: [],
@@ -690,43 +700,9 @@ function removeOwnedFile(surfacePath, expectedStats, label) {
   fs.unlinkSync(surfacePath);
 }
 
-function serializeLockMetadata(pid) {
-  return `${JSON.stringify({ schemaVersion: 1, pid })}\n`;
-}
-
-function parseLockMetadata(contents) {
-  let metadata;
-  try {
-    metadata = JSON.parse(contents);
-  } catch {
-    throw new Error("invalid release state lock metadata");
-  }
-  if (
-    !isPlainObject(metadata) ||
-    Object.keys(metadata).length !== 2 ||
-    !Object.hasOwn(metadata, "schemaVersion") ||
-    !Object.hasOwn(metadata, "pid") ||
-    metadata.schemaVersion !== 1 ||
-    !Number.isSafeInteger(metadata.pid) ||
-    metadata.pid <= 0
-  ) {
-    throw new Error("invalid release state lock metadata");
-  }
-  return metadata;
-}
-
-function lockOwnerIsStale(pid) {
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    return error?.code === "ESRCH";
-  }
-}
-
-function removeStaleOwnerTemporaryFiles(evidencePath, ownerPID) {
+function removeOrphanTemporaryFiles(evidencePath) {
   assertEvidencePathUnchanged(evidencePath);
-  const prefix = `.release-state.${ownerPID}.`;
+  const prefix = ".release-state.";
   for (const entry of fs.readdirSync(evidencePath.directory)) {
     if (!entry.startsWith(prefix) || !entry.endsWith(".tmp")) continue;
     const temporaryPath = path.join(evidencePath.directory, entry);
@@ -737,150 +713,73 @@ function removeStaleOwnerTemporaryFiles(evidencePath, ownerPID) {
   assertEvidencePathUnchanged(evidencePath);
 }
 
-function assertReclaimLockIdentity(lockPath, expectedStats) {
-  const current = assertSafeFileTarget(lockPath, "lock");
-  if (!current) {
-    throw new Error("release state writer lock is already held");
-  }
-  if (!sameFileIdentity(current, expectedStats)) {
-    throw new Error("release state writer lock changed during stale reclaim");
-  }
-}
-
-function reclaimStaleWriterLock(evidencePath, lockPath) {
-  let opened;
-  try {
-    opened = openRegularFile(lockPath, "lock");
-  } catch (error) {
-    if (!lstatIfExists(lockPath)) {
-      throw new Error("release state writer lock is already held");
-    }
-    throw error;
-  }
-  try {
-    const metadata = parseLockMetadata(
-      fs.readFileSync(opened.descriptor, "utf8"),
-    );
-    if (!lockOwnerIsStale(metadata.pid)) {
-      throw new Error("release state writer lock is already held");
-    }
-
-    assertEvidencePathUnchanged(evidencePath);
-    assertReclaimLockIdentity(lockPath, opened.stats);
-    removeStaleOwnerTemporaryFiles(evidencePath, metadata.pid);
-    assertReclaimLockIdentity(lockPath, opened.stats);
-
-    try {
-      fs.unlinkSync(lockPath);
-    } catch (error) {
-      if (error?.code === "ENOENT") {
-        throw new Error("release state writer lock is already held");
-      }
-      throw error;
-    }
-    if (fs.fstatSync(opened.descriptor).nlink !== 0) {
-      installFailClosedLock(lockPath);
-      throw new Error("release state writer lock changed during stale reclaim");
-    }
-  } finally {
-    fs.closeSync(opened.descriptor);
-  }
-}
-
-function acquireWriterLock(evidencePath) {
+function ensureWriterLockFile(evidencePath) {
   assertEvidencePathUnchanged(evidencePath);
   const lockPath = path.join(evidencePath.directory, "release-state.lock");
   const existing = lstatIfExists(lockPath);
   if (existing) {
-    assertSafeFileTarget(lockPath, "lock");
-    reclaimStaleWriterLock(evidencePath, lockPath);
-    assertEvidencePathUnchanged(evidencePath);
+    assertSafeFileTarget(lockPath, "lock", { required: true });
+    return lockPath;
   }
 
   let descriptor;
   try {
     descriptor = fs.openSync(
       lockPath,
-      fs.constants.O_WRONLY |
+      fs.constants.O_RDWR |
         fs.constants.O_CREAT |
         fs.constants.O_EXCL |
         (fs.constants.O_NOFOLLOW ?? 0),
       0o600,
     );
-  } catch (error) {
-    if (error?.code === "EEXIST" || error?.code === "ELOOP") {
-      const raced = lstatIfExists(lockPath);
-      if (raced?.isSymbolicLink() || (raced && !raced.isFile())) {
-        assertSafeFileTarget(lockPath, "lock");
-      }
-      throw new Error("release state writer lock is already held");
-    }
-    throw error;
-  }
-
-  let stats;
-  try {
-    stats = fs.fstatSync(descriptor);
+    const stats = fs.fstatSync(descriptor);
     if (!stats.isFile()) {
       throw new Error("unsafe release state lock target is not a regular file");
     }
-    assertEvidencePathUnchanged(evidencePath);
-    fs.writeFileSync(descriptor, serializeLockMetadata(process.pid), {
-      encoding: "utf8",
-    });
     fs.fsyncSync(descriptor);
-    return { descriptor, evidencePath, lockPath, stats };
   } catch (error) {
-    fs.closeSync(descriptor);
-    if (stats) removeOwnedFile(lockPath, stats, "lock");
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    if (error?.code === "EEXIST" || error?.code === "ELOOP") {
+      assertSafeFileTarget(lockPath, "lock", { required: true });
+      return lockPath;
+    }
     throw error;
   }
+  fs.closeSync(descriptor);
+  assertEvidencePathUnchanged(evidencePath);
+  assertSafeFileTarget(lockPath, "lock", { required: true });
+  return lockPath;
 }
 
-function installFailClosedLock(lockPath) {
-  let descriptor;
-  try {
-    descriptor = fs.openSync(
-      lockPath,
-      fs.constants.O_WRONLY |
-        fs.constants.O_CREAT |
-        fs.constants.O_EXCL |
-        (fs.constants.O_NOFOLLOW ?? 0),
-      0o600,
-    );
-    fs.writeFileSync(descriptor, "unsafe previous lock replacement detected\n", {
-      encoding: "utf8",
-    });
-    fs.fsyncSync(descriptor);
-  } catch (error) {
-    if (error?.code !== "EEXIST" && error?.code !== "ELOOP") throw error;
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
+function maybePauseBeforeCommit() {
+  const readySignal = process.env[TEST_PAUSE_READY_ENV];
+  const releaseSignal = process.env[TEST_PAUSE_RELEASE_ENV];
+  if (!readySignal || !releaseSignal) return;
+  fs.writeFileSync(readySignal, String(process.pid));
+  const waiter = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 5_000;
+  while (!fs.existsSync(releaseSignal)) {
+    if (Date.now() >= deadline) {
+      throw new Error("timed out while holding release-state lock");
+    }
+    Atomics.wait(waiter, 0, 0, 10);
   }
 }
 
-function releaseWriterLock(lock) {
-  try {
-    assertEvidencePathUnchanged(lock.evidencePath);
-    const current = lstatIfExists(lock.lockPath);
-    const opened = fs.fstatSync(lock.descriptor);
-    if (
-      !current ||
-      current.isSymbolicLink() ||
-      !current.isFile() ||
-      !sameFileIdentity(current, opened) ||
-      !sameFileIdentity(opened, lock.stats)
-    ) {
-      throw new Error("unsafe release state lock target changed while held");
-    }
-    fs.unlinkSync(lock.lockPath);
-    if (fs.fstatSync(lock.descriptor).nlink !== 0) {
-      installFailClosedLock(lock.lockPath);
-      throw new Error("unsafe release state lock target changed before unlink");
-    }
-  } finally {
-    fs.closeSync(lock.descriptor);
+function maybeInterfereWithDestination(destination) {
+  const scenario = process.env[TEST_PRECOMMIT_INTERFERENCE_ENV];
+  if (!scenario) return;
+  if (scenario === "appears") {
+    fs.writeFileSync(destination, "foreign writer contents\n", { mode: 0o600 });
+    return;
   }
+  if (scenario === "changes") {
+    const displacedState = `${destination}.displaced`;
+    fs.renameSync(destination, displacedState);
+    fs.writeFileSync(destination, "foreign writer contents\n", { mode: 0o600 });
+    return;
+  }
+  throw new Error(`unsupported release-state precommit interference: ${scenario}`);
 }
 
 function createTemporaryStateFile(temporaryPath, contents) {
@@ -1008,13 +907,12 @@ function assertMonotonicAdvance(previous, next) {
   }
 }
 
-export function saveReleaseState(repositoryRoot, state) {
+function saveReleaseStateUnlocked(repositoryRoot, state) {
   validateReleaseState(state);
   const destination = statePathFor(repositoryRoot, state.contract.tag);
   const evidencePath = evidenceDirectoryFor(repositoryRoot, state.contract.tag, {
     create: true,
   });
-  const lock = acquireWriterLock(evidencePath);
   const { directory } = evidencePath;
   let previousStateStats;
   let temporaryStats;
@@ -1024,6 +922,8 @@ export function saveReleaseState(repositoryRoot, state) {
   );
   try {
     assertEvidencePathUnchanged(evidencePath);
+    ensureWriterLockFile(evidencePath);
+    removeOrphanTemporaryFiles(evidencePath);
     if (assertSafeFileTarget(destination, "state")) {
       const previousFile = readRegularFile(destination, "state");
       const previous = JSON.parse(previousFile.contents);
@@ -1037,6 +937,8 @@ export function saveReleaseState(repositoryRoot, state) {
       `${JSON.stringify(state, null, 2)}\n`,
     );
     assertEvidencePathUnchanged(evidencePath);
+    maybePauseBeforeCommit();
+    maybeInterfereWithDestination(destination);
     const currentStateStats = assertSafeFileTarget(destination, "state");
     if (previousStateStats) {
       if (
@@ -1053,12 +955,69 @@ export function saveReleaseState(repositoryRoot, state) {
     assertEvidencePathUnchanged(evidencePath);
     assertSafeFileTarget(destination, "state", { required: true });
   } finally {
-    try {
-      if (temporaryStats) removeOwnedTemporary(temporaryPath, temporaryStats);
-    } finally {
-      releaseWriterLock(lock);
-    }
+    if (temporaryStats) removeOwnedTemporary(temporaryPath, temporaryStats);
   }
+  return destination;
+}
+
+export function saveReleaseState(repositoryRoot, state) {
+  validateReleaseState(state);
+  const evidencePath = evidenceDirectoryFor(repositoryRoot, state.contract.tag, {
+    create: true,
+  });
+  const lockPath = ensureWriterLockFile(evidencePath);
+  const token = crypto.randomUUID();
+  const childEnv = {
+    ...process.env,
+    [INTERNAL_WRITE_TOKEN_ENV]: token,
+  };
+  for (const key of [
+    TEST_PAUSE_READY_ENV,
+    TEST_PAUSE_RELEASE_ENV,
+    TEST_PRECOMMIT_INTERFERENCE_ENV,
+  ]) {
+    if (process.env[key] !== undefined) childEnv[key] = process.env[key];
+  }
+  const result = spawnSync(
+    LOCKF_PATH,
+    [
+      "-n",
+      "-s",
+      "-t",
+      "0",
+      "-k",
+      lockPath,
+      process.execPath,
+      STATE_MODULE_PATH,
+      INTERNAL_WRITE_MODE,
+      token,
+    ],
+    {
+      cwd: path.resolve(repositoryRoot),
+      input: JSON.stringify({ repositoryRoot, state }),
+      encoding: "utf8",
+      env: childEnv,
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  if (result.error) {
+    if (result.error.code === "ENOENT") {
+      throw new Error("release state lockf is unavailable");
+    }
+    throw result.error;
+  }
+  if (result.status === 75) {
+    throw new Error("release state writer lock is already held");
+  }
+  if (result.signal) {
+    throw new Error(`release state writer lock process terminated by signal ${result.signal}`);
+  }
+  if (result.status !== 0) {
+    const message = result.stderr.trim() || "release state writer failed";
+    throw new Error(message);
+  }
+  const destination = result.stdout.trim();
+  if (!destination) throw new Error("release state writer did not report a destination");
   return destination;
 }
 
@@ -1072,3 +1031,33 @@ export function loadReleaseState(repositoryRoot, tag) {
   validateReleaseState(state, expectedContract);
   return deepFreeze(state);
 }
+
+function runInternalWriter(argv = process.argv.slice(2)) {
+  if (argv[0] !== INTERNAL_WRITE_MODE) return false;
+
+  const token = argv[1];
+  if (
+    typeof token !== "string" ||
+    token.length === 0 ||
+    process.env[INTERNAL_WRITE_TOKEN_ENV] !== token
+  ) {
+    process.stderr.write("release state internal writer authorization failed\n");
+    process.exitCode = 1;
+    return true;
+  }
+
+  try {
+    const payload = JSON.parse(fs.readFileSync(process.stdin.fd, "utf8"));
+    if (!isPlainObject(payload)) {
+      throw new Error("release state internal payload must be an object");
+    }
+    const destination = saveReleaseStateUnlocked(payload.repositoryRoot, payload.state);
+    process.stdout.write(`${destination}\n`);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
+  return true;
+}
+
+runInternalWriter();
