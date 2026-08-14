@@ -108,6 +108,59 @@ final class UpdaterConsentIntegrationTests: TemporaryDirectoryTestCase {
         XCTAssertLessThan(abs(record.timestamp.timeIntervalSinceNow), 3)
     }
 
+    func testRealSparkleApprovedLaunchJustInsideTheIntervalDoesNotRequestTheFeed() throws {
+        let server = try LoopbackFeedServer()
+        let feedURL = "http://127.0.0.1:\(server.port)/inkbeam/appcast.xml"
+        let profile = try SparkleHostProfile(directory: temporaryDirectory, feedURL: feedURL)
+        profile.defaults.set(true, forKey: "SUHasLaunchedBefore")
+        profile.defaults.set(true, forKey: "SUEnableAutomaticChecks")
+        profile.defaults.set(Date().addingTimeInterval(-86_340), forKey: "SULastCheckTime")
+
+        let noRequest = expectation(description: "no feed request before the interval")
+        noRequest.isInverted = true
+        server.onRequest = { _ in noRequest.fulfill() }
+        let driver = RecordingUserDriver()
+        let delegate = RecordingUpdaterDelegate()
+
+        try startRealUpdater(profile: profile, driver: driver, delegate: delegate)
+        wait(for: [noRequest], timeout: 0.35)
+
+        XCTAssertEqual(driver.permissionRequests, 0, "an approved profile must not prompt again")
+        XCTAssertEqual(server.requests.count, 0)
+        let scheduledDelay = try XCTUnwrap(delegate.scheduledDelays.first)
+        XCTAssertGreaterThan(scheduledDelay, 50)
+        XCTAssertLessThan(scheduledDelay, 65)
+    }
+
+    func testRealSparkleApprovedLaunchJustOutsideTheIntervalRequestsTheExactLoopbackFeed() throws {
+        let server = try LoopbackFeedServer()
+        let feedURL = "http://127.0.0.1:\(server.port)/inkbeam/appcast.xml"
+        let profile = try SparkleHostProfile(directory: temporaryDirectory, feedURL: feedURL)
+        profile.defaults.set(true, forKey: "SUHasLaunchedBefore")
+        profile.defaults.set(true, forKey: "SUEnableAutomaticChecks")
+        profile.defaults.set(Date().addingTimeInterval(-86_460), forKey: "SULastCheckTime")
+
+        let requestExpectation = expectation(description: "eligible scheduled Sparkle feed request")
+        server.onRequest = { _ in requestExpectation.fulfill() }
+        let driver = RecordingUserDriver()
+        let requestWindowStart = Date()
+
+        try startRealUpdater(
+            profile: profile,
+            driver: driver,
+            delegate: RecordingUpdaterDelegate()
+        )
+        wait(for: [requestExpectation], timeout: 3)
+
+        XCTAssertEqual(driver.permissionRequests, 0, "an approved profile must not prompt again")
+        let record = try XCTUnwrap(server.requests.first)
+        XCTAssertEqual(server.requests.count, 1)
+        XCTAssertEqual(record.request.httpMethod, "GET")
+        XCTAssertEqual(record.request.url?.absoluteString, feedURL)
+        XCTAssertGreaterThanOrEqual(record.timestamp, requestWindowStart)
+        XCTAssertLessThanOrEqual(record.timestamp, Date())
+    }
+
     private func startRealUpdater(
         profile: SparkleHostProfile,
         driver: RecordingUserDriver,
@@ -213,7 +266,7 @@ private final class SparkleHostProfile {
         defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
 
-        let bundleURL = directory.appendingPathComponent("Host.app")
+        let bundleURL = directory.appendingPathComponent("Host-\(UUID().uuidString).app")
         let contentsURL = bundleURL.appendingPathComponent("Contents")
         let macOSURL = contentsURL.appendingPathComponent("MacOS")
         try FileManager.default.createDirectory(at: macOSURL, withIntermediateDirectories: true)

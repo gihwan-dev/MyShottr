@@ -108,17 +108,63 @@ for (const updaterContract of [
   assert.match(readme, updaterContract);
 }
 
-for (const forbiddenUpdaterClaim of [
-  /(?:silent|background|automatic) (?:download|install)(?:ation)?\s+(?:is|remains|occurs|enabled|available)/i,
-  /(?:beta|release candidate) (?:toggle|selector|switch)\s+(?:is|remains|allows|enables|available)/i,
-  /first[ -]launch (?:automatic|background) (?:check|request)\s+(?:is|remains|occurs|enabled|available)/i,
-  /(?:collects|sends|enables|uploads) (?:analytics|usage|telemetry)/i,
-  /(?:runtime|at runtime) (?:feed|channel) (?:change|selection|switch)(?:ing)?\s+(?:is|remains|allowed|available)/i,
+const forbiddenUpdaterClaimPatterns = [
+  /\bautomatic downloads?\s+(?:are|is|remain|remains)\s+(?:enabled|available|performed)\b/i,
+  /(?<!not )\b(?:enables?|performs?)\s+automatic downloads?\b/i,
+  /\b(?:silent|background) installations?\s+(?:happens?|occurs?|runs?|is|are)\b/i,
+  /\binstallations?\s+(?:happens?|occurs?|runs?)\s+(?:silently|in the background)\b/i,
+  /(?<!no )\b(?:analytics|usage(?: data)?|telemetry)\s+(?:is|are|gets?)\s+(?:collected|sent|uploaded|enabled)\b/i,
+  /(?<!not )\b(?:collects?|sends?|uploads?|enables?)\s+(?:analytics|usage(?: data)?|telemetry)\b/i,
+  /\b(?:a |the )?(?:beta|release candidate)\s+(?:toggle|selector|switch)\s+(?:can be used|is available|is enabled|remains available)\b/i,
+  /\busers?\s+can\s+use\s+(?:a |the )?(?:beta|release candidate)\s+(?:toggle|selector|switch)\b/i,
+  /\b(?:an? )?(?:automatic|background)\s+(?:check|request)\s+(?:runs?|happens?|occurs?|is enabled)\s+(?:on|at|during)\s+(?:the )?first[ -]launch\b/i,
+  /\b(?:on|at|during)\s+(?:the )?first[ -]launch[^.\n]*\b(?:automatic|background)\s+(?:check|request)\s+(?:runs?|happens?|occurs?|is enabled)\b/i,
+  /\b(?:the )?(?:feed|channel)\s+(?:can|may)\s+(?:switch|change|be changed)\s+at runtime\b/i,
+  /\bat runtime[^.\n]*\busers?\s+can\s+(?:switch|change)\s+(?:the )?(?:feed|channel)\b/i,
+];
+
+function assertNoForbiddenUpdaterClaims(source) {
+  for (const forbiddenUpdaterClaim of forbiddenUpdaterClaimPatterns) {
+    assert.doesNotMatch(
+      source,
+      forbiddenUpdaterClaim,
+      `documentation must not claim ${forbiddenUpdaterClaim}`,
+    );
+  }
+}
+
+for (const forbiddenMutation of [
+  "Automatic downloads are enabled",
+  "Silent installation happens in the background",
+  "Usage data are collected",
+  "Telemetry is sent",
+  "A beta selector can be used",
+  "An automatic check runs on first launch",
+  "The feed can switch at runtime",
+  "Inkbeam enables automatic downloads",
+  "Background installation occurs silently",
+  "Inkbeam collects usage data",
+  "Inkbeam sends telemetry",
+  "Users can use a release candidate toggle",
+  "On first launch, an automatic request occurs",
+  "At runtime, users can change the channel",
 ]) {
-  assert.doesNotMatch(
-    readme,
-    forbiddenUpdaterClaim,
-    `README must not claim ${forbiddenUpdaterClaim}`,
+  assert.throws(
+    () => assertNoForbiddenUpdaterClaims(forbiddenMutation),
+    `forbidden updater claim escaped the documentation gate: ${forbiddenMutation}`,
+  );
+}
+
+assertNoForbiddenUpdaterClaims(readme);
+
+for (const allowedUpdaterClaim of [
+  "Automatic downloads are disabled",
+  "No telemetry is sent",
+  "The feed cannot switch at runtime",
+]) {
+  assert.doesNotThrow(
+    () => assertNoForbiddenUpdaterClaims(allowedUpdaterClaim),
+    `negative updater claim was rejected: ${allowedUpdaterClaim}`,
   );
 }
 

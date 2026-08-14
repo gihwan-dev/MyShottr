@@ -8,17 +8,27 @@ EXTENSION_DIST="${REPO_ROOT}/Packages/chrome-extension/dist"
 EXTENSION_SOURCE="${REPO_ROOT}/Packages/chrome-extension/src"
 EXTENSION_PUBLIC_MANIFEST="${REPO_ROOT}/Packages/chrome-extension/public/manifest.json"
 EXTENSION_DIST_MANIFEST="${EXTENSION_DIST}/manifest.json"
-if [[ "$#" -gt 1 ]]; then
-  print -u2 "Usage: $0 [built Inkbeam.app]"
-  exit 1
+if [[ "$#" -ne 2 ]]; then
+  print -u2 "Usage: $0 <stable|beta> <built Inkbeam.app>"
+  exit 64
 fi
-if [[ "$#" -eq 1 ]]; then
-  APP_INFO_PLIST="$1/Contents/Info.plist"
-  PLIST_SCOPE="built app"
-else
-  APP_INFO_PLIST="${REPO_ROOT}/Config/Inkbeam-Info.plist"
-  PLIST_SCOPE="source configuration"
-fi
+
+EXPECTED_CHANNEL="$1"
+APP_INFO_PLIST="$2/Contents/Info.plist"
+case "${EXPECTED_CHANNEL}" in
+  stable)
+    EXPECTED_CHANNEL_NAME="Stable"
+    EXPECTED_FEED_URL="https://gihwan-dev.github.io/inkbeam/appcast.xml"
+    ;;
+  beta)
+    EXPECTED_CHANNEL_NAME="Release Candidate"
+    EXPECTED_FEED_URL="https://gihwan-dev.github.io/inkbeam/appcast-beta.xml"
+    ;;
+  *)
+    print -u2 "Expected channel must be stable or beta: ${EXPECTED_CHANNEL}"
+    exit 64
+    ;;
+esac
 
 [[ -f "${APP_INFO_PLIST}" ]] \
   || { print -u2 "Missing Inkbeam Info.plist: ${APP_INFO_PLIST}"; exit 1; }
@@ -49,14 +59,12 @@ assert_plist_value SUSignedFeedFailureExpirationInterval 0
 
 feed_url="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "${APP_INFO_PLIST}")"
 release_channel="$(/usr/libexec/PlistBuddy -c 'Print :InkbeamReleaseChannel' "${APP_INFO_PLIST}")"
-case "${PLIST_SCOPE}:${release_channel}:${feed_url}" in
-  built\ app:Stable:https://gihwan-dev.github.io/inkbeam/appcast.xml|built\ app:Release\ Candidate:https://gihwan-dev.github.io/inkbeam/appcast-beta.xml) ;;
-  source\ configuration:'$(INKBEAM_RELEASE_CHANNEL_NAME):$(INKBEAM_APPCAST_URL)') ;;
-  *)
-    print -u2 "Unexpected effective Inkbeam release channel/feed: ${release_channel} ${feed_url}"
-    exit 1
-    ;;
-esac
+if [[ "${release_channel}" != "${EXPECTED_CHANNEL_NAME}" \
+  || "${feed_url}" != "${EXPECTED_FEED_URL}" ]]; then
+  print -u2 \
+    "Unexpected effective Inkbeam release channel/feed for ${EXPECTED_CHANNEL}: ${release_channel} ${feed_url}"
+  exit 1
+fi
 
 node --input-type=module - \
   "${EDITOR_DIST}" \
@@ -382,4 +390,4 @@ function assert(condition, message) {
 }
 NODE
 
-echo "Privacy verification passed (${PLIST_SCOPE})"
+echo "Privacy verification passed (${EXPECTED_CHANNEL} built app)"

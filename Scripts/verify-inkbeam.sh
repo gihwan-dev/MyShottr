@@ -3,9 +3,11 @@ set -euo pipefail
 
 SCRIPT_PATH="${0:A}"
 REPO_ROOT="${SCRIPT_PATH:h:h}"
-SIGNED_DERIVED_DATA="${REPO_ROOT}/DerivedData/VerifyInkbeam"
+STABLE_DERIVED_DATA="${REPO_ROOT}/DerivedData/VerifyInkbeam-Stable"
+RC_DERIVED_DATA="${REPO_ROOT}/DerivedData/VerifyInkbeam-RC"
 APP_TEST_DERIVED_DATA="${REPO_ROOT}/DerivedData/VerifyInkbeam-AppTests"
 TEST_BUILD_ROOT=""
+PROJECT_NEEDS_STABLE_RESTORE=0
 
 fail() {
   echo "verify-inkbeam: $*" >&2
@@ -36,7 +38,8 @@ clean_derived_data() {
   local target_path="$1"
 
   case "${target_path}" in
-    "${REPO_ROOT}/DerivedData/VerifyInkbeam"|\
+    "${REPO_ROOT}/DerivedData/VerifyInkbeam-Stable"|\
+    "${REPO_ROOT}/DerivedData/VerifyInkbeam-RC"|\
     "${REPO_ROOT}/DerivedData/VerifyInkbeam-AppTests")
       ;;
     *)
@@ -59,12 +62,42 @@ cleanup_test_build_root() {
   esac
 }
 
+restore_stable_project() {
+  local generation_exit_code
+  (( PROJECT_NEEDS_STABLE_RESTORE == 1 )) || return 0
+  echo
+  echo "==> Restore the generated Stable Xcode project"
+  INKBEAM_RELEASE_CHANNEL=stable \
+    "${REPO_ROOT}/Scripts/generate-project.sh" || {
+      generation_exit_code="$?"
+      return "${generation_exit_code}"
+    }
+  PROJECT_NEEDS_STABLE_RESTORE=0
+}
+
+cleanup() {
+  local original_status="$?"
+  local cleanup_status=0
+
+  cleanup_test_build_root || cleanup_status=1
+  restore_stable_project || cleanup_status=1
+
+  if (( original_status != 0 )); then
+    return "${original_status}"
+  fi
+  return "${cleanup_status}"
+}
+
 run_step() {
   local label="$1"
+  local step_exit_code
   shift
   echo
   echo "==> ${label}"
-  "$@"
+  "$@" || {
+    step_exit_code="$?"
+    exit "${step_exit_code}"
+  }
 }
 
 [[ -f "${REPO_ROOT}/pnpm-lock.yaml" ]] \
@@ -103,7 +136,7 @@ TEST_BUILD_ROOT="$(
   mktemp -d "${TEMP_PARENT%/}/inkbeam-verify.XXXXXX"
 )" || fail "could not create the temporary test build root."
 HOST_TEST_DERIVED_DATA="${TEST_BUILD_ROOT}/HostTests"
-trap cleanup_test_build_root EXIT
+trap cleanup EXIT
 
 echo "Inkbeam automated verification"
 echo "Repository: ${REPO_ROOT}"
@@ -114,7 +147,10 @@ echo "macOS: ${MACOS_VERSION}"
 
 cd "${REPO_ROOT}"
 
-run_step "Generate the Xcode project" xcodegen generate
+PROJECT_NEEDS_STABLE_RESTORE=1
+run_step "Generate the Stable Xcode project" \
+  env INKBEAM_RELEASE_CHANNEL=stable \
+  "${REPO_ROOT}/Scripts/generate-project.sh"
 run_step "Install locked JavaScript dependencies" \
   pnpm install --frozen-lockfile
 run_step "Run TypeScript unit tests" pnpm test
@@ -126,14 +162,13 @@ run_step "Run editor visual and accessibility tests" \
   pnpm --filter @inkbeam/editor test:visual
 run_step "Run Chrome extension integration tests" \
   pnpm --filter @inkbeam/chrome-extension exec playwright test
-run_step "Verify local-only runtime and extension permissions" \
-  "${REPO_ROOT}/Scripts/verify-privacy.sh"
 run_step "Verify the Inkbeam clean cutover" \
   node "${REPO_ROOT}/Scripts/verify-clean-cutover.mjs"
 run_step "Run release workflow, packaging, and documentation contracts" \
   pnpm test:release
 
-clean_derived_data "${SIGNED_DERIVED_DATA}"
+clean_derived_data "${STABLE_DERIVED_DATA}"
+clean_derived_data "${RC_DERIVED_DATA}"
 clean_derived_data "${APP_TEST_DERIVED_DATA}"
 
 run_step "Run Inkbeam app tests" \
@@ -144,10 +179,6 @@ run_step "Run Inkbeam app tests" \
     -derivedDataPath "${APP_TEST_DERIVED_DATA}" \
     CODE_SIGNING_ALLOWED=NO
 
-run_step "Verify the effective built Inkbeam updater privacy configuration" \
-  "${REPO_ROOT}/Scripts/verify-privacy.sh" \
-  "${APP_TEST_DERIVED_DATA}/Build/Products/Debug/Inkbeam.app"
-
 run_step "Run Native Messaging host tests" \
   xcodebuild test \
     -project "${REPO_ROOT}/Inkbeam.xcodeproj" \
@@ -157,15 +188,15 @@ run_step "Run Native Messaging host tests" \
     CODE_SIGNING_ALLOWED=NO \
     GENERATE_INFOPLIST_FILE=YES
 
-run_step "Build a clean signed Debug app" \
+run_step "Build a clean signed Stable Debug app" \
   xcodebuild build \
     -project "${REPO_ROOT}/Inkbeam.xcodeproj" \
     -scheme Inkbeam \
     -configuration Debug \
     -destination "platform=macOS" \
-    -derivedDataPath "${SIGNED_DERIVED_DATA}"
+    -derivedDataPath "${STABLE_DERIVED_DATA}"
 
-APP="${SIGNED_DERIVED_DATA}/Build/Products/Debug/Inkbeam.app"
+APP="${STABLE_DERIVED_DATA}/Build/Products/Debug/Inkbeam.app"
 APP_EXECUTABLE="${APP}/Contents/MacOS/Inkbeam"
 HELPER="${APP}/Contents/Helpers/InkbeamNativeHost"
 EDITOR_ENTRYPOINT="${APP}/Contents/Resources/Editor/index.html"
@@ -173,6 +204,9 @@ APP_EXTENSION_KEY="${APP}/Contents/Resources/chrome-extension-key.b64"
 SOURCE_EXTENSION_KEY="${REPO_ROOT}/Config/chrome-extension-key.b64"
 EXTENSION_MANIFEST="${REPO_ROOT}/Packages/chrome-extension/dist/manifest.json"
 EXTENSION_WORKER="${REPO_ROOT}/Packages/chrome-extension/dist/service-worker.js"
+
+run_step "Verify the effective Stable updater and privacy configuration" \
+  "${REPO_ROOT}/Scripts/verify-privacy.sh" stable "${APP}"
 
 echo
 echo "==> Verify signed app, helper, editor, and extension artifacts"
@@ -246,6 +280,28 @@ codesign --verify --strict --verbose=2 "${HELPER}"
 codesign --display --verbose=2 "${APP}" >/dev/null
 codesign --display --verbose=2 "${HELPER}" >/dev/null
 
+run_step "Generate the Release Candidate Xcode project" \
+  env INKBEAM_RELEASE_CHANNEL=beta \
+  "${REPO_ROOT}/Scripts/generate-project.sh"
+
+run_step "Build a clean Release Candidate Debug app" \
+  xcodebuild build \
+    -project "${REPO_ROOT}/Inkbeam.xcodeproj" \
+    -scheme Inkbeam \
+    -configuration Debug \
+    -destination "platform=macOS" \
+    -derivedDataPath "${RC_DERIVED_DATA}"
+
+RC_APP="${RC_DERIVED_DATA}/Build/Products/Debug/Inkbeam.app"
+run_step "Verify the effective Release Candidate updater and privacy configuration" \
+  "${REPO_ROOT}/Scripts/verify-privacy.sh" beta "${RC_APP}"
+
+restore_stable_project || {
+  stable_restore_exit_code="$?"
+  exit "${stable_restore_exit_code}"
+}
+
 echo
 echo "Inkbeam automated verification passed."
-echo "Signed Debug app: ${APP}"
+echo "Signed Stable Debug app: ${APP}"
+echo "Release Candidate Debug app: ${RC_APP}"
