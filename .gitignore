@@ -5,6 +5,7 @@ DerivedData/
 /build/release-cache/
 /build/release-feeds/
 /build/release-clone/
+/build/sparkle-tools/
 /dist/release/
 Inkbeam.xcodeproj/
 node_modules/

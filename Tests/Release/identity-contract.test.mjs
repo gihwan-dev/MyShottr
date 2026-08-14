@@ -17,6 +17,11 @@ test("the build graph exposes only Inkbeam identities", () => {
   assert.match(project, /PRODUCT_BUNDLE_IDENTIFIER: dev\.gihwan\.inkbeam$/m);
   assert.match(project, /PRODUCT_BUNDLE_IDENTIFIER: dev\.gihwan\.inkbeam\.nativehost$/m);
   assert.match(project, /DEVELOPMENT_TEAM: SLVS4WF9U2$/m);
+  assert.match(
+    project,
+    /Sparkle:\n\s+url: https:\/\/github\.com\/sparkle-project\/Sparkle\n\s+exactVersion: 2\.9\.4/,
+  );
+  assert.doesNotMatch(project, /Sparkle:[\s\S]*\b(from|upToNext|branch|revision):/);
   assert.match(project, /CFBundleTypeExtensions: \[inkbeam\]/);
   assert.match(project, /UTTypeIdentifier: dev\.gihwan\.inkbeam\.project/);
   assert.match(appInfo, /dev\.gihwan\.inkbeam\.project/);

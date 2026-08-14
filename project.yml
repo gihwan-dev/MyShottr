@@ -9,6 +9,10 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     DEVELOPMENT_TEAM: SLVS4WF9U2
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.4
 targets:
   Inkbeam:
     type: application
@@ -17,6 +21,8 @@ targets:
       - target: InkbeamNativeHost
         embed: false
         link: false
+      - package: Sparkle
+        product: Sparkle
     sources:
       - Sources/InkbeamApp
       - Sources/InkbeamShared
@@ -39,6 +45,17 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         InkbeamReleaseChannel: $(INKBEAM_RELEASE_CHANNEL_NAME)
+        SUFeedURL: $(INKBEAM_APPCAST_URL)
+        SUPublicEDKey: $(INKBEAM_SPARKLE_PUBLIC_KEY)
+        SUScheduledCheckInterval: 86400
+        SUAutomaticallyUpdate: false
+        SUAllowsAutomaticUpdates: false
+        SUEnableSystemProfiling: false
+        SUEnableJavaScript: false
+        SUShowReleaseNotes: true
+        SUVerifyUpdateBeforeExtraction: true
+        SURequireSignedFeed: true
+        SUSignedFeedFailureExpirationInterval: 0
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         LSMultipleInstancesProhibited: true
         NSHighResolutionCapable: true
@@ -75,7 +92,9 @@ targets:
       base:
         MARKETING_VERSION: "0.2.0"
         CURRENT_PROJECT_VERSION: "1"
-        INKBEAM_RELEASE_CHANNEL_NAME: "Development"
+        INKBEAM_APPCAST_URL: ${INKBEAM_GENERATED_APPCAST_URL}
+        INKBEAM_SPARKLE_PUBLIC_KEY: ${INKBEAM_SPARKLE_PUBLIC_KEY}
+        INKBEAM_RELEASE_CHANNEL_NAME: ${INKBEAM_GENERATED_CHANNEL_NAME}
         PRODUCT_BUNDLE_IDENTIFIER: dev.gihwan.inkbeam
         PRODUCT_NAME: Inkbeam
         CODE_SIGN_STYLE: Automatic

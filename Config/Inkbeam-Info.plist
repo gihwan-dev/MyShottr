@@ -20,6 +20,28 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>InkbeamReleaseChannel</key>
     <string>$(INKBEAM_RELEASE_CHANNEL_NAME)</string>
+    <key>SUFeedURL</key>
+    <string>$(INKBEAM_APPCAST_URL)</string>
+    <key>SUPublicEDKey</key>
+    <string>$(INKBEAM_SPARKLE_PUBLIC_KEY)</string>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
+    <key>SUAllowsAutomaticUpdates</key>
+    <false/>
+    <key>SUEnableSystemProfiling</key>
+    <false/>
+    <key>SUEnableJavaScript</key>
+    <false/>
+    <key>SUShowReleaseNotes</key>
+    <true/>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
+    <key>SURequireSignedFeed</key>
+    <true/>
+    <key>SUSignedFeedFailureExpirationInterval</key>
+    <integer>0</integer>
     <key>LSMinimumSystemVersion</key>
     <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
     <key>LSMultipleInstancesProhibited</key>
