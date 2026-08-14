@@ -1,6 +1,10 @@
 .superpowers/
 .DS_Store
 DerivedData/
+/build/release-evidence/
+/build/release-cache/
+/build/release-feeds/
+/build/release-clone/
 /dist/release/
 Inkbeam.xcodeproj/
 node_modules/

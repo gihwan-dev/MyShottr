@@ -1,0 +1,70 @@
+#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+import { contractFor } from "./release-contract.mjs";
+import { loadReleaseState } from "./release-state.mjs";
+
+const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+const repositoryRoot = path.resolve(scriptDirectory, "../..");
+const [verb, ...parameters] = process.argv.slice(2);
+const commands = new Map([
+  ["preflight", { count: 3, script: "preflight.sh", tagged: true }],
+  ["package", { count: 3, script: "package.sh", tagged: true }],
+  ["resume-notarization", { count: 1, script: "resume-notarization.sh", tagged: true }],
+  ["publish-candidate", { count: 1, script: "publish-github.sh", tagged: true }],
+  ["verify-public", { count: 1, script: "verify-public.sh", tagged: true }],
+  ["prepare-feed", { count: 2, script: "prepare-feed.sh", tagged: true }],
+  ["publish-feed", { count: 2, script: "publish-feed.sh", tagged: true }],
+  ["withdraw-candidate", { count: 1, script: "withdraw-candidate.sh", tagged: true }],
+  ["record-acceptance", { count: 2, script: "record-acceptance.sh", tagged: true }],
+  ["promote-final", { count: 0, script: "promote-final.sh", tagged: false }],
+  ["rollback-final", { count: 0, script: "rollback-final.sh", tagged: false }],
+  ["deprecate-v0.1.0", { count: 0, script: "deprecate-v0.1.0.sh", tagged: false }],
+  ["complete", { count: 1, script: "complete.sh", tagged: true }],
+]);
+
+function usage() {
+  process.stderr.write("usage: inkbeam-release VERB [approved arguments]\n");
+}
+
+function failUsage(message) {
+  process.stderr.write(`inkbeam-release: ${message}\n`);
+  usage();
+  process.exit(64);
+}
+
+try {
+  if (verb === "contract") {
+    if (parameters.length !== 1) failUsage("contract requires TAG");
+    process.stdout.write(`${JSON.stringify(contractFor(parameters[0]), null, 2)}\n`);
+  } else if (verb === "status") {
+    if (parameters.length !== 1) failUsage("status requires TAG");
+    process.stdout.write(
+      `${JSON.stringify(loadReleaseState(repositoryRoot, parameters[0]), null, 2)}\n`,
+    );
+  } else {
+    const command = commands.get(verb);
+    if (!command) failUsage(`unknown release verb: ${String(verb)}`);
+    if (parameters.length !== command.count) {
+      failUsage(`${verb} received an invalid argument count`);
+    }
+    if (command.tagged) contractFor(parameters[0]);
+    const script = path.join(scriptDirectory, command.script);
+    const result = spawnSync(script, parameters, {
+      cwd: repositoryRoot,
+      stdio: "inherit",
+      shell: false,
+    });
+    if (result.error?.code === "ENOENT") {
+      process.stderr.write(`inkbeam-release: release verb is not implemented yet: ${verb}\n`);
+      process.exit(69);
+    }
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
+  }
+} catch (error) {
+  process.stderr.write(`inkbeam-release: ${error.message}\n`);
+  process.exit(65);
+}
