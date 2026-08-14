@@ -31,8 +31,6 @@ const STATE_MODULE_URL = new URL(
   import.meta.url,
 ).href;
 const STATE_MODULE_PATH = fileURLToPath(STATE_MODULE_URL);
-const INTERNAL_WRITE_MODE = "--internal-write";
-const INTERNAL_WRITE_GUARD_ENV = "INKBEAM_RELEASE_STATE_INTERNAL_GUARD";
 const TIMESTAMPS = {
   preflight: "2026-08-14T01:00:00.000Z",
   packaged: "2026-08-14T01:01:00.000Z",
@@ -245,58 +243,6 @@ function writePreload(filePath, source) {
   return `--import=${pathToFileURL(filePath).href}`;
 }
 
-function withEnvironmentVariable(key, value, operation) {
-  const previous = process.env[key];
-  process.env[key] = value;
-  try {
-    return operation();
-  } finally {
-    if (previous === undefined) delete process.env[key];
-    else process.env[key] = previous;
-  }
-}
-
-function runInternalWriter({
-  repositoryRoot,
-  payload,
-  token = "test-internal-token",
-  argv = [],
-  environment = {},
-}) {
-  return spawnSync(
-    process.execPath,
-    [STATE_MODULE_PATH, INTERNAL_WRITE_MODE, token, ...argv],
-    {
-      encoding: "utf8",
-      input: typeof payload === "string" ? payload : JSON.stringify(payload),
-      env: {
-        ...process.env,
-        [INTERNAL_WRITE_GUARD_ENV]: token,
-        ...environment,
-      },
-      cwd: repositoryRoot,
-    },
-  );
-}
-
-function surfaceIdentityFor(repositoryRoot, tag = "v0.2.0-rc.1") {
-  const evidenceDirectory = path.dirname(statePathFor(repositoryRoot, tag));
-  const directoryPaths = [
-    repositoryRoot,
-    path.join(repositoryRoot, "build"),
-    path.join(repositoryRoot, "build/release-evidence"),
-    evidenceDirectory,
-  ];
-  const identity = (surfacePath) => {
-    const stats = fs.lstatSync(surfacePath);
-    return { device: String(stats.dev), inode: String(stats.ino) };
-  };
-  return {
-    evidenceDirectories: directoryPaths.map(identity),
-    writerLock: identity(path.join(evidenceDirectory, "release-state.lock")),
-  };
-}
-
 function pausingWriterPreload({ repositoryRoot, readySignal, releaseSignal, label }) {
   const preloadPath = path.join(repositoryRoot, `${label}-pause-preload.mjs`);
   return writePreload(preloadPath, `
@@ -376,7 +322,7 @@ try {
 `;
 }
 
-async function killWriterHoldingLock({ repositoryRoot, state, t, label }) {
+async function killWriterHoldingFileDescriptorLock({ repositoryRoot, state, t, label }) {
   const stateFixture = path.join(repositoryRoot, `${label}-state.json`);
   const readySignal = path.join(repositoryRoot, `${label}-ready`);
   const releaseSignal = path.join(repositoryRoot, `${label}-release`);
@@ -421,12 +367,13 @@ async function killWriterHoldingLock({ repositoryRoot, state, t, label }) {
   await waitForFile(readySignal);
   const ownerPID = Number(fs.readFileSync(readySignal, "utf8"));
   assert.equal(Number.isSafeInteger(ownerPID), true);
+  assert.equal(ownerPID, writer.pid, "the saving Node process must own the inherited FD lock");
   process.kill(ownerPID, "SIGKILL");
   const [status, signal] = await exit;
   exited = true;
-  assert.equal(status, 1, writerError);
-  assert.equal(signal, null, writerError);
-  assert.match(writerError, /release state internal writer terminated abnormally/i);
+  assert.equal(status, null, writerError);
+  assert.equal(signal, "SIGKILL", writerError);
+  assert.equal(writerError, "");
 
   const evidenceDirectory = path.dirname(
     statePathFor(repositoryRoot, "v0.2.0-rc.1"),
@@ -889,7 +836,7 @@ test("exclusive writer lock lets only one concurrent process commit and cleans u
   );
 });
 
-test("a writer killed while holding the lock releases the kernel lock and the save resumes", async (t) => {
+test("killing the actual FD-locking writer releases the kernel lock and the save resumes", async (t) => {
   const repositoryRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "inkbeam-lock-crash-"),
   );
@@ -901,7 +848,7 @@ test("a writer killed while holding the lock releases the kernel lock and the sa
     "preflight",
     TIMESTAMPS.preflight,
   );
-  const orphan = await killWriterHoldingLock({
+  const orphan = await killWriterHoldingFileDescriptorLock({
     repositoryRoot,
     state: crashedState,
     t,
@@ -1042,118 +989,25 @@ test("lockf launch and abnormal-exit failures are distinct and never mutate stat
   }
 });
 
-test("private writer rejects a bad guard or malformed input without state mutation", async (t) => {
-  const fixtures = [
-    {
-      label: "bad guard",
-      run: (repositoryRoot) => runInternalWriter({
-        repositoryRoot,
-        payload: { repositoryRoot, state: initialState() },
-        environment: { [INTERNAL_WRITE_GUARD_ENV]: "different-guard" },
-      }),
-      expected: /internal writer guard mismatch/i,
-    },
-    {
-      label: "malformed JSON",
-      run: (repositoryRoot) => runInternalWriter({
-        repositoryRoot,
-        payload: "{not-json",
-      }),
-      expected: /internal writer input is invalid/i,
-    },
-    {
-      label: "non-object payload",
-      run: (repositoryRoot) => runInternalWriter({
-        repositoryRoot,
-        payload: [],
-      }),
-      expected: /internal payload must contain exactly repositoryRoot, state, and surfaceIdentity/i,
-    },
-    {
-      label: "extra payload key",
-      run: (repositoryRoot) => runInternalWriter({
-        repositoryRoot,
-        payload: { repositoryRoot, state: initialState(), extra: true },
-      }),
-      expected: /internal payload must contain exactly repositoryRoot, state, and surfaceIdentity/i,
-    },
-    {
-      label: "extra argv",
-      run: (repositoryRoot) => runInternalWriter({
-        repositoryRoot,
-        payload: { repositoryRoot, state: initialState() },
-        argv: ["unexpected"],
-      }),
-      expected: /internal writer invocation is invalid/i,
-    },
-  ];
-
-  for (const fixture of fixtures) {
-    await t.test(fixture.label, () => {
-      const repositoryRoot = fs.mkdtempSync(
-        path.join(os.tmpdir(), `inkbeam-internal-${fixture.label.replaceAll(" ", "-")}-`),
-      );
-      t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
-      const result = fixture.run(repositoryRoot);
-      assert.equal(result.status, 1, result.stderr);
-      assert.equal(result.signal, null, result.stderr);
-      assert.match(result.stderr, fixture.expected);
-      assert.equal(
-        fs.existsSync(statePathFor(repositoryRoot, "v0.2.0-rc.1")),
-        false,
-      );
-      const evidenceDirectory = path.dirname(
-        statePathFor(repositoryRoot, "v0.2.0-rc.1"),
-      );
-      if (fs.existsSync(evidenceDirectory)) {
-        assert.deepEqual(
-          fs.readdirSync(evidenceDirectory).filter(
-            (entry) => entry.endsWith(".tmp"),
-          ),
-          [],
-        );
-      }
-    });
-  }
-});
-
-test("private writer cannot bypass the kernel writer lock", (t) => {
-  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-internal-lock-"));
-  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
-  const before = initialState();
-  const after = completePhase(before, "preflight", TIMESTAMPS.preflight);
-  saveReleaseState(repositoryRoot, before);
-
-  const result = runInternalWriter({
-    repositoryRoot,
-    payload: {
-      repositoryRoot,
-      state: after,
-      surfaceIdentity: surfaceIdentityFor(repositoryRoot),
-    },
-  });
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /internal writer requires the kernel writer lock/i);
-  assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), before);
-  assert.deepEqual(
-    fs.readdirSync(path.dirname(statePathFor(repositoryRoot, "v0.2.0-rc.1")))
-      .filter((entry) => entry.endsWith(".tmp")),
-    [],
-  );
-});
-
-test("public save invokes lockf once and does not recurse through the public writer", (t) => {
+test("writer holds an inherited FD lock without spawning a private writer", (t) => {
   const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-lockf-once-"));
   t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
   const realSpawnSync = childProcess.spawnSync.bind(childProcess);
-  let publicInvocations = 0;
-  t.mock.method(childProcess, "spawnSync", (...args) => {
-    publicInvocations += 1;
-    return realSpawnSync(...args);
+  const invocations = [];
+  t.mock.method(childProcess, "spawnSync", (command, args, options) => {
+    invocations.push({ command, args: [...args], options });
+    return realSpawnSync(command, args, options);
   });
   saveReleaseState(repositoryRoot, initialState());
 
-  assert.equal(publicInvocations, 1);
+  assert.deepEqual(invocations[0].args, ["-s", "-t", "0", "3"]);
+  assert.equal(Number.isSafeInteger(invocations[0].options.stdio[3]), true);
+  assert.equal(invocations.length >= 2, true, "the writer must probe its retained FD lock");
+  assert.equal(
+    invocations.slice(1).every(({ args }) =>
+      args.includes("/usr/bin/true") && !args.includes(STATE_MODULE_PATH)),
+    true,
+  );
   assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), initialState());
 });
 
@@ -1170,7 +1024,6 @@ test("writer refuses a lock pathname replaced before lockf acquisition", (t) => 
   t.mock.method(childProcess, "spawnSync", (command, args, options) => {
     if (!replaced && command === "/usr/bin/lockf") {
       replaced = true;
-      assert.equal(args[5], lockPath);
       fs.renameSync(lockPath, `${lockPath}.original`);
       fs.writeFileSync(lockPath, "", { mode: 0o600 });
     }
@@ -1220,18 +1073,34 @@ test("save refuses a state target that appears or changes before commit", async 
         destination,
         scenario,
       });
+      const stateFixture = path.join(repositoryRoot, `${scenario}-state.json`);
+      writeStateFixture(
+        stateFixture,
+        scenario === "appears"
+          ? initialState()
+          : completePhase(initialState(), "preflight", TIMESTAMPS.preflight),
+      );
 
-      assert.throws(
-        () => withEnvironmentVariable(
-          "NODE_OPTIONS",
-          [process.env.NODE_OPTIONS, preloadOption].filter(Boolean).join(" "),
-          () => saveReleaseState(
-            repositoryRoot,
-            scenario === "appears"
-              ? initialState()
-              : completePhase(initialState(), "preflight", TIMESTAMPS.preflight),
-          ),
-        ),
+      const writer = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          saveProcessSource({ repositoryRoot, stateFixture }),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, preloadOption]
+              .filter(Boolean)
+              .join(" "),
+          },
+        },
+      );
+      assert.equal(writer.status, 1, writer.stderr);
+      assert.match(
+        writer.stderr,
         /release state target (?:appeared|changed) before commit/i,
       );
 
