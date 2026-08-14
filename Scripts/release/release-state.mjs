@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { contractFor } from "./release-contract.mjs";
 
@@ -11,6 +12,9 @@ const ROOT_KEYS = new Set([
   "identity",
   "phases",
   "notarization",
+  "artifacts",
+  "publication",
+  "acceptance",
 ]);
 const CONTRACT_KEYS = new Set([
   "tag",
@@ -30,10 +34,48 @@ const IDENTITY_KEYS = new Set([
   "helperBundleID",
 ]);
 const NOTARIZATION_KEYS = new Set(["submissionID", "status"]);
+const ARTIFACT_KEYS = new Set(["dmg", "chromeZip"]);
+const DMG_ARTIFACT_KEYS = new Set([
+  "fileName",
+  "byteLength",
+  "sha256",
+  "edSignature",
+  "verificationSummary",
+]);
+const CHROME_ARTIFACT_KEYS = new Set([
+  "fileName",
+  "byteLength",
+  "sha256",
+  "verificationSummary",
+]);
+const PUBLICATION_KEYS = new Set(["publicURLs", "github", "pages"]);
+const PUBLIC_URL_KEYS = new Set([
+  "release",
+  "dmg",
+  "chromeZip",
+  "checksums",
+  "betaFeed",
+  "stableFeed",
+]);
+const GITHUB_KEYS = new Set(["candidate", "promoted", "withdrawn", "rollback"]);
+const GITHUB_RELEASE_KEYS = new Set([
+  "releaseID",
+  "tagCommitID",
+  "url",
+  "draft",
+  "prerelease",
+  "makeLatest",
+  "title",
+]);
+const PAGES_KEYS = new Set(["beta", "stable", "rollback"]);
+const PAGES_COMMIT_KEYS = new Set(["previousCommitID", "publishedCommitID"]);
+const ACCEPTANCE_KEYS = new Set(["candidate", "complete"]);
+const ACCEPTANCE_RECORD_KEYS = new Set(["path", "result"]);
 const SECRET_KEY_PATTERN = /(password|secret|token|privateKey|credential)/i;
 const SECRET_VALUE_PATTERN = /(?:gh[pousr]_[A-Za-z0-9_]{8,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)/;
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const SUBMISSION_ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const NOTARIZATION_STATUSES = new Set([
   "Submitted",
@@ -53,11 +95,11 @@ export const releasePhaseDependencies = Object.freeze({
   publicVerified: ["candidatePublished"],
   betaFeedPrepared: ["publicVerified"],
   betaFeedPublished: ["betaFeedPrepared"],
-  stableFeedPrepared: ["publicVerified"],
-  acceptanceRecorded: ["publicVerified"],
+  stableFeedPrepared: ["acceptanceRecorded"],
+  acceptanceRecorded: ["betaFeedPublished"],
   finalPromoted: ["betaFeedPublished", "stableFeedPrepared", "acceptanceRecorded"],
   stableFeedPublished: ["finalPromoted"],
-  completed: ["publicVerified"],
+  completed: ["acceptanceRecorded"],
 });
 
 function clone(value) {
@@ -138,7 +180,238 @@ function validatePhases(phases) {
       if (!phases[dependency]) {
         throw new Error(`cannot complete phase ${phase} before ${dependency}`);
       }
+      if (Date.parse(timestamp) < Date.parse(phases[dependency])) {
+        throw new Error(`phase ${phase} timestamp cannot precede ${dependency}`);
+      }
     }
+  }
+}
+
+function validateArtifactMetadata(artifacts, contract) {
+  requirePlainObject(artifacts, "artifacts");
+  rejectUnknownKeys(artifacts, ARTIFACT_KEYS, "artifact");
+  for (const key of ARTIFACT_KEYS) {
+    if (!Object.hasOwn(artifacts, key)) {
+      throw new Error("final artifact metadata requires both DMG and Chrome ZIP");
+    }
+  }
+
+  const definitions = [
+    ["dmg", "DMG", DMG_ARTIFACT_KEYS, contract.dmg],
+    ["chromeZip", "Chrome ZIP", CHROME_ARTIFACT_KEYS, contract.chromeZip],
+  ];
+  for (const [key, label, allowedKeys, expectedFileName] of definitions) {
+    const artifact = artifacts[key];
+    requirePlainObject(artifact, `${label} artifact`);
+    rejectUnknownKeys(artifact, allowedKeys, `${label} artifact`);
+    if (artifact.fileName !== expectedFileName) {
+      throw new Error(`${label} filename must match release contract`);
+    }
+    if (!Number.isSafeInteger(artifact.byteLength) || artifact.byteLength <= 0) {
+      throw new Error(`${label} byte length must be a positive integer`);
+    }
+    if (!SHA256_PATTERN.test(artifact.sha256)) {
+      throw new Error(`${label} SHA-256 must be 64 lowercase hexadecimal characters`);
+    }
+    if (
+      typeof artifact.verificationSummary !== "string" ||
+      artifact.verificationSummary.length === 0 ||
+      artifact.verificationSummary.length > 1_000 ||
+      /[\r\n]/.test(artifact.verificationSummary)
+    ) {
+      throw new Error(`${label} verification summary is required on one line`);
+    }
+  }
+
+  const signature = artifacts.dmg.edSignature;
+  if (
+    typeof signature !== "string" ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(signature) ||
+    Buffer.from(signature, "base64").byteLength !== 64 ||
+    Buffer.from(signature, "base64").toString("base64") !== signature
+  ) {
+    throw new Error("DMG EdDSA signature must be canonical base64 for 64 bytes");
+  }
+}
+
+function expectedPublicURLs(contract) {
+  const releaseBase = `https://github.com/gihwan-dev/inkbeam/releases`;
+  const downloadBase = `${releaseBase}/download/${contract.tag}`;
+  return {
+    release: `${releaseBase}/tag/${contract.tag}`,
+    dmg: `${downloadBase}/${contract.dmg}`,
+    chromeZip: `${downloadBase}/${contract.chromeZip}`,
+    checksums: `${downloadBase}/SHA256SUMS.txt`,
+    betaFeed: "https://gihwan-dev.github.io/inkbeam/appcast-beta.xml",
+    stableFeed: "https://gihwan-dev.github.io/inkbeam/appcast.xml",
+  };
+}
+
+function validatePublicURLs(publicURLs, contract) {
+  requirePlainObject(publicURLs, "public URLs");
+  rejectUnknownKeys(publicURLs, PUBLIC_URL_KEYS, "public URL");
+  const expected = expectedPublicURLs(contract);
+  for (const key of ["release", "dmg", "chromeZip", "checksums"]) {
+    if (publicURLs[key] !== expected[key]) {
+      const label = key === "chromeZip" ? "Chrome ZIP" : key;
+      throw new Error(`public ${label} URL does not match release contract`);
+    }
+  }
+  for (const [key, label] of [["betaFeed", "beta"], ["stableFeed", "stable"]]) {
+    if (publicURLs[key] !== undefined && publicURLs[key] !== expected[key]) {
+      throw new Error(`public ${label} feed URL does not match Inkbeam Pages`);
+    }
+  }
+}
+
+function validateGitHubRelease(release, kind, contract, source) {
+  requirePlainObject(release, `GitHub ${kind} release`);
+  rejectUnknownKeys(release, GITHUB_RELEASE_KEYS, "GitHub release");
+  if (!Number.isSafeInteger(release.releaseID) || release.releaseID <= 0) {
+    throw new Error("GitHub release ID must be a positive integer");
+  }
+  if (release.tagCommitID !== source.sha) {
+    throw new Error("GitHub tag commit ID must match recorded source SHA");
+  }
+  if (release.url !== expectedPublicURLs(contract).release) {
+    throw new Error("GitHub release URL does not match release contract");
+  }
+
+  const candidateShape =
+    release.draft === false &&
+    release.prerelease === true &&
+    release.makeLatest === false;
+  if (kind === "candidate" || kind === "rollback") {
+    if (!candidateShape) {
+      throw new Error("GitHub candidate must be non-draft, prerelease, and not latest");
+    }
+    if (release.title !== contract.releaseTitle) {
+      throw new Error("GitHub candidate title must match release contract");
+    }
+  } else if (kind === "withdrawn") {
+    if (!candidateShape) {
+      throw new Error("withdrawn GitHub release must remain non-draft, prerelease, and not latest");
+    }
+    if (release.title !== `Withdrawn — Inkbeam ${contract.tag}`) {
+      throw new Error("withdrawn GitHub release title does not match release contract");
+    }
+  } else {
+    if (contract.channel !== "stable") {
+      throw new Error("only the stable release can record GitHub promotion state");
+    }
+    if (
+      release.draft !== false ||
+      release.prerelease !== false ||
+      release.makeLatest !== true
+    ) {
+      throw new Error("promoted GitHub release must be non-draft, stable, and latest");
+    }
+    if (release.title !== "Inkbeam v0.2.0") {
+      throw new Error("promoted GitHub release title must be Inkbeam v0.2.0");
+    }
+  }
+}
+
+function validatePages(pages) {
+  requirePlainObject(pages, "Pages state");
+  rejectUnknownKeys(pages, PAGES_KEYS, "Pages");
+  for (const [kind, history] of Object.entries(pages)) {
+    if (!Array.isArray(history) || history.length === 0) {
+      throw new Error(`Pages ${kind} history must be a non-empty array`);
+    }
+    for (const [index, commits] of history.entries()) {
+      requirePlainObject(commits, `Pages ${kind} commit transition`);
+      rejectUnknownKeys(commits, PAGES_COMMIT_KEYS, "Pages commit");
+      if (
+        commits.previousCommitID !== undefined &&
+        !SHA_PATTERN.test(commits.previousCommitID)
+      ) {
+        throw new Error("Pages commit ID must be 40 lowercase hexadecimal characters");
+      }
+      if (!SHA_PATTERN.test(commits.publishedCommitID)) {
+        throw new Error("Pages commit ID must be 40 lowercase hexadecimal characters");
+      }
+      if (
+        index > 0 &&
+        commits.previousCommitID !== history[index - 1].publishedCommitID
+      ) {
+        throw new Error(
+          `Pages ${kind} transition must start from the previous published commit ID`,
+        );
+      }
+    }
+  }
+}
+
+function validatePublication(publication, contract, source) {
+  requirePlainObject(publication, "publication");
+  rejectUnknownKeys(publication, PUBLICATION_KEYS, "publication");
+  if (publication.publicURLs !== undefined) {
+    validatePublicURLs(publication.publicURLs, contract);
+  }
+  if (publication.github !== undefined) {
+    requirePlainObject(publication.github, "GitHub state");
+    rejectUnknownKeys(publication.github, GITHUB_KEYS, "GitHub");
+    for (const [kind, release] of Object.entries(publication.github)) {
+      validateGitHubRelease(release, kind, contract, source);
+    }
+  }
+  if (publication.pages !== undefined) validatePages(publication.pages);
+}
+
+function validateAcceptance(acceptance, contract) {
+  requirePlainObject(acceptance, "acceptance");
+  rejectUnknownKeys(acceptance, ACCEPTANCE_KEYS, "acceptance");
+  const expectedPath = `docs/testing/releases/${contract.tag}.md`;
+  for (const [kind, record] of Object.entries(acceptance)) {
+    requirePlainObject(record, `${kind} acceptance record`);
+    rejectUnknownKeys(record, ACCEPTANCE_RECORD_KEYS, "acceptance record");
+    if (record.path !== expectedPath) {
+      throw new Error(`acceptance path must be ${expectedPath}`);
+    }
+    if (record.result !== "PASS") {
+      throw new Error("acceptance result must be PASS");
+    }
+  }
+}
+
+function validatePhaseEvidence(state) {
+  if (state.phases.sealed && !state.artifacts) {
+    throw new Error("sealed phase requires exact final artifact metadata");
+  }
+  if (state.phases.candidatePublished && !state.publication?.github?.candidate) {
+    throw new Error("candidatePublished phase requires GitHub candidate state");
+  }
+  if (state.phases.publicVerified && !state.publication?.publicURLs) {
+    throw new Error("publicVerified phase requires exact public artifact URLs");
+  }
+  if (
+    state.phases.betaFeedPublished &&
+    (!state.publication?.pages?.beta?.length || !state.publication?.publicURLs?.betaFeed)
+  ) {
+    throw new Error("betaFeedPublished phase requires Pages commit IDs and beta feed URL");
+  }
+  if (
+    state.phases.stableFeedPublished &&
+    (!state.publication?.pages?.stable?.length || !state.publication?.publicURLs?.stableFeed)
+  ) {
+    throw new Error("stableFeedPublished phase requires Pages commit IDs and stable feed URL");
+  }
+  if (state.phases.acceptanceRecorded && state.acceptance?.candidate?.result !== "PASS") {
+    throw new Error("acceptanceRecorded phase requires candidate acceptance PASS");
+  }
+  if (state.phases.finalPromoted && !state.publication?.github?.promoted) {
+    throw new Error("finalPromoted phase requires promoted GitHub release state");
+  }
+  if (state.phases.completed && state.acceptance?.complete?.result !== "PASS") {
+    throw new Error("completed phase requires complete acceptance PASS");
+  }
+  if (
+    state.phases.completed &&
+    state.contract.channel === "stable" &&
+    !state.phases.stableFeedPublished
+  ) {
+    throw new Error("stable completed phase requires stableFeedPublished");
   }
 }
 
@@ -198,6 +471,21 @@ export function validateReleaseState(state, expectedContract) {
     throw new Error("notarization phase requires a submission ID");
   }
 
+  if (state.phases.notarized && state.notarization?.status !== "Accepted") {
+    throw new Error("notarized phase requires Accepted notarization status");
+  }
+
+  if (state.artifacts !== undefined) {
+    validateArtifactMetadata(state.artifacts, state.contract);
+  }
+  if (state.publication !== undefined) {
+    validatePublication(state.publication, state.contract, state.source);
+  }
+  if (state.acceptance !== undefined) {
+    validateAcceptance(state.acceptance, state.contract);
+  }
+  validatePhaseEvidence(state);
+
   return true;
 }
 
@@ -247,6 +535,7 @@ export function recordNotarizationStatus(state, status, timestamp) {
   if (!NOTARIZATION_STATUSES.has(status)) {
     throw new Error(`unsupported notarization status: ${String(status)}`);
   }
+  assertNotarizationStatusAdvance(state.notarization.status, status);
   const next = clone(state);
   next.notarization.status = status;
   if (status === "Accepted") {
@@ -273,11 +562,90 @@ export function statePathFor(repositoryRoot, tag) {
   );
 }
 
+function assertNotarizationStatusAdvance(previous, next) {
+  const allowed = {
+    Submitted: new Set(["Submitted", "In Progress", "Accepted", "Invalid", "Rejected"]),
+    "In Progress": new Set(["In Progress", "Accepted", "Invalid", "Rejected"]),
+    Accepted: new Set(["Accepted"]),
+    Invalid: new Set(["Invalid"]),
+    Rejected: new Set(["Rejected"]),
+  };
+  if (!allowed[previous]?.has(next)) {
+    throw new Error(`release state cannot regress notarization status from ${previous} to ${next}`);
+  }
+}
+
+function assertUnchanged(previous, next, label) {
+  if (!isDeepStrictEqual(previous, next)) {
+    throw new Error(`release state cannot change ${label}`);
+  }
+}
+
+function assertPreserved(previous, next, keyPath) {
+  if (previous === undefined) return;
+  if (Array.isArray(previous)) {
+    if (!Array.isArray(next) || next.length < previous.length) {
+      throw new Error(`release state cannot remove ${keyPath} history`);
+    }
+    for (const [index, value] of previous.entries()) {
+      assertPreserved(value, next[index], `${keyPath}.${index}`);
+    }
+    return;
+  }
+  if (isPlainObject(previous)) {
+    if (!isPlainObject(next)) {
+      throw new Error(`release state cannot remove ${keyPath}`);
+    }
+    for (const [key, value] of Object.entries(previous)) {
+      const childPath = `${keyPath}.${key}`;
+      if (!Object.hasOwn(next, key)) {
+        throw new Error(`release state cannot remove ${childPath}`);
+      }
+      assertPreserved(value, next[key], childPath);
+    }
+    return;
+  }
+  if (!isDeepStrictEqual(previous, next)) {
+    throw new Error(`release state cannot change ${keyPath}`);
+  }
+}
+
+function assertMonotonicAdvance(previous, next) {
+  assertUnchanged(previous.schemaVersion, next.schemaVersion, "schemaVersion");
+  assertUnchanged(previous.contract, next.contract, "contract");
+  assertUnchanged(previous.source, next.source, "source");
+  assertUnchanged(previous.identity, next.identity, "identity");
+
+  if (previous.notarization !== undefined) {
+    if (next.notarization === undefined) {
+      throw new Error("release state cannot remove notarization");
+    }
+    assertUnchanged(
+      previous.notarization.submissionID,
+      next.notarization.submissionID,
+      "notarization submission ID",
+    );
+    assertNotarizationStatusAdvance(
+      previous.notarization.status,
+      next.notarization.status,
+    );
+  }
+
+  for (const key of ["phases", "artifacts", "publication", "acceptance"]) {
+    assertPreserved(previous[key], next[key], key);
+  }
+}
+
 export function saveReleaseState(repositoryRoot, state) {
   validateReleaseState(state);
   const destination = statePathFor(repositoryRoot, state.contract.tag);
   const directory = path.dirname(destination);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  if (fs.existsSync(destination)) {
+    const previous = JSON.parse(fs.readFileSync(destination, "utf8"));
+    validateReleaseState(previous, state.contract);
+    assertMonotonicAdvance(previous, state);
+  }
   const temporary = path.join(
     directory,
     `.release-state.${process.pid}.${crypto.randomUUID()}.tmp`,
