@@ -46,6 +46,7 @@ final class AppDelegate:
         _ projectFactory: any NewProjectCreating,
         _ windows: any DocumentWindowPresenting
     ) throws -> CaptureInboxCoordinator
+    typealias UpdateServiceFactory = () throws -> any UpdateServing
     typealias LaunchErrorReporter = (InkbeamUserFacingError) -> Void
     typealias TerminationReply = (Bool) -> Void
 
@@ -61,6 +62,7 @@ final class AppDelegate:
     private let bundleURLProvider: () -> URL
     private let isBundleWritable: (URL) -> Bool
     private let isDebugBuild: Bool
+    private let updateServiceFactory: UpdateServiceFactory?
     private let documentWindowFactory: DocumentWindowFactory
     private let nativeMessagingHostInstaller:
         NativeMessagingHostInstaller
@@ -72,6 +74,7 @@ final class AppDelegate:
     private var documentWindows: [any EditorWindowControlling] = []
     private var captureCoordinator: RegionCaptureCoordinator?
     private var chromeCaptureCoordinator: CaptureInboxCoordinator?
+    private var updateService: (any UpdateServing)?
     private var menuBarController: MenuBarController?
     private var hotKeyRegistrar: GlobalHotKeyRegistrar?
     private var terminationResolutionState:
@@ -91,6 +94,11 @@ final class AppDelegate:
                 FileManager.default.isWritableFile(atPath: $0.path)
             },
             isDebugBuild: AppDelegate.defaultIsDebugBuild,
+            updateServiceFactory: {
+                try UpdateService.live(
+                    info: Bundle.main.infoDictionary ?? [:]
+                )
+            },
             documentWindowFactory: {
                 project,
                 projectURL in
@@ -113,6 +121,7 @@ final class AppDelegate:
             FileManager.default.isWritableFile(atPath: $0.path)
         },
         isDebugBuild: Bool = AppDelegate.defaultIsDebugBuild,
+        updateServiceFactory: UpdateServiceFactory? = nil,
         documentWindowFactory: @escaping DocumentWindowFactory = {
             project,
             projectURL in
@@ -156,6 +165,7 @@ final class AppDelegate:
         self.bundleURLProvider = bundleURLProvider
         self.isBundleWritable = isBundleWritable
         self.isDebugBuild = isDebugBuild
+        self.updateServiceFactory = updateServiceFactory
         self.documentWindowFactory = documentWindowFactory
         self.nativeMessagingHostInstaller =
             nativeMessagingHostInstaller
@@ -193,6 +203,21 @@ final class AppDelegate:
             windows: self
         )
         captureCoordinator = coordinator
+
+        if let updateServiceFactory {
+            do {
+                let service = try updateServiceFactory()
+                updateService = service
+                try service.start()
+            } catch {
+                launchErrorReporter(
+                    InkbeamUserFacingError.wrapping(
+                        error,
+                        context: .update
+                    )
+                )
+            }
+        }
 
         var registrationError: (any Error)?
         do {
@@ -232,11 +257,20 @@ final class AppDelegate:
 
         do {
             menuBarController = try MenuBarController(
+                about: { [weak self] in
+                    self?.showAboutPanel()
+                },
                 captureArea: { [weak self] in
                     self?.captureArea()
                 },
                 openProject: { [weak self] in
                     self?.chooseProject()
+                },
+                checkForUpdates: { [weak self] in
+                    self?.checkForUpdates()
+                },
+                canCheckForUpdates: { [weak self] in
+                    self?.updateService?.canCheckForUpdates ?? false
                 },
                 quit: {
                     NSApp.terminate(nil)
@@ -340,6 +374,44 @@ final class AppDelegate:
                 return
             }
             launchErrorReporter(error)
+        }
+    }
+
+    private func checkForUpdates() {
+        guard let updateService else {
+            return
+        }
+        do {
+            try updateService.checkForUpdates()
+        } catch {
+            launchErrorReporter(
+                InkbeamUserFacingError.wrapping(
+                    error,
+                    context: .update
+                )
+            )
+        }
+    }
+
+    private func showAboutPanel() {
+        do {
+            let diagnostics = try AboutDiagnostics(
+                info: Bundle.main.infoDictionary ?? [:]
+            )
+            NSApp.orderFrontStandardAboutPanel(
+                options: [
+                    .applicationVersion: diagnostics.displayVersion,
+                    .version: "",
+                ]
+            )
+            applicationLifecycle.activate()
+        } catch {
+            launchErrorReporter(
+                InkbeamUserFacingError.wrapping(
+                    error,
+                    context: .application
+                )
+            )
         }
     }
 

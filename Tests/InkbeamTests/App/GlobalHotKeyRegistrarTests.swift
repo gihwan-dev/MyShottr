@@ -95,9 +95,15 @@ final class MenuBarControllerTests: XCTestCase {
             size: NSSize(width: 18, height: 18),
             flipped: false
         ) { _ in true }
+        var aboutCount = 0
+        var updateCount = 0
+        var updateIsAvailable = true
         let controller = try MenuBarController(
+            about: { aboutCount += 1 },
             captureArea: {},
             openProject: {},
+            checkForUpdates: { updateCount += 1 },
+            canCheckForUpdates: { updateIsAvailable },
             quit: {},
             imageLoader: { name in
                 XCTAssertEqual(name, NSImage.Name("StatusBarIcon"))
@@ -110,26 +116,46 @@ final class MenuBarControllerTests: XCTestCase {
 
         let menu = try XCTUnwrap(controller.statusItem.menu)
         XCTAssertEqual(menu.items.map(\.title), [
+            "About Inkbeam",
+            "",
             "Capture Area",
             "Open Project…",
             "",
+            "Check for Updates…",
+            "",
             "Quit Inkbeam",
         ])
-        XCTAssertEqual(menu.items[0].keyEquivalent, "2")
+        XCTAssertEqual(menu.items[2].keyEquivalent, "2")
         XCTAssertEqual(
-            menu.items[0].keyEquivalentModifierMask,
+            menu.items[2].keyEquivalentModifierMask,
             [.command, .shift]
         )
-        XCTAssertTrue(menu.items[2].isSeparatorItem)
-        XCTAssertTrue(menu.items[1].keyEquivalent.isEmpty)
+        XCTAssertTrue(menu.items[1].isSeparatorItem)
+        XCTAssertTrue(menu.items[4].isSeparatorItem)
+        XCTAssertTrue(menu.items[6].isSeparatorItem)
+        XCTAssertTrue(menu.items[0].keyEquivalent.isEmpty)
         XCTAssertTrue(menu.items[3].keyEquivalent.isEmpty)
+        XCTAssertTrue(menu.items[5].keyEquivalent.isEmpty)
+        XCTAssertTrue(menu.items[7].keyEquivalent.isEmpty)
+
+        menu.performActionForItem(at: 0)
+        menu.performActionForItem(at: 5)
+        XCTAssertEqual(aboutCount, 1)
+        XCTAssertEqual(updateCount, 1)
+
+        XCTAssertTrue(controller.validateMenuItem(menu.items[5]))
+        updateIsAvailable = false
+        XCTAssertFalse(controller.validateMenuItem(menu.items[5]))
     }
 
     func testMissingStatusIconIsExplicitInitializationError() {
         XCTAssertThrowsError(
             try MenuBarController(
+                about: {},
                 captureArea: {},
                 openProject: {},
+                checkForUpdates: {},
+                canCheckForUpdates: { false },
                 quit: {},
                 imageLoader: { _ in nil }
             )

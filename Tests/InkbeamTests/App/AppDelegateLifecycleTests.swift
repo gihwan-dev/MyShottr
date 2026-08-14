@@ -124,11 +124,75 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(application.activationCount, 0)
     }
 
+    func testEligibleLaunchStartsUpdaterOnceWithoutAutomaticManualCheck() {
+        let updater = SpyUpdateService()
+        var factoryCallCount = 0
+        let delegate = AppDelegate(
+            updateServiceFactory: {
+                factoryCallCount += 1
+                return updater
+            },
+            nativeMessagingHostInstaller: {},
+            chromeCaptureCoordinatorFactory: makeEmptyChromeCoordinator,
+            hotKeyAPI: makeNoOpHotKeyAPI()
+        )
+
+        delegate.applicationDidFinishLaunching(
+            Notification(
+                name: NSApplication.didFinishLaunchingNotification
+            )
+        )
+
+        XCTAssertEqual(factoryCallCount, 1)
+        XCTAssertEqual(updater.startCount, 1)
+        XCTAssertEqual(updater.checkCount, 0)
+    }
+
+    func testUpdaterStartsBeforeNativeAndChromeServices() {
+        var events: [String] = []
+        let updater = SpyUpdateService()
+        updater.onStart = { events.append("updater") }
+        let delegate = AppDelegate(
+            updateServiceFactory: {
+                events.append("updater-factory")
+                return updater
+            },
+            nativeMessagingHostInstaller: {
+                events.append("native-host")
+            },
+            chromeCaptureCoordinatorFactory: { _, _ in
+                events.append("chrome-inbox")
+                return try makeEmptyChromeCoordinator(
+                    projectFactory: StubNewProjectFactory(),
+                    windows: NoOpDocumentWindowPresenter()
+                )
+            },
+            hotKeyAPI: makeNoOpHotKeyAPI()
+        )
+
+        delegate.applicationDidFinishLaunching(
+            Notification(
+                name: NSApplication.didFinishLaunchingNotification
+            )
+        )
+
+        XCTAssertEqual(
+            events,
+            [
+                "updater-factory",
+                "updater",
+                "native-host",
+                "chrome-inbox",
+            ]
+        )
+    }
+
     func testReleaseLaunchOutsideApplicationsReportsMoveAndSkipsStartupServices() {
         let application = SpyApplicationLifecycle()
         var reportedErrors: [InkbeamUserFacingError] = []
         var installerCallCount = 0
         var chromeCoordinatorCallCount = 0
+        var updaterFactoryCallCount = 0
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
             installLocationPolicy: InstallLocationPolicy(),
@@ -137,6 +201,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
             },
             isBundleWritable: { _ in false },
             isDebugBuild: false,
+            updateServiceFactory: {
+                updaterFactoryCallCount += 1
+                return SpyUpdateService()
+            },
             nativeMessagingHostInstaller: {
                 installerCallCount += 1
             },
@@ -163,6 +231,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
         XCTAssertEqual(installerCallCount, 0)
         XCTAssertEqual(chromeCoordinatorCallCount, 0)
+        XCTAssertEqual(updaterFactoryCallCount, 0)
         XCTAssertEqual(application.activationPolicies, [.regular])
         XCTAssertEqual(application.activationCount, 1)
         XCTAssertEqual(delegate.activeDocumentWindowCount, 0)
@@ -1445,6 +1514,23 @@ private final class SpyEditorWindowController: EditorWindowControlling {
 
     func close() {
         onClose?()
+    }
+}
+
+@MainActor
+private final class SpyUpdateService: UpdateServing {
+    var canCheckForUpdates = true
+    var onStart: (() -> Void)?
+    private(set) var startCount = 0
+    private(set) var checkCount = 0
+
+    func start() throws {
+        startCount += 1
+        onStart?()
+    }
+
+    func checkForUpdates() throws {
+        checkCount += 1
     }
 }
 

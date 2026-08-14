@@ -41,6 +41,19 @@ final class UpdateService: UpdateServing {
         self.diagnostics = diagnostics
     }
 
+    static func live(info: [String: Any]) throws -> UpdateService {
+        let configuration = try UpdateConfiguration(info: info)
+        let controller = SPUStandardUpdaterController(
+            startingUpdater: false,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+        return UpdateService(
+            controller: controller,
+            configuration: configuration
+        )
+    }
+
     var canCheckForUpdates: Bool {
         started && controller.canCheckForUpdates
     }

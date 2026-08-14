@@ -10,6 +10,12 @@ enum ApplicationLaunchUserFacingError: Error, Equatable {
     case moveToApplications
 }
 
+enum UpdateUserFacingError: Error, Equatable {
+    case invalidConfiguration
+    case notStarted
+    case unavailable
+}
+
 struct UserFacingErrorViewModel: Equatable {
     let title: String
     let message: String
@@ -38,6 +44,7 @@ enum UserFacingErrorContext {
     case editorBridge
     case globalShortcut
     case application
+    case update
 }
 
 enum InkbeamUserFacingError: Error {
@@ -59,6 +66,7 @@ enum InkbeamUserFacingError: Error {
     case globalShortcut(GlobalHotKeyError)
     case documentSession(DocumentSessionError)
     case applicationLaunch(ApplicationLaunchUserFacingError)
+    case update(UpdateUserFacingError)
     case application
 
     static func wrapping(
@@ -163,6 +171,17 @@ enum InkbeamUserFacingError: Error {
                 return .applicationLaunch(error)
             }
             return .application
+
+        case .update:
+            if error is UpdateConfigurationError {
+                return .update(.invalidConfiguration)
+            }
+            if let error = error as? UpdateServiceError,
+               error == .notStarted
+            {
+                return .update(.notStarted)
+            }
+            return .update(.unavailable)
         }
     }
 
@@ -262,6 +281,33 @@ enum InkbeamUserFacingError: Error {
                         "Move Inkbeam.app into an Applications folder, "
                         + "then relaunch it. Inkbeam did not start updates, "
                         + "Chrome capture import, or keyboard shortcuts.",
+                    primaryAction: .dismiss
+                )
+            }
+        case .update(let error):
+            switch error {
+            case .invalidConfiguration:
+                return UserFacingErrorViewModel(
+                    title: "Updates Could Not Start",
+                    message:
+                        "Inkbeam's signed update configuration is invalid. "
+                        + "No update request was made.",
+                    primaryAction: .dismiss
+                )
+            case .notStarted:
+                return UserFacingErrorViewModel(
+                    title: "Update Check Is Unavailable",
+                    message:
+                        "The signed updater did not start, so Inkbeam did "
+                        + "not make an update request.",
+                    primaryAction: .dismiss
+                )
+            case .unavailable:
+                return UserFacingErrorViewModel(
+                    title: "Update Check Failed",
+                    message:
+                        "Inkbeam stopped the update check without changing "
+                        + "the installed app.",
                     primaryAction: .dismiss
                 )
             }
