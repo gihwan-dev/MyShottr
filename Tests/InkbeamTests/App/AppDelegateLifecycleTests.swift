@@ -193,6 +193,22 @@ final class AppDelegateLifecycleTests: XCTestCase {
         var installerCallCount = 0
         var chromeCoordinatorCallCount = 0
         var updaterFactoryCallCount = 0
+        var hotKeyHandlerInstallCallCount = 0
+        var hotKeyRegistrationCallCount = 0
+        let hotKeyAPI = GlobalHotKeyAPI(
+            installEventHandler: { _, _, outputHandler in
+                hotKeyHandlerInstallCallCount += 1
+                outputHandler.pointee = nil
+                return noErr
+            },
+            registerEventHotKey: { _, _, _, outputHotKey in
+                hotKeyRegistrationCallCount += 1
+                outputHotKey.pointee = nil
+                return noErr
+            },
+            unregisterEventHotKey: { _ in noErr },
+            removeEventHandler: { _ in noErr }
+        )
         let delegate = AppDelegate(
             applicationLifecycle: application.lifecycle,
             installLocationPolicy: InstallLocationPolicy(),
@@ -216,7 +232,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
                 )
             },
             launchErrorReporter: { reportedErrors.append($0) },
-            hotKeyAPI: makeNoOpHotKeyAPI()
+            hotKeyAPI: hotKeyAPI
         )
 
         delegate.applicationDidFinishLaunching(
@@ -232,6 +248,8 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(installerCallCount, 0)
         XCTAssertEqual(chromeCoordinatorCallCount, 0)
         XCTAssertEqual(updaterFactoryCallCount, 0)
+        XCTAssertEqual(hotKeyHandlerInstallCallCount, 0)
+        XCTAssertEqual(hotKeyRegistrationCallCount, 0)
         XCTAssertEqual(application.activationPolicies, [.regular])
         XCTAssertEqual(application.activationCount, 1)
         XCTAssertEqual(delegate.activeDocumentWindowCount, 0)

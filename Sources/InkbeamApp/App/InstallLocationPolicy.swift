@@ -22,11 +22,21 @@ struct InstallLocationPolicy {
             return .moveToApplications
         }
 
-        let containerURL = standardizedURL.deletingLastPathComponent()
-        if containerURL.lastPathComponent == "Applications" {
-            return .eligible
+        let path = standardizedURL.path
+        guard !path.contains("/AppTranslocation/") else {
+            return .moveToApplications
         }
 
-        return .moveToApplications
+        let systemApplicationsPrefix = "/Applications/"
+        let userApplicationsPrefix = FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent("Applications", isDirectory: true)
+            .standardizedFileURL
+            .path + "/"
+
+        return path.hasPrefix(systemApplicationsPrefix)
+            || path.hasPrefix(userApplicationsPrefix)
+            ? .eligible
+            : .moveToApplications
     }
 }
