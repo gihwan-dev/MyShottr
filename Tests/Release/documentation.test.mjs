@@ -93,6 +93,34 @@ assert.match(readme, /Blur is a visual effect, not secure redaction/);
 assert.match(readme, /does not claim.*signing, notarization,[\s\S]*public-release acceptance/i);
 assert.doesNotMatch(readme, /\bsudo\b|\bcurl\b[^\n]*\|\s*(?:sh|bash|zsh)\b/);
 
+for (const updaterContract of [
+  /second launch[\s\S]*consent/i,
+  /automatic[\s\S]*24-hour/i,
+  /no automatic download or installation/i,
+  /no system profiling/i,
+  /JavaScript release notes.*disabled/i,
+  /https:\/\/gihwan-dev\.github\.io\/inkbeam\/(?:appcast|appcast-beta)\.xml/,
+  /https:\/\/github\.com\/gihwan-dev\/inkbeam\/releases/,
+  /\/Applications/,
+  /Release Candidate[\s\S]*build-time/i,
+  /real[\s\S]*Sparkle RC acceptance/i,
+]) {
+  assert.match(readme, updaterContract);
+}
+
+for (const forbiddenUpdaterClaim of [
+  /silent installation (?:is|remains|occurs|enabled)/i,
+  /beta toggle (?:is|remains|allows|enables)/i,
+  /first-launch automatic check (?:is|remains|occurs|enabled)/i,
+  /(?:collects|sends|enables) analytics/i,
+]) {
+  assert.doesNotMatch(
+    readme,
+    forbiddenUpdaterClaim,
+    `README must not claim ${forbiddenUpdaterClaim}`,
+  );
+}
+
 const startMarker = "<!-- historical-v0.1.0:start -->";
 const endMarker = "<!-- historical-v0.1.0:end -->";
 assert.equal(readme.split(startMarker).length - 1, 1);

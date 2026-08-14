@@ -8,6 +8,34 @@ EXTENSION_DIST="${REPO_ROOT}/Packages/chrome-extension/dist"
 EXTENSION_SOURCE="${REPO_ROOT}/Packages/chrome-extension/src"
 EXTENSION_PUBLIC_MANIFEST="${REPO_ROOT}/Packages/chrome-extension/public/manifest.json"
 EXTENSION_DIST_MANIFEST="${EXTENSION_DIST}/manifest.json"
+APP_INFO_PLIST="${REPO_ROOT}/Config/Inkbeam-Info.plist"
+
+[[ -f "${APP_INFO_PLIST}" ]] \
+  || { print -u2 "Missing Inkbeam Info.plist: ${APP_INFO_PLIST}"; exit 1; }
+
+function assert_plist_value() {
+  local key="$1"
+  local expected="$2"
+  local actual
+  actual="$(/usr/libexec/PlistBuddy -c "Print :${key}" "${APP_INFO_PLIST}")"
+  [[ "${actual}" == "${expected}" ]] \
+    || { print -u2 "Unexpected ${key}: ${actual}"; exit 1; }
+}
+
+if /usr/libexec/PlistBuddy -c 'Print :SUEnableAutomaticChecks' \
+  "${APP_INFO_PLIST}" >/dev/null 2>&1; then
+  print -u2 'SUEnableAutomaticChecks must be absent so Sparkle obtains consent'
+  exit 1
+fi
+
+assert_plist_value SUScheduledCheckInterval 86400
+assert_plist_value SUAutomaticallyUpdate false
+assert_plist_value SUAllowsAutomaticUpdates false
+assert_plist_value SUEnableSystemProfiling false
+assert_plist_value SUEnableJavaScript false
+assert_plist_value SUVerifyUpdateBeforeExtraction true
+assert_plist_value SURequireSignedFeed true
+assert_plist_value SUSignedFeedFailureExpirationInterval 0
 
 node --input-type=module - \
   "${EDITOR_DIST}" \

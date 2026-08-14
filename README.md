@@ -26,6 +26,11 @@ notarized, updateable `v0.2.0` distribution is a separate release track; this
 repository state does not claim that installation, signing, notarization, or
 public-release acceptance has completed.
 
+For a release candidate, install Inkbeam in `/Applications` before launching
+it. A release build outside that location does not initialize the updater,
+Chrome host or inbox, or global shortcut services. Release Candidate versus
+Stable is a build-time feed choice, not a beta toggle in the app.
+
 <!-- historical-v0.1.0:start -->
 The historical MyShottr `v0.1.0` release is a deprecated, unsigned pre-Inkbeam
 prototype. It used `.myshottr` projects and the Quick Ink interface name. Its
@@ -107,6 +112,24 @@ editor blocks remote navigation and network access. The Chrome extension uses
 only `activeTab` and `nativeMessaging`; it has no content script, persistent
 host permission, page URL storage, or alternate capture mechanism.
 
+The updater is the only exception to the local-only network boundary. On the
+first launch it makes no automatic check. On the second launch, Sparkle asks
+for consent once before automatic checks are enabled. If you approve, the
+first automatic request is a GET for either
+`https://gihwan-dev.github.io/inkbeam/appcast.xml` or
+`https://gihwan-dev.github.io/inkbeam/appcast-beta.xml`; later automatic
+checks are eligible every 24-hour interval. A download that you choose from
+an offered update is limited to the corresponding
+`https://github.com/gihwan-dev/inkbeam/releases` release asset. If you
+decline, only **Check for Updates** can make an update request.
+
+Inkbeam has no automatic download or installation, no system profiling, no
+analytics or telemetry, and JavaScript release notes are disabled. The updater
+does not change its feed at runtime. The standard Sparkle consent UI, its
+actual HTTPS request, and signed-update verification remain mandatory real
+Sparkle RC acceptance checks; the automated harness verifies only Inkbeam's
+orchestration policy.
+
 Run `Scripts/verify-privacy.sh` after building to check the local-only editor
 bundle and exact Chrome permission contract.
 
@@ -140,8 +163,8 @@ unverified.
   Chrome are not guaranteed.
 - Full-display, window-specific, and multi-display-spanning native capture are
   not included.
-- The current clean-cut source gate does not claim an automatic updater,
-  Developer ID distribution signature, Apple notarization, or public release.
+- Developer ID distribution signature, Apple notarization, real Sparkle RC
+  acceptance, and public-release acceptance remain unverified release work.
 
 ## License
 

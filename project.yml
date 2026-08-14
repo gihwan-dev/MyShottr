@@ -104,6 +104,7 @@ targets:
     platform: macOS
     sources:
       - Tests/InkbeamTests
+      - Tests/UpdaterHarness
       - path: Tests/Fixtures/source-2x.png
         buildPhase: resources
       - path: Config/chrome-extension-key.b64
