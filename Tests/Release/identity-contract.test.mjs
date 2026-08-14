@@ -16,6 +16,7 @@ test("the build graph exposes only Inkbeam identities", () => {
   assert.match(project, /^name: Inkbeam$/m);
   assert.match(project, /PRODUCT_BUNDLE_IDENTIFIER: dev\.gihwan\.inkbeam$/m);
   assert.match(project, /PRODUCT_BUNDLE_IDENTIFIER: dev\.gihwan\.inkbeam\.nativehost$/m);
+  assert.match(project, /DEVELOPMENT_TEAM: SLVS4WF9U2$/m);
   assert.match(project, /CFBundleTypeExtensions: \[inkbeam\]/);
   assert.match(project, /UTTypeIdentifier: dev\.gihwan\.inkbeam\.project/);
   assert.match(appInfo, /dev\.gihwan\.inkbeam\.project/);
