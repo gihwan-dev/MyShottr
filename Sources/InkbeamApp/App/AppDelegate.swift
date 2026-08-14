@@ -90,7 +90,7 @@ final class AppDelegate:
             isBundleWritable: {
                 FileManager.default.isWritableFile(atPath: $0.path)
             },
-            isDebugBuild: Self.defaultIsDebugBuild,
+            isDebugBuild: AppDelegate.defaultIsDebugBuild,
             documentWindowFactory: {
                 project,
                 projectURL in
@@ -112,7 +112,7 @@ final class AppDelegate:
         isBundleWritable: @escaping (URL) -> Bool = {
             FileManager.default.isWritableFile(atPath: $0.path)
         },
-        isDebugBuild: Bool = Self.defaultIsDebugBuild,
+        isDebugBuild: Bool = AppDelegate.defaultIsDebugBuild,
         documentWindowFactory: @escaping DocumentWindowFactory = {
             project,
             projectURL in
