@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +11,45 @@ import { contractFor } from "../../Scripts/release/release-contract.mjs";
 const TEST_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(TEST_DIRECTORY, "../..");
 const RELEASE_CLI = path.join(REPOSITORY_ROOT, "Scripts/release/inkbeam-release");
+
+function makeDispatcherFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-dispatcher-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const releaseDirectory = path.join(root, "Scripts/release");
+  fs.mkdirSync(releaseDirectory, { recursive: true });
+  for (const name of [
+    "inkbeam-release",
+    "release-contract.mjs",
+    "release-state.mjs",
+  ]) {
+    fs.copyFileSync(path.join(REPOSITORY_ROOT, "Scripts/release", name), path.join(releaseDirectory, name));
+  }
+  fs.chmodSync(path.join(releaseDirectory, "inkbeam-release"), 0o755);
+
+  const scripts = [
+    "preflight.sh",
+    "package.sh",
+    "resume-notarization.sh",
+    "publish-github.sh",
+    "verify-public.sh",
+    "prepare-feed.sh",
+    "publish-feed.sh",
+    "withdraw-candidate.sh",
+    "record-acceptance.sh",
+    "promote-final.sh",
+    "rollback-final.sh",
+    "deprecate-v0.1.0.sh",
+    "complete.sh",
+  ];
+  for (const name of scripts) {
+    const script = path.join(releaseDirectory, name);
+    fs.writeFileSync(script, "#!/bin/zsh\nexit 23\n", { mode: 0o755 });
+  }
+  return {
+    cli: path.join(releaseDirectory, "inkbeam-release"),
+    root,
+  };
+}
 
 test("maps every approved release tag exactly", () => {
   assert.deepEqual(contractFor("v0.2.0-rc.1"), {
@@ -95,4 +136,48 @@ test("dispatcher validates the tag before every tag-scoped command", () => {
   assert.equal(result.status, 65);
   assert.match(result.stderr, /unsupported release tag/);
   assert.doesNotMatch(result.stderr, /not implemented/);
+});
+
+test("dispatcher pins the exact argument count for every public verb", (t) => {
+  const fixture = makeDispatcherFixture(t);
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  const commands = [
+    ["contract", ["v0.2.0-rc.1"], 0],
+    ["status", ["v0.2.0-rc.1"], 65],
+    ["preflight", ["v0.2.0-rc.1", "main", sha], 23],
+    ["package", ["v0.2.0-rc.1", "main", sha], 23],
+    ["resume-notarization", ["v0.2.0-rc.1"], 23],
+    ["publish-candidate", ["v0.2.0-rc.1"], 23],
+    ["verify-public", ["v0.2.0-rc.1"], 23],
+    ["prepare-feed", ["v0.2.0-rc.1", "beta"], 23],
+    ["publish-feed", ["v0.2.0-rc.1", "beta"], 23],
+    ["withdraw-candidate", ["v0.2.0-rc.1"], 23],
+    ["record-acceptance", ["v0.2.0-rc.1", "/tmp/acceptance.md"], 23],
+    ["promote-final", [], 23],
+    ["rollback-final", [], 23],
+    ["deprecate-v0.1.0", [], 23],
+    ["complete", ["v0.2.0-rc.1"], 23],
+  ];
+
+  for (const [verb, parameters, expectedStatus] of commands) {
+    const exact = spawnSync(fixture.cli, [verb, ...parameters], {
+      cwd: fixture.root,
+      encoding: "utf8",
+    });
+    assert.equal(exact.status, expectedStatus, `${verb}: ${exact.stderr}`);
+
+    if (parameters.length > 0) {
+      const tooFew = spawnSync(fixture.cli, [verb, ...parameters.slice(0, -1)], {
+        cwd: fixture.root,
+        encoding: "utf8",
+      });
+      assert.equal(tooFew.status, 64, `${verb} accepted too few arguments`);
+    }
+
+    const tooMany = spawnSync(fixture.cli, [verb, ...parameters, "unexpected"], {
+      cwd: fixture.root,
+      encoding: "utf8",
+    });
+    assert.equal(tooMany.status, 64, `${verb} accepted too many arguments`);
+  }
 });

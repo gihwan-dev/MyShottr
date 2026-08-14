@@ -70,15 +70,33 @@ test("creates a state containing only approved release identity and source evide
 });
 
 test("rejects unknown state keys at every schema level", () => {
-  const rootMutation = structuredClone(initialState());
-  rootMutation.command = "echo unexpected";
-  assert.throws(() => validateReleaseState(rootMutation), /unknown state key.*command/i);
+  const submitted = recordNotarizationSubmission(
+    readyForNotarization(),
+    "11111111-2222-3333-4444-555555555555",
+    TIMESTAMPS.submitted,
+  );
+  const mutations = [
+    ["state", "command", initialState(), (state) => { state.command = "echo unexpected"; }],
+    ["contract", "extra", initialState(), (state) => { state.contract.extra = true; }],
+    ["source", "extra", initialState(), (state) => { state.source.extra = true; }],
+    ["identity", "profile", initialState(), (state) => { state.identity.profile = "alternate"; }],
+    ["notarization", "extra", submitted, (state) => { state.notarization.extra = true; }],
+  ];
 
-  const nestedMutation = structuredClone(initialState());
-  nestedMutation.identity.profile = "alternate";
+  for (const [level, key, source, mutate] of mutations) {
+    const state = structuredClone(source);
+    mutate(state);
+    assert.throws(
+      () => validateReleaseState(state),
+      new RegExp(`unknown ${level} key.*${key}`, "i"),
+    );
+  }
+
+  const phaseMutation = structuredClone(initialState());
+  phaseMutation.phases.uploadedSomewhere = TIMESTAMPS.packaged;
   assert.throws(
-    () => validateReleaseState(nestedMutation),
-    /unknown identity key.*profile/i,
+    () => validateReleaseState(phaseMutation),
+    /unknown release phase.*uploadedSomewhere/i,
   );
 });
 
@@ -92,6 +110,13 @@ test("rejects phase skips and unknown phases", () => {
   assert.throws(
     () => completePhase(state, "uploadedSomewhere", TIMESTAMPS.packaged),
     /unknown release phase/i,
+  );
+
+  const malformedPersistedState = structuredClone(state);
+  malformedPersistedState.phases.finalPromoted = TIMESTAMPS.packaged;
+  assert.throws(
+    () => validateReleaseState(malformedPersistedState),
+    /cannot complete phase finalPromoted before betaFeedPublished/i,
   );
 });
 

@@ -36,8 +36,9 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        InkbeamReleaseChannel: $(INKBEAM_RELEASE_CHANNEL_NAME)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         LSMultipleInstancesProhibited: true
         NSHighResolutionCapable: true
@@ -73,6 +74,8 @@ targets:
     settings:
       base:
         MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INKBEAM_RELEASE_CHANNEL_NAME: "Development"
         PRODUCT_BUNDLE_IDENTIFIER: dev.gihwan.inkbeam
         PRODUCT_NAME: Inkbeam
         CODE_SIGN_STYLE: Automatic

@@ -24,6 +24,27 @@ function injectStableKey(outputDirectory: string): Plugin {
   };
 }
 
+function injectReleaseVersionName(outputDirectory: string): Plugin {
+  return {
+    name: "inject-release-version-name",
+    async writeBundle() {
+      const versionName = process.env.INKBEAM_CHROME_VERSION_NAME?.trim();
+      if (!versionName) {
+        return;
+      }
+
+      const manifestPath = resolve(
+        packageDir,
+        outputDirectory,
+        "manifest.json",
+      );
+      const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+      manifest.version_name = versionName;
+      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const isE2EBuild = mode === "e2e";
   const outputDirectory = isE2EBuild ? "dist-e2e" : "dist";
@@ -33,7 +54,10 @@ export default defineConfig(({ mode }) => {
     define: {
       __INKBEAM_E2E__: JSON.stringify(isE2EBuild),
     },
-    plugins: [injectStableKey(outputDirectory)],
+    plugins: [
+      injectStableKey(outputDirectory),
+      injectReleaseVersionName(outputDirectory),
+    ],
     build: {
       outDir: outputDirectory,
       emptyOutDir: true,

@@ -114,7 +114,9 @@ targets:
         MARKETING_VERSION: "0.2.0"
     info:
       properties:
-        CFBundleShortVersionString: "0.2.0"
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        InkbeamReleaseChannel: $(INKBEAM_RELEASE_CHANNEL_NAME)
 YAML
 cat >"${FIXTURE_REPO}/Config/Inkbeam-Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -122,7 +124,11 @@ cat >"${FIXTURE_REPO}/Config/Inkbeam-Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.0</string>
+  <string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key>
+  <string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>InkbeamReleaseChannel</key>
+  <string>$(INKBEAM_RELEASE_CHANNEL_NAME)</string>
 </dict>
 </plist>
 PLIST
