@@ -251,9 +251,11 @@ final class RegionSelectionController: RegionSelecting {
         _ display: DisplayDescriptor,
         _ view: RegionSelectionView
     ) -> RegionSelectionPanel
+    typealias PointerLocationProvider = @MainActor () -> CGPoint
     typealias CursorAction = @MainActor () -> Void
 
     private let displays: DisplayProvider
+    private let pointerLocation: PointerLocationProvider
     private let panelFactory: PanelFactory
     private let activateCrosshair: CursorAction
     private let restoreCursor: CursorAction
@@ -275,6 +277,9 @@ final class RegionSelectionController: RegionSelecting {
 
     init(
         displays: @escaping DisplayProvider = RegionSelectionController.currentDisplays,
+        pointerLocation: @escaping PointerLocationProvider = {
+            NSEvent.mouseLocation
+        },
         panelFactory: @escaping PanelFactory = {
             RegionSelectionPanel(display: $0, contentView: $1)
         },
@@ -286,6 +291,7 @@ final class RegionSelectionController: RegionSelecting {
         }
     ) {
         self.displays = displays
+        self.pointerLocation = pointerLocation
         self.panelFactory = panelFactory
         self.activateCrosshair = activateCrosshair
         self.restoreCursor = restoreCursor
@@ -372,6 +378,12 @@ final class RegionSelectionController: RegionSelecting {
             panels[display.displayID] = panel
             panel.beginCapture()
         }
+
+        let currentPointerLocation = pointerLocation()
+        let initialDisplay = currentDisplays.first {
+            $0.frameInAppKitPoints.contains(currentPointerLocation)
+        } ?? currentDisplays[0]
+        activate(initialDisplay.displayID)
 
         activateCrosshair()
         isCursorOverrideActive = true

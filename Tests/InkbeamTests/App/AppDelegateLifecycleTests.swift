@@ -124,6 +124,54 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(application.activationCount, 0)
     }
 
+    func testCommandShift2HotKeyActivatesAppBeforeAreaSelectionBegins()
+        async throws
+    {
+        let application = SpyApplicationLifecycle()
+        let selector = ActivationObservingRegionSelector(
+            activationCount: {
+                application.activationCount
+            }
+        )
+        let hotKeyHarness = GlobalHotKeyAPIHarness()
+        let delegate = AppDelegate(
+            dependencies: AppDependencies(
+                selector: selector,
+                capturer: FakeScreenCapturer(
+                    result: try CaptureArtifact(
+                        id: ProjectFixtures.documentID,
+                        sourceKind: .screenRegion,
+                        pngData: ProjectFixtures.pngData,
+                        scale: 2
+                    )
+                ),
+                projectFactory: StubNewProjectFactory()
+            ),
+            applicationLifecycle: application.lifecycle,
+            nativeMessagingHostInstaller: {},
+            chromeCaptureCoordinatorFactory:
+                makeEmptyChromeCoordinator,
+            hotKeyAPI: hotKeyHarness.api
+        )
+
+        delegate.applicationDidFinishLaunching(
+            Notification(
+                name: NSApplication.didFinishLaunchingNotification
+            )
+        )
+        XCTAssertEqual(application.activationPolicies, [.accessory])
+        XCTAssertEqual(application.activationCount, 0)
+
+        hotKeyHarness.invokeEventHandler(
+            signature: 0x49_4E_4B_42,
+            id: 1
+        )
+        await selector.waitUntilStarted()
+
+        XCTAssertEqual(selector.activationCountWhenSelectionBegan, 1)
+        withExtendedLifetime(delegate) {}
+    }
+
     func testCommandShift2HotKeyRequestsExactlyOneAreaCaptureAfterLaunch()
         async throws
     {
@@ -1371,4 +1419,36 @@ private final class SpyApplicationLifecycle {
             self?.activationCount += 1
         }
     )
+}
+
+@MainActor
+private final class ActivationObservingRegionSelector: RegionSelecting {
+    private let activationCount: () -> Int
+    private(set) var activationCountWhenSelectionBegan: Int?
+    private var startedContinuations: [
+        CheckedContinuation<Void, Never>
+    ] = []
+
+    init(activationCount: @escaping () -> Int) {
+        self.activationCount = activationCount
+    }
+
+    func selectRegion() async throws -> RegionSelectionOutcome {
+        activationCountWhenSelectionBegan = activationCount()
+        let continuations = startedContinuations
+        startedContinuations.removeAll()
+        continuations.forEach { $0.resume() }
+        return .cancelled
+    }
+
+    func waitUntilStarted() async {
+        guard activationCountWhenSelectionBegan == nil else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            startedContinuations.append(continuation)
+        }
+    }
+
+    func cancel() {}
 }

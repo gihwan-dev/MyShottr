@@ -277,6 +277,26 @@ extension RegionSelectionStateTests {
         XCTAssertEqual(outcome, .cancelled)
     }
 
+    func testSelectRegionActivatesPanelUnderPointerBeforeCrosshair() async throws {
+        let harness = makeHarness(pointerLocation: CGPoint(x: -100, y: 200))
+        let selection = Task { try await harness.controller.selectRegion() }
+        await Task.yield()
+
+        XCTAssertEqual(
+            harness.storage.presentationEvents,
+            [
+                .panelActivated(CaptureFixtures.leftDisplay.displayID),
+                .crosshair,
+            ]
+        )
+        XCTAssertFalse(harness.panels[0].isKeyWindow)
+        XCTAssertTrue(harness.panels[1].isKeyWindow)
+
+        harness.controller.cancel()
+        let outcome = try await selection.value
+        XCTAssertEqual(outcome, .cancelled)
+    }
+
     func testDragFromNonActiveDisplayIsIgnored() async throws {
         let harness = makeHarness()
         let selection = Task { try await harness.controller.selectRegion() }
@@ -509,7 +529,9 @@ extension RegionSelectionStateTests {
         )
     }
 
-    private func makeHarness() -> RegionSelectionControllerHarness {
+    private func makeHarness(
+        pointerLocation: CGPoint = CGPoint(x: 100, y: 100)
+    ) -> RegionSelectionControllerHarness {
         let storage = RegionSelectionControllerHarnessStorage()
         let controller = RegionSelectionController(
             displays: {
@@ -518,17 +540,26 @@ extension RegionSelectionStateTests {
                     CaptureFixtures.leftDisplay,
                 ]
             },
+            pointerLocation: {
+                pointerLocation
+            },
             panelFactory: { display, view in
                 let panel = RecordingRegionSelectionPanel(
                     display: display,
                     contentView: view
                 )
+                panel.onActivateForCapture = {
+                    storage.presentationEvents.append(
+                        .panelActivated(display.displayID)
+                    )
+                }
                 storage.panels.append(panel)
                 storage.views[display.displayID] = view
                 return panel
             },
             activateCrosshair: {
                 storage.cursorEvents.append(.crosshair)
+                storage.presentationEvents.append(.crosshair)
             },
             restoreCursor: {
                 storage.cursorEvents.append(.restored)
@@ -560,6 +591,7 @@ private final class RegionSelectionControllerHarnessStorage {
     var panels: [RecordingRegionSelectionPanel] = []
     var views: [UInt32: RegionSelectionView] = [:]
     var cursorEvents: [RegionSelectionCursorEvent] = []
+    var presentationEvents: [RegionSelectionPresentationEvent] = []
 }
 
 private enum RegionSelectionCursorEvent: Equatable {
@@ -567,9 +599,20 @@ private enum RegionSelectionCursorEvent: Equatable {
     case restored
 }
 
+private enum RegionSelectionPresentationEvent: Equatable {
+    case panelActivated(UInt32)
+    case crosshair
+}
+
 @MainActor
 private final class RecordingRegionSelectionPanel: RegionSelectionPanel {
     private(set) var orderOutCount = 0
+    var onActivateForCapture: (() -> Void)?
+
+    override func activateForCapture() {
+        super.activateForCapture()
+        onActivateForCapture?()
+    }
 
     override func orderOut(_ sender: Any?) {
         orderOutCount += 1

@@ -292,6 +292,7 @@ final class AppDelegate:
             return
         }
 
+        applicationLifecycle.activate()
         Task { @MainActor in
             guard let error =
                     await captureCoordinator.captureArea()
