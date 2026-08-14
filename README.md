@@ -134,9 +134,11 @@ actual HTTPS request, and signed-update verification remain mandatory real
 Sparkle RC acceptance checks; automated tests exercise the real Sparkle consent
 and request orchestration policy but do not claim TLS or signature verification.
 
-After building, run `Scripts/verify-privacy.sh stable <path-to-Inkbeam.app>` (or
-use `beta` for a Release Candidate artifact) to check the exact build-time feed,
-local-only editor bundle, and Chrome permission contract.
+Run `Scripts/verify-privacy.sh` with no arguments to validate the source privacy
+policy and updater placeholders. After building, run
+`Scripts/verify-privacy.sh stable <path-to-Inkbeam.app>` (or use `beta` for a
+Release Candidate artifact) to check the exact build-time feed, local-only
+editor bundle, and Chrome permission contract.
 
 ## Development
 

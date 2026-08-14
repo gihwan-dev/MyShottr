@@ -164,6 +164,26 @@ case "\${tool}" in
       cp "\${INKBEAM_TEST_REPO_ROOT}/Config/chrome-extension-key.b64" "\${app}/Contents/Resources/chrome-extension-key.b64"
     fi
     ;;
+  rm)
+    cleanup_target="\${@[-1]}"
+    case "\${cleanup_target}" in
+      "\${INKBEAM_TEST_REPO_ROOT}/tmp/inkbeam-verify."*)
+        print 'cleanup:attempt' >>"\${INKBEAM_ORDER_EVENTS}"
+        if [[ "\${INKBEAM_ORDER_BETA_FAILURE_STAGE:-}" == cleanup \
+          && ! -f "\${INKBEAM_TEST_REPO_ROOT}/cleanup-failed-once" ]]; then
+          : >"\${INKBEAM_TEST_REPO_ROOT}/cleanup-failed-once"
+          print 'cleanup:failed' >>"\${INKBEAM_ORDER_EVENTS}"
+          exit 75
+        fi
+        /bin/rm "\${@}"
+        print 'cleanup:removed' >>"\${INKBEAM_ORDER_EVENTS}"
+        print 'temporary-cleanup-complete'
+        ;;
+      *)
+        /bin/rm "\${@}"
+        ;;
+    esac
+    ;;
   sw_vers)
     print '15.0'
     ;;
@@ -194,6 +214,7 @@ esac
     "pnpm",
     "xcodegen",
     "xcodebuild",
+    "rm",
     "sw_vers",
     "pgrep",
     "plutil",
@@ -233,6 +254,8 @@ esac
     "build:beta:beta",
     "privacy:beta:beta",
     "generate:stable",
+    "cleanup:attempt",
+    "cleanup:removed",
   ]);
   const restoreOutputIndex = execution.stdout.lastIndexOf(
     "==> Restore the generated Stable Xcode project",
@@ -240,8 +263,12 @@ esac
   const successOutputIndex = execution.stdout.indexOf(
     "Inkbeam automated verification passed.",
   );
+  const cleanupOutputIndex = execution.stdout.indexOf("temporary-cleanup-complete");
   assert.ok(restoreOutputIndex >= 0, "Stable restore output is missing");
   assert.ok(successOutputIndex > restoreOutputIndex, "success was printed before Stable restore");
+  assert.ok(cleanupOutputIndex > restoreOutputIndex, "temporary cleanup output is missing");
+  assert.ok(successOutputIndex > cleanupOutputIndex, "success was printed before temporary cleanup");
+  assert.equal(events.filter((event) => event === "cleanup:removed").length, 1);
   assert.equal((await fs.lstat(generatedProjectPath)).isFile(), true);
 
   await fs.rm(generatedProjectPath);
@@ -262,19 +289,43 @@ esac
   assert.equal(failedExecution.status, 73);
   assert.deepEqual(
     (await fs.readFile(eventsPath, "utf8")).trim().split("\n"),
-    ["generate:stable", "scanner", "generate:stable"],
+    [
+      "generate:stable",
+      "scanner",
+      "cleanup:attempt",
+      "cleanup:removed",
+      "generate:stable",
+    ],
   );
 
   for (const [failureStage, expectedStatus, expectedTail] of [
-    ["generate", 71, ["generate:beta", "generate:stable"]],
-    ["build", 72, ["generate:beta", "build:beta:beta", "generate:stable"]],
+    ["generate", 71, [
+      "generate:beta",
+      "cleanup:attempt",
+      "cleanup:removed",
+      "generate:stable",
+    ]],
+    ["build", 72, [
+      "generate:beta",
+      "build:beta:beta",
+      "cleanup:attempt",
+      "cleanup:removed",
+      "generate:stable",
+    ]],
     ["privacy", 73, [
       "generate:beta",
       "build:beta:beta",
       "privacy:beta:beta",
+      "cleanup:attempt",
+      "cleanup:removed",
       "generate:stable",
     ]],
-    ["restore", 74, ["privacy:beta:beta", "generate:stable", "generate:stable"]],
+    ["restore", 74, [
+      "generate:stable",
+      "cleanup:attempt",
+      "cleanup:removed",
+      "generate:stable",
+    ]],
   ]) {
     await fs.writeFile(eventsPath, "");
     const betaFailure = spawnSync("/bin/zsh", [verifierPath], {
@@ -299,15 +350,45 @@ esac
     );
     assert.doesNotMatch(betaFailure.stdout, /Inkbeam automated verification passed/);
   }
+
+  await fs.writeFile(eventsPath, "");
+  const cleanupFailure = spawnSync("/bin/zsh", [verifierPath], {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${binPath}:${process.env.PATH}`,
+      TMPDIR: temporaryPath,
+      INKBEAM_ORDER_EVENTS: eventsPath,
+      INKBEAM_ORDER_BETA_FAILURE_STAGE: "cleanup",
+      INKBEAM_TEST_REPO_ROOT: root,
+    },
+  });
+  assert.equal(cleanupFailure.status, 75, "temporary cleanup failure status was not preserved");
+  assert.doesNotMatch(cleanupFailure.stdout, /Inkbeam automated verification passed/);
+  assert.equal(
+    cleanupFailure.stdout.match(/temporary-cleanup-complete/g)?.length ?? 0,
+    1,
+    "only the successful fallback cleanup may report completion",
+  );
+  const cleanupFailureEvents = (await fs.readFile(eventsPath, "utf8")).trim().split("\n");
+  assert.deepEqual(cleanupFailureEvents.slice(-5), [
+    "generate:stable",
+    "cleanup:attempt",
+    "cleanup:failed",
+    "cleanup:attempt",
+    "cleanup:removed",
+  ]);
 });
 
-test("privacy verification pins each effective artifact to its explicit channel", async (t) => {
+test("privacy verification preserves source mode and pins each built artifact channel", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "inkbeam-privacy-channel-test."));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
 
   const stableApp = path.join(root, "Stable.app");
   const betaApp = path.join(root, "ReleaseCandidate.app");
   const privacyVerifierPath = path.join(root, "Scripts/verify-privacy.sh");
+  const sourceInfoPlistPath = path.join(root, "Config/Inkbeam-Info.plist");
   const extensionManifest = JSON.stringify({
     manifest_version: 3,
     permissions: ["activeTab", "nativeMessaging"],
@@ -335,6 +416,12 @@ test("privacy verification pins each effective artifact to its explicit channel"
     writeFixtureFile(root, "Packages/chrome-extension/dist/service-worker.js", "export {};\n"),
     fs.mkdir(path.join(root, "Packages/editor/src"), { recursive: true }),
     fs.mkdir(path.join(root, "Packages/chrome-extension/src"), { recursive: true }),
+    writeUpdaterInfoPlistFile(
+      sourceInfoPlistPath,
+      "$(INKBEAM_RELEASE_CHANNEL_NAME)",
+      "$(INKBEAM_APPCAST_URL)",
+      "$(INKBEAM_SPARKLE_PUBLIC_KEY)",
+    ),
     writeUpdaterInfoPlist(
       stableApp,
       "Stable",
@@ -347,6 +434,8 @@ test("privacy verification pins each effective artifact to its explicit channel"
     ),
   ]);
 
+  const source = runPrivacyVerifier(privacyVerifierPath, root);
+  assert.equal(source.status, 0, source.stderr);
   const stable = runPrivacyVerifier(privacyVerifierPath, root, "stable", stableApp);
   assert.equal(stable.status, 0, stable.stderr);
   const beta = runPrivacyVerifier(privacyVerifierPath, root, "beta", betaApp);
@@ -361,26 +450,70 @@ test("privacy verification pins each effective artifact to its explicit channel"
     assert.match(swapped.stderr, /Unexpected effective Inkbeam release channel\/feed/);
   }
 
-  const missingChannel = spawnSync("/bin/zsh", [privacyVerifierPath, stableApp], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  assert.notEqual(missingChannel.status, 0, "an explicit expected channel is mandatory");
+  for (const malformedArguments of [
+    [stableApp],
+    ["nightly", stableApp],
+    ["stable", stableApp, "extra"],
+  ]) {
+    const malformed = runPrivacyVerifier(privacyVerifierPath, root, ...malformedArguments);
+    assert.equal(malformed.status, 64, `malformed arguments must fail 64: ${malformedArguments}`);
+  }
+
+  for (const [releaseChannel, feedURL, publicKey, expectedError] of [
+    [
+      "Stable",
+      "$(INKBEAM_APPCAST_URL)",
+      "$(INKBEAM_SPARKLE_PUBLIC_KEY)",
+      /Unexpected source InkbeamReleaseChannel/,
+    ],
+    [
+      "$(INKBEAM_RELEASE_CHANNEL_NAME)",
+      "https://example.invalid/appcast.xml",
+      "$(INKBEAM_SPARKLE_PUBLIC_KEY)",
+      /Unexpected source SUFeedURL/,
+    ],
+    [
+      "$(INKBEAM_RELEASE_CHANNEL_NAME)",
+      "$(INKBEAM_APPCAST_URL)",
+      "not-the-build-placeholder",
+      /Unexpected source SUPublicEDKey/,
+    ],
+  ]) {
+    await writeUpdaterInfoPlistFile(
+      sourceInfoPlistPath,
+      releaseChannel,
+      feedURL,
+      publicKey,
+    );
+    const malformedSource = runPrivacyVerifier(privacyVerifierPath, root);
+    assert.notEqual(malformedSource.status, 0, "malformed source placeholder must fail");
+    assert.match(malformedSource.stderr, expectedError);
+  }
 });
 
 async function writeUpdaterInfoPlist(appPath, releaseChannel, feedURL) {
-  const contentsPath = path.join(appPath, "Contents");
-  await fs.mkdir(contentsPath, { recursive: true });
-  await fs.writeFile(path.join(contentsPath, "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
+  await writeUpdaterInfoPlistFile(
+    path.join(appPath, "Contents/Info.plist"),
+    releaseChannel,
+    feedURL,
+    "fixture-public-key",
+  );
+}
+
+async function writeUpdaterInfoPlistFile(infoPlistPath, releaseChannel, feedURL, publicKey) {
+  await fs.mkdir(path.dirname(infoPlistPath), { recursive: true });
+  await fs.writeFile(infoPlistPath, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>InkbeamReleaseChannel</key><string>${releaseChannel}</string>
 <key>SUFeedURL</key><string>${feedURL}</string>
+<key>SUPublicEDKey</key><string>${publicKey}</string>
 <key>SUScheduledCheckInterval</key><integer>86400</integer>
 <key>SUAutomaticallyUpdate</key><false/>
 <key>SUAllowsAutomaticUpdates</key><false/>
 <key>SUEnableSystemProfiling</key><false/>
 <key>SUEnableJavaScript</key><false/>
+<key>SUShowReleaseNotes</key><true/>
 <key>SUVerifyUpdateBeforeExtraction</key><true/>
 <key>SURequireSignedFeed</key><true/>
 <key>SUSignedFeedFailureExpirationInterval</key><integer>0</integer>
@@ -388,8 +521,8 @@ async function writeUpdaterInfoPlist(appPath, releaseChannel, feedURL) {
 `);
 }
 
-function runPrivacyVerifier(verifierPath, cwd, expectedChannel, appPath) {
-  return spawnSync("/bin/zsh", [verifierPath, expectedChannel, appPath], {
+function runPrivacyVerifier(verifierPath, cwd, ...arguments_) {
+  return spawnSync("/bin/zsh", [verifierPath, ...arguments_], {
     cwd,
     encoding: "utf8",
   });

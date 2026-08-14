@@ -50,10 +50,15 @@ clean_derived_data() {
 }
 
 cleanup_test_build_root() {
+  local cleanup_exit_code
   [[ -n "${TEST_BUILD_ROOT}" ]] || return 0
   case "${TEST_BUILD_ROOT}" in
     "${TEMP_PARENT%/}/inkbeam-verify."*)
-      rm -rf "${TEST_BUILD_ROOT}"
+      rm -rf "${TEST_BUILD_ROOT}" || {
+        cleanup_exit_code="$?"
+        return "${cleanup_exit_code}"
+      }
+      TEST_BUILD_ROOT=""
       ;;
     *)
       echo "verify-inkbeam: refusing to clean unexpected temporary path: ${TEST_BUILD_ROOT}" >&2
@@ -77,15 +82,19 @@ restore_stable_project() {
 
 cleanup() {
   local original_status="$?"
-  local cleanup_status=0
+  local temporary_cleanup_status=0
+  local stable_restore_status=0
 
-  cleanup_test_build_root || cleanup_status=1
-  restore_stable_project || cleanup_status=1
+  cleanup_test_build_root || temporary_cleanup_status="$?"
+  restore_stable_project || stable_restore_status="$?"
 
   if (( original_status != 0 )); then
     return "${original_status}"
   fi
-  return "${cleanup_status}"
+  if (( temporary_cleanup_status != 0 )); then
+    return "${temporary_cleanup_status}"
+  fi
+  return "${stable_restore_status}"
 }
 
 run_step() {
@@ -300,6 +309,11 @@ restore_stable_project || {
   stable_restore_exit_code="$?"
   exit "${stable_restore_exit_code}"
 }
+cleanup_test_build_root || {
+  temporary_cleanup_exit_code="$?"
+  exit "${temporary_cleanup_exit_code}"
+}
+trap - EXIT
 
 echo
 echo "Inkbeam automated verification passed."
