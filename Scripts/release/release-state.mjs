@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { spawnSync } from "node:child_process";
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,11 +88,8 @@ const NOTARIZATION_STATUSES = new Set([
 ]);
 const LOCKF_PATH = "/usr/bin/lockf";
 const INTERNAL_WRITE_MODE = "--internal-write";
-const INTERNAL_WRITE_TOKEN_ENV = "INKBEAM_RELEASE_STATE_INTERNAL_TOKEN";
-const TEST_PAUSE_READY_ENV = "INKBEAM_RELEASE_STATE_TEST_PAUSE_READY";
-const TEST_PAUSE_RELEASE_ENV = "INKBEAM_RELEASE_STATE_TEST_PAUSE_RELEASE";
-const TEST_PRECOMMIT_INTERFERENCE_ENV =
-  "INKBEAM_RELEASE_STATE_TEST_PRECOMMIT_INTERFERENCE";
+const INTERNAL_WRITE_GUARD_ENV = "INKBEAM_RELEASE_STATE_INTERNAL_GUARD";
+const INTERNAL_ERROR_PREFIX = "INKBEAM_RELEASE_STATE_ERROR:";
 const STATE_MODULE_PATH = fileURLToPath(import.meta.url);
 
 export const releasePhaseDependencies = Object.freeze({
@@ -645,6 +642,30 @@ function sameFileIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
+function serializableFileIdentity(stats) {
+  return {
+    device: String(stats.dev),
+    inode: String(stats.ino),
+  };
+}
+
+function validateSerializedFileIdentity(identity, label) {
+  requirePlainObject(identity, label);
+  rejectUnknownKeys(identity, new Set(["device", "inode"]), label);
+  for (const key of ["device", "inode"]) {
+    if (typeof identity[key] !== "string" || !/^\d+$/.test(identity[key])) {
+      throw new Error(`${label} ${key} must be an unsigned decimal integer`);
+    }
+  }
+}
+
+function statsMatchSerializedIdentity(stats, identity) {
+  return (
+    String(stats.dev) === identity.device &&
+    String(stats.ino) === identity.inode
+  );
+}
+
 function assertEvidencePathUnchanged(evidencePath) {
   for (const { surfacePath, stats } of evidencePath.identities) {
     const current = assertSafeDirectory(surfacePath);
@@ -718,8 +739,8 @@ function ensureWriterLockFile(evidencePath) {
   const lockPath = path.join(evidencePath.directory, "release-state.lock");
   const existing = lstatIfExists(lockPath);
   if (existing) {
-    assertSafeFileTarget(lockPath, "lock", { required: true });
-    return lockPath;
+    const stats = assertSafeFileTarget(lockPath, "lock", { required: true });
+    return { lockPath, stats };
   }
 
   let descriptor;
@@ -740,46 +761,70 @@ function ensureWriterLockFile(evidencePath) {
   } catch (error) {
     if (descriptor !== undefined) fs.closeSync(descriptor);
     if (error?.code === "EEXIST" || error?.code === "ELOOP") {
-      assertSafeFileTarget(lockPath, "lock", { required: true });
-      return lockPath;
+      const stats = assertSafeFileTarget(lockPath, "lock", { required: true });
+      return { lockPath, stats };
     }
     throw error;
   }
   fs.closeSync(descriptor);
   assertEvidencePathUnchanged(evidencePath);
-  assertSafeFileTarget(lockPath, "lock", { required: true });
-  return lockPath;
+  const stats = assertSafeFileTarget(lockPath, "lock", { required: true });
+  return { lockPath, stats };
 }
 
-function maybePauseBeforeCommit() {
-  const readySignal = process.env[TEST_PAUSE_READY_ENV];
-  const releaseSignal = process.env[TEST_PAUSE_RELEASE_ENV];
-  if (!readySignal || !releaseSignal) return;
-  fs.writeFileSync(readySignal, String(process.pid));
-  const waiter = new Int32Array(new SharedArrayBuffer(4));
-  const deadline = Date.now() + 5_000;
-  while (!fs.existsSync(releaseSignal)) {
-    if (Date.now() >= deadline) {
-      throw new Error("timed out while holding release-state lock");
+function serializeWriterSurfaceIdentity(evidencePath, lockStats) {
+  return {
+    evidenceDirectories: evidencePath.identities.map(({ stats }) =>
+      serializableFileIdentity(stats)),
+    writerLock: serializableFileIdentity(lockStats),
+  };
+}
+
+function validateWriterSurfaceIdentity(identity) {
+  requirePlainObject(identity, "release state writer surface identity");
+  rejectUnknownKeys(
+    identity,
+    new Set(["evidenceDirectories", "writerLock"]),
+    "release state writer surface identity",
+  );
+  if (
+    !Array.isArray(identity.evidenceDirectories) ||
+    identity.evidenceDirectories.length !== 4
+  ) {
+    throw new Error(
+      "release state writer surface identity requires four evidence directories",
+    );
+  }
+  identity.evidenceDirectories.forEach((entry, index) => {
+    validateSerializedFileIdentity(
+      entry,
+      `release state evidence directory identity ${index}`,
+    );
+  });
+  validateSerializedFileIdentity(
+    identity.writerLock,
+    "release state writer lock identity",
+  );
+}
+
+function assertWriterSurfaceIdentity(evidencePath, expectedIdentity) {
+  validateWriterSurfaceIdentity(expectedIdentity);
+  assertEvidencePathUnchanged(evidencePath);
+  evidencePath.identities.forEach(({ surfacePath, stats }, index) => {
+    if (
+      !statsMatchSerializedIdentity(
+        stats,
+        expectedIdentity.evidenceDirectories[index],
+      )
+    ) {
+      throw new Error(`release state evidence directory identity changed: ${surfacePath}`);
     }
-    Atomics.wait(waiter, 0, 0, 10);
+  });
+  const lockPath = path.join(evidencePath.directory, "release-state.lock");
+  const lockStats = assertSafeFileTarget(lockPath, "lock", { required: true });
+  if (!statsMatchSerializedIdentity(lockStats, expectedIdentity.writerLock)) {
+    throw new Error("release state writer lock identity changed");
   }
-}
-
-function maybeInterfereWithDestination(destination) {
-  const scenario = process.env[TEST_PRECOMMIT_INTERFERENCE_ENV];
-  if (!scenario) return;
-  if (scenario === "appears") {
-    fs.writeFileSync(destination, "foreign writer contents\n", { mode: 0o600 });
-    return;
-  }
-  if (scenario === "changes") {
-    const displacedState = `${destination}.displaced`;
-    fs.renameSync(destination, displacedState);
-    fs.writeFileSync(destination, "foreign writer contents\n", { mode: 0o600 });
-    return;
-  }
-  throw new Error(`unsupported release-state precommit interference: ${scenario}`);
 }
 
 function createTemporaryStateFile(temporaryPath, contents) {
@@ -907,11 +952,26 @@ function assertMonotonicAdvance(previous, next) {
   }
 }
 
-function saveReleaseStateUnlocked(repositoryRoot, state) {
+function assertKernelWriterLockHeld(lockPath) {
+  const probe = childProcess.spawnSync(
+    LOCKF_PATH,
+    ["-n", "-s", "-t", "0", "-k", lockPath, "/usr/bin/true"],
+    { stdio: "ignore" },
+  );
+  if (probe.error) {
+    throw new Error(`release state kernel-lock probe failed: ${probe.error.message}`);
+  }
+  if (probe.status !== 75) {
+    throw new Error("release state internal writer requires the kernel writer lock");
+  }
+}
+
+function saveReleaseStateUnlocked(repositoryRoot, state, expectedSurfaceIdentity) {
   validateReleaseState(state);
-  const destination = statePathFor(repositoryRoot, state.contract.tag);
+  const tag = state?.contract?.tag;
+  const destination = statePathFor(repositoryRoot, tag);
   const evidencePath = evidenceDirectoryFor(repositoryRoot, state.contract.tag, {
-    create: true,
+    create: false,
   });
   const { directory } = evidencePath;
   let previousStateStats;
@@ -921,8 +981,10 @@ function saveReleaseStateUnlocked(repositoryRoot, state) {
     `.release-state.${process.pid}.${crypto.randomUUID()}.tmp`,
   );
   try {
-    assertEvidencePathUnchanged(evidencePath);
-    ensureWriterLockFile(evidencePath);
+    assertWriterSurfaceIdentity(evidencePath, expectedSurfaceIdentity);
+    assertKernelWriterLockHeld(
+      path.join(evidencePath.directory, "release-state.lock"),
+    );
     removeOrphanTemporaryFiles(evidencePath);
     if (assertSafeFileTarget(destination, "state")) {
       const previousFile = readRegularFile(destination, "state");
@@ -936,9 +998,7 @@ function saveReleaseStateUnlocked(repositoryRoot, state) {
       temporaryPath,
       `${JSON.stringify(state, null, 2)}\n`,
     );
-    assertEvidencePathUnchanged(evidencePath);
-    maybePauseBeforeCommit();
-    maybeInterfereWithDestination(destination);
+    assertWriterSurfaceIdentity(evidencePath, expectedSurfaceIdentity);
     const currentStateStats = assertSafeFileTarget(destination, "state");
     if (previousStateStats) {
       if (
@@ -952,7 +1012,7 @@ function saveReleaseStateUnlocked(repositoryRoot, state) {
     }
     fs.renameSync(temporaryPath, destination);
     temporaryStats = undefined;
-    assertEvidencePathUnchanged(evidencePath);
+    assertWriterSurfaceIdentity(evidencePath, expectedSurfaceIdentity);
     assertSafeFileTarget(destination, "state", { required: true });
   } finally {
     if (temporaryStats) removeOwnedTemporary(temporaryPath, temporaryStats);
@@ -962,23 +1022,18 @@ function saveReleaseStateUnlocked(repositoryRoot, state) {
 
 export function saveReleaseState(repositoryRoot, state) {
   validateReleaseState(state);
-  const evidencePath = evidenceDirectoryFor(repositoryRoot, state.contract.tag, {
+  const tag = state?.contract?.tag;
+  const evidencePath = evidenceDirectoryFor(repositoryRoot, tag, {
     create: true,
   });
-  const lockPath = ensureWriterLockFile(evidencePath);
-  const token = crypto.randomUUID();
+  const { lockPath, stats: lockStats } = ensureWriterLockFile(evidencePath);
+  const surfaceIdentity = serializeWriterSurfaceIdentity(evidencePath, lockStats);
+  const guard = crypto.randomUUID();
   const childEnv = {
     ...process.env,
-    [INTERNAL_WRITE_TOKEN_ENV]: token,
+    [INTERNAL_WRITE_GUARD_ENV]: guard,
   };
-  for (const key of [
-    TEST_PAUSE_READY_ENV,
-    TEST_PAUSE_RELEASE_ENV,
-    TEST_PRECOMMIT_INTERFERENCE_ENV,
-  ]) {
-    if (process.env[key] !== undefined) childEnv[key] = process.env[key];
-  }
-  const result = spawnSync(
+  const result = childProcess.spawnSync(
     LOCKF_PATH,
     [
       "-n",
@@ -990,11 +1045,11 @@ export function saveReleaseState(repositoryRoot, state) {
       process.execPath,
       STATE_MODULE_PATH,
       INTERNAL_WRITE_MODE,
-      token,
+      guard,
     ],
     {
       cwd: path.resolve(repositoryRoot),
-      input: JSON.stringify({ repositoryRoot, state }),
+      input: JSON.stringify({ repositoryRoot, state, surfaceIdentity }),
       encoding: "utf8",
       env: childEnv,
       maxBuffer: 10 * 1024 * 1024,
@@ -1004,17 +1059,27 @@ export function saveReleaseState(repositoryRoot, state) {
     if (result.error.code === "ENOENT") {
       throw new Error("release state lockf is unavailable");
     }
-    throw result.error;
+    throw new Error(`release state lockf launch failed: ${result.error.message}`);
   }
   if (result.status === 75) {
     throw new Error("release state writer lock is already held");
   }
   if (result.signal) {
-    throw new Error(`release state writer lock process terminated by signal ${result.signal}`);
+    throw new Error(`release state lockf process terminated by signal ${result.signal}`);
+  }
+  if (result.status === 70) {
+    throw new Error("release state internal writer terminated abnormally");
   }
   if (result.status !== 0) {
-    const message = result.stderr.trim() || "release state writer failed";
-    throw new Error(message);
+    const stderr = result.stderr?.trim() ?? "";
+    const internalError = stderr
+      .split("\n")
+      .find((line) => line.startsWith(INTERNAL_ERROR_PREFIX));
+    if (internalError) {
+      throw new Error(internalError.slice(INTERNAL_ERROR_PREFIX.length).trim());
+    }
+    if (stderr) throw new Error(stderr);
+    throw new Error(`release state lockf failed with status ${String(result.status)}`);
   }
   const destination = result.stdout.trim();
   if (!destination) throw new Error("release state writer did not report a destination");
@@ -1032,30 +1097,59 @@ export function loadReleaseState(repositoryRoot, tag) {
   return deepFreeze(state);
 }
 
+function writeInternalError(message) {
+  process.stderr.write(`${INTERNAL_ERROR_PREFIX}${message}\n`);
+  process.exitCode = 1;
+}
+
 function runInternalWriter(argv = process.argv.slice(2)) {
   if (argv[0] !== INTERNAL_WRITE_MODE) return false;
 
-  const token = argv[1];
+  if (argv.length !== 2) {
+    writeInternalError("release state internal writer invocation is invalid");
+    return true;
+  }
+
+  const guard = argv[1];
   if (
-    typeof token !== "string" ||
-    token.length === 0 ||
-    process.env[INTERNAL_WRITE_TOKEN_ENV] !== token
+    typeof guard !== "string" ||
+    guard.length === 0 ||
+    process.env[INTERNAL_WRITE_GUARD_ENV] !== guard
   ) {
-    process.stderr.write("release state internal writer authorization failed\n");
-    process.exitCode = 1;
+    writeInternalError("release state internal writer guard mismatch");
     return true;
   }
 
   try {
-    const payload = JSON.parse(fs.readFileSync(process.stdin.fd, "utf8"));
-    if (!isPlainObject(payload)) {
-      throw new Error("release state internal payload must be an object");
+    let payload;
+    try {
+      payload = JSON.parse(fs.readFileSync(process.stdin.fd, "utf8"));
+    } catch {
+      throw new Error("release state internal writer input is invalid JSON");
     }
-    const destination = saveReleaseStateUnlocked(payload.repositoryRoot, payload.state);
+    if (
+      !isPlainObject(payload) ||
+      !isDeepStrictEqual(
+        Object.keys(payload).sort(),
+        ["repositoryRoot", "state", "surfaceIdentity"],
+      ) ||
+      typeof payload.repositoryRoot !== "string" ||
+      payload.repositoryRoot.length === 0 ||
+      !isPlainObject(payload.state)
+    ) {
+      throw new Error(
+        "release state internal payload must contain exactly repositoryRoot, state, and surfaceIdentity",
+      );
+    }
+    validateWriterSurfaceIdentity(payload.surfaceIdentity);
+    const destination = saveReleaseStateUnlocked(
+      payload.repositoryRoot,
+      payload.state,
+      payload.surfaceIdentity,
+    );
     process.stdout.write(`${destination}\n`);
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
+    writeInternalError(error instanceof Error ? error.message : String(error));
   }
   return true;
 }

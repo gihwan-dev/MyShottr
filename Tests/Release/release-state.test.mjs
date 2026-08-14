@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import childProcess, { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { isDeepStrictEqual } from "node:util";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { contractFor } from "../../Scripts/release/release-contract.mjs";
 import {
@@ -31,6 +30,9 @@ const STATE_MODULE_URL = new URL(
   "../../Scripts/release/release-state.mjs",
   import.meta.url,
 ).href;
+const STATE_MODULE_PATH = fileURLToPath(STATE_MODULE_URL);
+const INTERNAL_WRITE_MODE = "--internal-write";
+const INTERNAL_WRITE_GUARD_ENV = "INKBEAM_RELEASE_STATE_INTERNAL_GUARD";
 const TIMESTAMPS = {
   preflight: "2026-08-14T01:00:00.000Z",
   packaged: "2026-08-14T01:01:00.000Z",
@@ -238,8 +240,116 @@ function writeStateFixture(filePath, state) {
   fs.writeFileSync(filePath, `${JSON.stringify(state)}\n`);
 }
 
-function lockContentsFor(pid) {
-  return `${JSON.stringify({ schemaVersion: 1, pid })}\n`;
+function writePreload(filePath, source) {
+  fs.writeFileSync(filePath, source, { mode: 0o600 });
+  return `--import=${pathToFileURL(filePath).href}`;
+}
+
+function withEnvironmentVariable(key, value, operation) {
+  const previous = process.env[key];
+  process.env[key] = value;
+  try {
+    return operation();
+  } finally {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  }
+}
+
+function runInternalWriter({
+  repositoryRoot,
+  payload,
+  token = "test-internal-token",
+  argv = [],
+  environment = {},
+}) {
+  return spawnSync(
+    process.execPath,
+    [STATE_MODULE_PATH, INTERNAL_WRITE_MODE, token, ...argv],
+    {
+      encoding: "utf8",
+      input: typeof payload === "string" ? payload : JSON.stringify(payload),
+      env: {
+        ...process.env,
+        [INTERNAL_WRITE_GUARD_ENV]: token,
+        ...environment,
+      },
+      cwd: repositoryRoot,
+    },
+  );
+}
+
+function surfaceIdentityFor(repositoryRoot, tag = "v0.2.0-rc.1") {
+  const evidenceDirectory = path.dirname(statePathFor(repositoryRoot, tag));
+  const directoryPaths = [
+    repositoryRoot,
+    path.join(repositoryRoot, "build"),
+    path.join(repositoryRoot, "build/release-evidence"),
+    evidenceDirectory,
+  ];
+  const identity = (surfacePath) => {
+    const stats = fs.lstatSync(surfacePath);
+    return { device: String(stats.dev), inode: String(stats.ino) };
+  };
+  return {
+    evidenceDirectories: directoryPaths.map(identity),
+    writerLock: identity(path.join(evidenceDirectory, "release-state.lock")),
+  };
+}
+
+function pausingWriterPreload({ repositoryRoot, readySignal, releaseSignal, label }) {
+  const preloadPath = path.join(repositoryRoot, `${label}-pause-preload.mjs`);
+  return writePreload(preloadPath, `
+import fs from "node:fs";
+import path from "node:path";
+const originalRenameSync = fs.renameSync;
+let paused = false;
+fs.renameSync = function(source, destination, ...rest) {
+  if (
+    !paused &&
+    path.basename(destination) === "release-state.json" &&
+    path.basename(source).startsWith(".release-state.")
+  ) {
+    paused = true;
+    fs.writeFileSync(${JSON.stringify(readySignal)}, String(process.pid));
+    const waiter = new Int32Array(new SharedArrayBuffer(4));
+    const deadline = Date.now() + 5_000;
+    while (!fs.existsSync(${JSON.stringify(releaseSignal)})) {
+      if (Date.now() >= deadline) throw new Error("test preload timed out");
+      Atomics.wait(waiter, 0, 0, 10);
+    }
+  }
+  return originalRenameSync.call(this, source, destination, ...rest);
+};
+`);
+}
+
+function interferencePreload({ repositoryRoot, destination, scenario }) {
+  const preloadPath = path.join(repositoryRoot, `${scenario}-interference-preload.mjs`);
+  return writePreload(preloadPath, `
+import fs from "node:fs";
+import path from "node:path";
+const destination = ${JSON.stringify(destination)};
+const evidenceDirectory = path.dirname(destination);
+const originalFsyncSync = fs.fsyncSync;
+let interfered = false;
+fs.fsyncSync = function(descriptor) {
+  const result = originalFsyncSync.call(this, descriptor);
+  if (
+    !interfered &&
+    fs.readdirSync(evidenceDirectory).some(
+      (entry) => entry.startsWith(".release-state.") && entry.endsWith(".tmp"),
+    )
+  ) {
+    interfered = true;
+    if (${JSON.stringify(scenario)} === "changes") {
+      fs.renameSync(destination, destination + ".displaced");
+    }
+    fs.writeFileSync(destination, "foreign writer contents\\n", { mode: 0o600 });
+  }
+  return result;
+};
+`);
 }
 
 async function waitForFile(filePath, timeoutMilliseconds = 5_000) {
@@ -252,7 +362,7 @@ async function waitForFile(filePath, timeoutMilliseconds = 5_000) {
   }
 }
 
-function saveProcessSource({ repositoryRoot, stateFixture, pauseBeforeRename }) {
+function saveProcessSource({ repositoryRoot, stateFixture }) {
   return `
 import fs from "node:fs";
 const { saveReleaseState } = await import(${JSON.stringify(STATE_MODULE_URL)});
@@ -270,6 +380,12 @@ async function killWriterHoldingLock({ repositoryRoot, state, t, label }) {
   const stateFixture = path.join(repositoryRoot, `${label}-state.json`);
   const readySignal = path.join(repositoryRoot, `${label}-ready`);
   const releaseSignal = path.join(repositoryRoot, `${label}-release`);
+  const preloadOption = pausingWriterPreload({
+    repositoryRoot,
+    readySignal,
+    releaseSignal,
+    label,
+  });
   writeStateFixture(stateFixture, state);
 
   const writer = spawn(
@@ -280,7 +396,6 @@ async function killWriterHoldingLock({ repositoryRoot, state, t, label }) {
       saveProcessSource({
         repositoryRoot,
         stateFixture,
-        pauseBeforeRename: { ready: readySignal, release: releaseSignal },
       }),
     ],
     {
@@ -288,8 +403,9 @@ async function killWriterHoldingLock({ repositoryRoot, state, t, label }) {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        INKBEAM_RELEASE_STATE_TEST_PAUSE_READY: readySignal,
-        INKBEAM_RELEASE_STATE_TEST_PAUSE_RELEASE: releaseSignal,
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, preloadOption]
+          .filter(Boolean)
+          .join(" "),
       },
     },
   );
@@ -310,6 +426,7 @@ async function killWriterHoldingLock({ repositoryRoot, state, t, label }) {
   exited = true;
   assert.equal(status, 1, writerError);
   assert.equal(signal, null, writerError);
+  assert.match(writerError, /release state internal writer terminated abnormally/i);
 
   const evidenceDirectory = path.dirname(
     statePathFor(repositoryRoot, "v0.2.0-rc.1"),
@@ -318,29 +435,6 @@ async function killWriterHoldingLock({ repositoryRoot, state, t, label }) {
     evidenceDirectory,
     lockPath: path.join(evidenceDirectory, "release-state.lock"),
     ownerPID,
-  };
-}
-
-function startSaveProcess({ repositoryRoot, stateFixture }) {
-  const writer = spawn(
-    process.execPath,
-    [
-      "--input-type=module",
-      "-e",
-      saveProcessSource({ repositoryRoot, stateFixture }),
-    ],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-  );
-  let stderr = "";
-  writer.stderr.setEncoding("utf8");
-  writer.stderr.on("data", (chunk) => { stderr += chunk; });
-  return {
-    writer,
-    completion: once(writer, "exit").then(([status, signal]) => ({
-      signal,
-      status,
-      stderr,
-    })),
   };
 }
 
@@ -699,7 +793,7 @@ test("Pages publication history permits a linked append but rejects rewrites and
   );
 });
 
-test("exclusive writer lock lets only one stale process commit and cleans up", async (t) => {
+test("exclusive writer lock lets only one concurrent process commit and cleans up", async (t) => {
   const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-lock-race-"));
   t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
 
@@ -718,6 +812,12 @@ test("exclusive writer lock lets only one stale process commit and cleans up", a
   const writerBFixture = path.join(repositoryRoot, "writer-b.json");
   const readySignal = path.join(repositoryRoot, "writer-a-ready");
   const releaseSignal = path.join(repositoryRoot, "writer-a-release");
+  const preloadOption = pausingWriterPreload({
+    repositoryRoot,
+    readySignal,
+    releaseSignal,
+    label: "writer-a",
+  });
   writeStateFixture(writerAFixture, writerAState);
   writeStateFixture(writerBFixture, writerBState);
 
@@ -729,7 +829,6 @@ test("exclusive writer lock lets only one stale process commit and cleans up", a
       saveProcessSource({
         repositoryRoot,
         stateFixture: writerAFixture,
-        pauseBeforeRename: { ready: readySignal, release: releaseSignal },
       }),
     ],
     {
@@ -737,8 +836,9 @@ test("exclusive writer lock lets only one stale process commit and cleans up", a
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        INKBEAM_RELEASE_STATE_TEST_PAUSE_READY: readySignal,
-        INKBEAM_RELEASE_STATE_TEST_PAUSE_RELEASE: releaseSignal,
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, preloadOption]
+          .filter(Boolean)
+          .join(" "),
       },
     },
   );
@@ -836,7 +936,7 @@ test("a writer killed while holding the lock releases the kernel lock and the sa
   );
 });
 
-test("writer lock is removed when validation fails inside the critical section", (t) => {
+test("kernel writer lock is released when validation fails inside the critical section", (t) => {
   const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-lock-cleanup-"));
   t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
 
@@ -856,6 +956,237 @@ test("writer lock is removed when validation fails inside the critical section",
   );
   assert.deepEqual(
     fs.readdirSync(evidenceDirectory).filter((entry) => entry.endsWith(".tmp")),
+    [],
+  );
+
+  const resumed = completePhase(
+    advanced,
+    "packaged",
+    TIMESTAMPS.packaged,
+  );
+  assert.equal(
+    saveReleaseState(repositoryRoot, resumed),
+    statePathFor(repositoryRoot, "v0.2.0-rc.1"),
+  );
+  assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), resumed);
+});
+
+test("lockf launch and abnormal-exit failures are distinct and never mutate state", async (t) => {
+  const fixtures = [
+    {
+      label: "missing",
+      result: {
+        error: Object.assign(new Error("spawn /usr/bin/lockf ENOENT"), {
+          code: "ENOENT",
+        }),
+        status: null,
+        signal: null,
+        stdout: "",
+        stderr: "",
+      },
+      expected: /release state lockf is unavailable/i,
+    },
+    {
+      label: "empty failure",
+      result: { status: 1, signal: null, stdout: "", stderr: "" },
+      expected: /release state lockf failed with status 1/i,
+    },
+    {
+      label: "stderr failure",
+      result: {
+        status: 64,
+        signal: null,
+        stdout: "",
+        stderr: "fixture lockf failure\n",
+      },
+      expected: /fixture lockf failure/i,
+    },
+    {
+      label: "signal",
+      result: {
+        status: null,
+        signal: "SIGTERM",
+        stdout: "",
+        stderr: "",
+      },
+      expected: /release state lockf process terminated by signal SIGTERM/i,
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    await t.test(fixture.label, (subtest) => {
+      const repositoryRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), `inkbeam-lockf-${fixture.label.replaceAll(" ", "-")}-`),
+      );
+      t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+      const before = initialState();
+      const after = completePhase(before, "preflight", TIMESTAMPS.preflight);
+      saveReleaseState(repositoryRoot, before);
+      const destination = statePathFor(repositoryRoot, "v0.2.0-rc.1");
+      const beforeContents = fs.readFileSync(destination, "utf8");
+      subtest.mock.method(childProcess, "spawnSync", () => fixture.result);
+
+      assert.throws(
+        () => saveReleaseState(repositoryRoot, after),
+        fixture.expected,
+      );
+      assert.equal(fs.readFileSync(destination, "utf8"), beforeContents);
+      assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), before);
+      assert.deepEqual(
+        fs.readdirSync(path.dirname(destination)).filter(
+          (entry) => entry.endsWith(".tmp"),
+        ),
+        [],
+      );
+    });
+  }
+});
+
+test("private writer rejects a bad guard or malformed input without state mutation", async (t) => {
+  const fixtures = [
+    {
+      label: "bad guard",
+      run: (repositoryRoot) => runInternalWriter({
+        repositoryRoot,
+        payload: { repositoryRoot, state: initialState() },
+        environment: { [INTERNAL_WRITE_GUARD_ENV]: "different-guard" },
+      }),
+      expected: /internal writer guard mismatch/i,
+    },
+    {
+      label: "malformed JSON",
+      run: (repositoryRoot) => runInternalWriter({
+        repositoryRoot,
+        payload: "{not-json",
+      }),
+      expected: /internal writer input is invalid/i,
+    },
+    {
+      label: "non-object payload",
+      run: (repositoryRoot) => runInternalWriter({
+        repositoryRoot,
+        payload: [],
+      }),
+      expected: /internal payload must contain exactly repositoryRoot, state, and surfaceIdentity/i,
+    },
+    {
+      label: "extra payload key",
+      run: (repositoryRoot) => runInternalWriter({
+        repositoryRoot,
+        payload: { repositoryRoot, state: initialState(), extra: true },
+      }),
+      expected: /internal payload must contain exactly repositoryRoot, state, and surfaceIdentity/i,
+    },
+    {
+      label: "extra argv",
+      run: (repositoryRoot) => runInternalWriter({
+        repositoryRoot,
+        payload: { repositoryRoot, state: initialState() },
+        argv: ["unexpected"],
+      }),
+      expected: /internal writer invocation is invalid/i,
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    await t.test(fixture.label, () => {
+      const repositoryRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), `inkbeam-internal-${fixture.label.replaceAll(" ", "-")}-`),
+      );
+      t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+      const result = fixture.run(repositoryRoot);
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.signal, null, result.stderr);
+      assert.match(result.stderr, fixture.expected);
+      assert.equal(
+        fs.existsSync(statePathFor(repositoryRoot, "v0.2.0-rc.1")),
+        false,
+      );
+      const evidenceDirectory = path.dirname(
+        statePathFor(repositoryRoot, "v0.2.0-rc.1"),
+      );
+      if (fs.existsSync(evidenceDirectory)) {
+        assert.deepEqual(
+          fs.readdirSync(evidenceDirectory).filter(
+            (entry) => entry.endsWith(".tmp"),
+          ),
+          [],
+        );
+      }
+    });
+  }
+});
+
+test("private writer cannot bypass the kernel writer lock", (t) => {
+  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-internal-lock-"));
+  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+  const before = initialState();
+  const after = completePhase(before, "preflight", TIMESTAMPS.preflight);
+  saveReleaseState(repositoryRoot, before);
+
+  const result = runInternalWriter({
+    repositoryRoot,
+    payload: {
+      repositoryRoot,
+      state: after,
+      surfaceIdentity: surfaceIdentityFor(repositoryRoot),
+    },
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /internal writer requires the kernel writer lock/i);
+  assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), before);
+  assert.deepEqual(
+    fs.readdirSync(path.dirname(statePathFor(repositoryRoot, "v0.2.0-rc.1")))
+      .filter((entry) => entry.endsWith(".tmp")),
+    [],
+  );
+});
+
+test("public save invokes lockf once and does not recurse through the public writer", (t) => {
+  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-lockf-once-"));
+  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+  const realSpawnSync = childProcess.spawnSync.bind(childProcess);
+  let publicInvocations = 0;
+  t.mock.method(childProcess, "spawnSync", (...args) => {
+    publicInvocations += 1;
+    return realSpawnSync(...args);
+  });
+  saveReleaseState(repositoryRoot, initialState());
+
+  assert.equal(publicInvocations, 1);
+  assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), initialState());
+});
+
+test("writer refuses a lock pathname replaced before lockf acquisition", (t) => {
+  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-lock-replaced-"));
+  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+  const before = initialState();
+  const after = completePhase(before, "preflight", TIMESTAMPS.preflight);
+  saveReleaseState(repositoryRoot, before);
+  const destination = statePathFor(repositoryRoot, "v0.2.0-rc.1");
+  const lockPath = path.join(path.dirname(destination), "release-state.lock");
+  const realSpawnSync = childProcess.spawnSync.bind(childProcess);
+  let replaced = false;
+  t.mock.method(childProcess, "spawnSync", (command, args, options) => {
+    if (!replaced && command === "/usr/bin/lockf") {
+      replaced = true;
+      assert.equal(args[5], lockPath);
+      fs.renameSync(lockPath, `${lockPath}.original`);
+      fs.writeFileSync(lockPath, "", { mode: 0o600 });
+    }
+    return realSpawnSync(command, args, options);
+  });
+
+  assert.throws(
+    () => saveReleaseState(repositoryRoot, after),
+    /release state writer lock identity changed/i,
+  );
+  assert.equal(replaced, true);
+  assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), before);
+  assert.deepEqual(
+    fs.readdirSync(path.dirname(destination)).filter(
+      (entry) => entry.endsWith(".tmp"),
+    ),
     [],
   );
 });
@@ -884,26 +1215,25 @@ test("save refuses a state target that appears or changes before commit", async 
       t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
       const destination = statePathFor(repositoryRoot, "v0.2.0-rc.1");
       if (scenario === "changes") saveReleaseState(repositoryRoot, initialState());
+      const preloadOption = interferencePreload({
+        repositoryRoot,
+        destination,
+        scenario,
+      });
 
-      const previousScenario = process.env.INKBEAM_RELEASE_STATE_TEST_PRECOMMIT_INTERFERENCE;
-      process.env.INKBEAM_RELEASE_STATE_TEST_PRECOMMIT_INTERFERENCE = scenario;
-      try {
-        assert.throws(
+      assert.throws(
+        () => withEnvironmentVariable(
+          "NODE_OPTIONS",
+          [process.env.NODE_OPTIONS, preloadOption].filter(Boolean).join(" "),
           () => saveReleaseState(
             repositoryRoot,
             scenario === "appears"
               ? initialState()
               : completePhase(initialState(), "preflight", TIMESTAMPS.preflight),
           ),
-          /release state target (?:appeared|changed) before commit/i,
-        );
-      } finally {
-        if (previousScenario === undefined) {
-          delete process.env.INKBEAM_RELEASE_STATE_TEST_PRECOMMIT_INTERFERENCE;
-        } else {
-          process.env.INKBEAM_RELEASE_STATE_TEST_PRECOMMIT_INTERFERENCE = previousScenario;
-        }
-      }
+        ),
+        /release state target (?:appeared|changed) before commit/i,
+      );
 
       assert.equal(fs.readFileSync(destination, "utf8"), "foreign writer contents\n");
       assert.equal(
@@ -1059,26 +1389,17 @@ test("save refuses symlinked or non-regular lock and temporary targets", async (
       fs.mkdirSync(evidenceDirectory, { recursive: true });
       const outside = path.join(repositoryRoot, "outside-sentinel");
       fs.writeFileSync(outside, "unchanged");
-      const originalRandomUUID = crypto.randomUUID;
-      crypto.randomUUID = () => "fixed-surface";
       const target = surface === "lock"
         ? path.join(evidenceDirectory, "release-state.lock")
-        : path.join(
-          evidenceDirectory,
-          `.release-state.${process.pid}.fixed-surface.tmp`,
-        );
-      try {
-        if (kind === "symlink") fs.symlinkSync(outside, target, "file");
-        else fs.mkdirSync(target);
-        assert.throws(
-          () => saveReleaseState(repositoryRoot, initialState()),
-          new RegExp(`unsafe release state ${surface} target`, "i"),
-        );
-        assert.equal(fs.readFileSync(outside, "utf8"), "unchanged");
-        assert.equal(fs.existsSync(destination), false);
-      } finally {
-        crypto.randomUUID = originalRandomUUID;
-      }
+        : path.join(evidenceDirectory, ".release-state.attack.tmp");
+      if (kind === "symlink") fs.symlinkSync(outside, target, "file");
+      else fs.mkdirSync(target);
+      assert.throws(
+        () => saveReleaseState(repositoryRoot, initialState()),
+        new RegExp(`unsafe release state ${surface} target`, "i"),
+      );
+      assert.equal(fs.readFileSync(outside, "utf8"), "unchanged");
+      assert.equal(fs.existsSync(destination), false);
     });
   }
 });
