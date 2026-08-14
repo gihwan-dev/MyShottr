@@ -562,6 +562,266 @@ export function statePathFor(repositoryRoot, tag) {
   );
 }
 
+function lstatIfExists(surfacePath) {
+  try {
+    return fs.lstatSync(surfacePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function assertSafeDirectory(surfacePath) {
+  const stats = lstatIfExists(surfacePath);
+  if (!stats) throw new Error(`release state path does not exist: ${surfacePath}`);
+  if (stats.isSymbolicLink()) {
+    throw new Error(`unsafe release state path is a symbolic link: ${surfacePath}`);
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`unsafe release state path is not a directory: ${surfacePath}`);
+  }
+  return stats;
+}
+
+function evidenceDirectoryFor(repositoryRoot, tag, { create }) {
+  contractFor(tag);
+  if (typeof repositoryRoot !== "string" || repositoryRoot.length === 0) {
+    throw new Error("repository root is required");
+  }
+  const root = path.resolve(repositoryRoot);
+  const surfaces = [
+    root,
+    path.join(root, "build"),
+    path.join(root, "build", "release-evidence"),
+    path.join(root, "build", "release-evidence", tag),
+  ];
+
+  const identities = [{ surfacePath: root, stats: assertSafeDirectory(root) }];
+  for (const surfacePath of surfaces.slice(1)) {
+    if (!lstatIfExists(surfacePath)) {
+      if (!create) {
+        throw new Error(`release state path does not exist: ${surfacePath}`);
+      }
+      try {
+        fs.mkdirSync(surfacePath, { mode: 0o700 });
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+      }
+    }
+    identities.push({ surfacePath, stats: assertSafeDirectory(surfacePath) });
+  }
+  return { directory: surfaces.at(-1), identities };
+}
+
+function assertSafeFileTarget(surfacePath, label, { required = false } = {}) {
+  const description = label === "state"
+    ? "release state target"
+    : `release state ${label} target`;
+  const stats = lstatIfExists(surfacePath);
+  if (!stats) {
+    if (required) throw new Error(`${description} does not exist`);
+    return undefined;
+  }
+  if (stats.isSymbolicLink()) {
+    throw new Error(`unsafe ${description} is a symbolic link`);
+  }
+  if (!stats.isFile()) {
+    throw new Error(`unsafe ${description} is not a regular file`);
+  }
+  return stats;
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function assertEvidencePathUnchanged(evidencePath) {
+  for (const { surfacePath, stats } of evidencePath.identities) {
+    const current = assertSafeDirectory(surfacePath);
+    if (!sameFileIdentity(current, stats)) {
+      throw new Error(`unsafe release state path changed: ${surfacePath}`);
+    }
+  }
+}
+
+function readRegularFile(surfacePath, label) {
+  const expectedStats = assertSafeFileTarget(surfacePath, label, { required: true });
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      surfacePath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+    const openedStats = fs.fstatSync(descriptor);
+    if (!openedStats.isFile() || !sameFileIdentity(expectedStats, openedStats)) {
+      throw new Error(`unsafe release state ${label} target changed during read`);
+    }
+    return {
+      contents: fs.readFileSync(descriptor, "utf8"),
+      stats: openedStats,
+    };
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
+function removeOwnedFile(surfacePath, expectedStats, label) {
+  const current = lstatIfExists(surfacePath);
+  if (!current) return;
+  if (
+    current.isSymbolicLink() ||
+    !current.isFile() ||
+    !sameFileIdentity(current, expectedStats)
+  ) {
+    throw new Error(`unsafe release state ${label} target changed before cleanup`);
+  }
+  fs.unlinkSync(surfacePath);
+}
+
+function acquireWriterLock(evidencePath) {
+  assertEvidencePathUnchanged(evidencePath);
+  const lockPath = path.join(evidencePath.directory, "release-state.lock");
+  const existing = lstatIfExists(lockPath);
+  if (existing) {
+    assertSafeFileTarget(lockPath, "lock");
+    throw new Error("release state writer lock is already held");
+  }
+
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      lockPath,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        (fs.constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+  } catch (error) {
+    if (error?.code === "EEXIST" || error?.code === "ELOOP") {
+      const raced = lstatIfExists(lockPath);
+      if (raced?.isSymbolicLink() || (raced && !raced.isFile())) {
+        assertSafeFileTarget(lockPath, "lock");
+      }
+      throw new Error("release state writer lock is already held");
+    }
+    throw error;
+  }
+
+  let stats;
+  try {
+    stats = fs.fstatSync(descriptor);
+    if (!stats.isFile()) {
+      throw new Error("unsafe release state lock target is not a regular file");
+    }
+    assertEvidencePathUnchanged(evidencePath);
+    fs.writeFileSync(descriptor, `${process.pid}\n`, { encoding: "utf8" });
+    fs.fsyncSync(descriptor);
+    return { descriptor, evidencePath, lockPath, stats };
+  } catch (error) {
+    fs.closeSync(descriptor);
+    if (stats) removeOwnedFile(lockPath, stats, "lock");
+    throw error;
+  }
+}
+
+function installFailClosedLock(lockPath) {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      lockPath,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        (fs.constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    fs.writeFileSync(descriptor, "unsafe previous lock replacement detected\n", {
+      encoding: "utf8",
+    });
+    fs.fsyncSync(descriptor);
+  } catch (error) {
+    if (error?.code !== "EEXIST" && error?.code !== "ELOOP") throw error;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
+function releaseWriterLock(lock) {
+  try {
+    assertEvidencePathUnchanged(lock.evidencePath);
+    const current = lstatIfExists(lock.lockPath);
+    const opened = fs.fstatSync(lock.descriptor);
+    if (
+      !current ||
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !sameFileIdentity(current, opened) ||
+      !sameFileIdentity(opened, lock.stats)
+    ) {
+      throw new Error("unsafe release state lock target changed while held");
+    }
+    fs.unlinkSync(lock.lockPath);
+    if (fs.fstatSync(lock.descriptor).nlink !== 0) {
+      installFailClosedLock(lock.lockPath);
+      throw new Error("unsafe release state lock target changed before unlink");
+    }
+  } finally {
+    fs.closeSync(lock.descriptor);
+  }
+}
+
+function createTemporaryStateFile(temporaryPath, contents) {
+  if (lstatIfExists(temporaryPath)) {
+    assertSafeFileTarget(temporaryPath, "temporary");
+    throw new Error("unsafe release state temporary target already exists");
+  }
+
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      temporaryPath,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        (fs.constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+  } catch (error) {
+    if (error?.code === "EEXIST" || error?.code === "ELOOP") {
+      throw new Error("unsafe release state temporary target already exists");
+    }
+    throw error;
+  }
+
+  let stats;
+  try {
+    stats = fs.fstatSync(descriptor);
+    if (!stats.isFile()) {
+      throw new Error("unsafe release state temporary target is not a regular file");
+    }
+    fs.writeFileSync(descriptor, contents, { encoding: "utf8" });
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    const current = assertSafeFileTarget(temporaryPath, "temporary", {
+      required: true,
+    });
+    if (!sameFileIdentity(current, stats)) {
+      throw new Error("unsafe release state temporary target changed while writing");
+    }
+    return stats;
+  } catch (error) {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    if (stats) removeOwnedFile(temporaryPath, stats, "temporary");
+    throw error;
+  }
+}
+
+function removeOwnedTemporary(temporaryPath, expectedStats) {
+  removeOwnedFile(temporaryPath, expectedStats, "temporary");
+}
+
 function assertNotarizationStatusAdvance(previous, next) {
   const allowed = {
     Submitted: new Set(["Submitted", "In Progress", "Accepted", "Invalid", "Rejected"]),
@@ -639,33 +899,64 @@ function assertMonotonicAdvance(previous, next) {
 export function saveReleaseState(repositoryRoot, state) {
   validateReleaseState(state);
   const destination = statePathFor(repositoryRoot, state.contract.tag);
-  const directory = path.dirname(destination);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  if (fs.existsSync(destination)) {
-    const previous = JSON.parse(fs.readFileSync(destination, "utf8"));
-    validateReleaseState(previous, state.contract);
-    assertMonotonicAdvance(previous, state);
-  }
-  const temporary = path.join(
+  const evidencePath = evidenceDirectoryFor(repositoryRoot, state.contract.tag, {
+    create: true,
+  });
+  const lock = acquireWriterLock(evidencePath);
+  const { directory } = evidencePath;
+  let previousStateStats;
+  let temporaryStats;
+  const temporaryPath = path.join(
     directory,
     `.release-state.${process.pid}.${crypto.randomUUID()}.tmp`,
   );
   try {
-    fs.writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o600,
-    });
-    fs.renameSync(temporary, destination);
+    assertEvidencePathUnchanged(evidencePath);
+    if (assertSafeFileTarget(destination, "state")) {
+      const previousFile = readRegularFile(destination, "state");
+      const previous = JSON.parse(previousFile.contents);
+      previousStateStats = previousFile.stats;
+      validateReleaseState(previous, state.contract);
+      assertMonotonicAdvance(previous, state);
+    }
+    assertEvidencePathUnchanged(evidencePath);
+    temporaryStats = createTemporaryStateFile(
+      temporaryPath,
+      `${JSON.stringify(state, null, 2)}\n`,
+    );
+    assertEvidencePathUnchanged(evidencePath);
+    const currentStateStats = assertSafeFileTarget(destination, "state");
+    if (previousStateStats) {
+      if (
+        !currentStateStats ||
+        !sameFileIdentity(currentStateStats, previousStateStats)
+      ) {
+        throw new Error("release state target changed before commit");
+      }
+    } else if (currentStateStats) {
+      throw new Error("release state target appeared before commit");
+    }
+    fs.renameSync(temporaryPath, destination);
+    temporaryStats = undefined;
+    assertEvidencePathUnchanged(evidencePath);
+    assertSafeFileTarget(destination, "state", { required: true });
   } finally {
-    fs.rmSync(temporary, { force: true });
+    try {
+      if (temporaryStats) removeOwnedTemporary(temporaryPath, temporaryStats);
+    } finally {
+      releaseWriterLock(lock);
+    }
   }
   return destination;
 }
 
 export function loadReleaseState(repositoryRoot, tag) {
   const expectedContract = contractFor(tag);
-  const state = JSON.parse(fs.readFileSync(statePathFor(repositoryRoot, tag), "utf8"));
+  const evidencePath = evidenceDirectoryFor(repositoryRoot, tag, { create: false });
+  assertEvidencePathUnchanged(evidencePath);
+  const stateFile = readRegularFile(statePathFor(repositoryRoot, tag), "state");
+  assertEvidencePathUnchanged(evidencePath);
+  const state = JSON.parse(stateFile.contents);
   validateReleaseState(state, expectedContract);
   return deepFreeze(state);
 }

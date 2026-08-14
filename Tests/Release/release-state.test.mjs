@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,7 +23,13 @@ const SHA = "0123456789abcdef0123456789abcdef01234567";
 const OTHER_SHA = "89abcdef0123456789abcdef0123456789abcdef";
 const THIRD_SHA = "fedcba9876543210fedcba9876543210fedcba98";
 const FOURTH_SHA = "456789abcdef0123456789abcdef0123456789ab";
+const FIFTH_SHA = "56789abcdef0123456789abcdef0123456789abc";
+const SIXTH_SHA = "6789abcdef0123456789abcdef0123456789abcd";
 const DMG_SIGNATURE = Buffer.alloc(64, 7).toString("base64");
+const STATE_MODULE_URL = new URL(
+  "../../Scripts/release/release-state.mjs",
+  import.meta.url,
+).href;
 const TIMESTAMPS = {
   preflight: "2026-08-14T01:00:00.000Z",
   packaged: "2026-08-14T01:01:00.000Z",
@@ -33,6 +42,10 @@ const TIMESTAMPS = {
   betaFeedPublished: "2026-08-14T01:08:00.000Z",
   acceptanceRecorded: "2026-08-14T01:09:00.000Z",
   completed: "2026-08-14T01:10:00.000Z",
+  stableFeedPrepared: "2026-08-14T01:10:00.000Z",
+  finalPromoted: "2026-08-14T01:11:00.000Z",
+  stableFeedPublished: "2026-08-14T01:12:00.000Z",
+  stableCompleted: "2026-08-14T01:13:00.000Z",
 };
 
 function initialState(tag = "v0.2.0-rc.1") {
@@ -51,18 +64,18 @@ function initialState(tag = "v0.2.0-rc.1") {
   });
 }
 
-function readyForNotarization() {
+function readyForNotarization(tag = "v0.2.0-rc.1") {
   return completePhase(
-    completePhase(initialState(), "preflight", TIMESTAMPS.preflight),
+    completePhase(initialState(tag), "preflight", TIMESTAMPS.preflight),
     "packaged",
     TIMESTAMPS.packaged,
   );
 }
 
-function acceptedNotarizationState() {
+function acceptedNotarizationState(tag = "v0.2.0-rc.1") {
   return recordNotarizationStatus(
     recordNotarizationSubmission(
-      readyForNotarization(),
+      readyForNotarization(tag),
       "11111111-2222-3333-4444-555555555555",
       TIMESTAMPS.submitted,
     ),
@@ -91,24 +104,25 @@ function exactArtifacts(tag = "v0.2.0-rc.1") {
   };
 }
 
-function sealedState() {
-  const state = structuredClone(acceptedNotarizationState());
-  state.artifacts = exactArtifacts();
+function sealedState(tag = "v0.2.0-rc.1") {
+  const state = structuredClone(acceptedNotarizationState(tag));
+  state.artifacts = exactArtifacts(tag);
   return completePhase(state, "sealed", TIMESTAMPS.sealed);
 }
 
-function candidatePublishedState() {
-  const state = structuredClone(sealedState());
+function candidatePublishedState(tag = "v0.2.0-rc.1") {
+  const contract = contractFor(tag);
+  const state = structuredClone(sealedState(tag));
   state.publication = {
     github: {
       candidate: {
         releaseID: 123456,
         tagCommitID: SHA,
-        url: "https://github.com/gihwan-dev/inkbeam/releases/tag/v0.2.0-rc.1",
+        url: `https://github.com/gihwan-dev/inkbeam/releases/tag/${tag}`,
         draft: false,
         prerelease: true,
         makeLatest: false,
-        title: "Inkbeam v0.2.0-rc.1",
+        title: contract.releaseTitle,
       },
     },
   };
@@ -119,22 +133,21 @@ function candidatePublishedState() {
   );
 }
 
-function publiclyVerifiedState() {
-  const state = structuredClone(candidatePublishedState());
+function publiclyVerifiedState(tag = "v0.2.0-rc.1") {
+  const contract = contractFor(tag);
+  const state = structuredClone(candidatePublishedState(tag));
   state.publication.publicURLs = {
-    release: "https://github.com/gihwan-dev/inkbeam/releases/tag/v0.2.0-rc.1",
-    dmg: "https://github.com/gihwan-dev/inkbeam/releases/download/v0.2.0-rc.1/Inkbeam-0.2.0-rc.1.dmg",
-    chromeZip:
-      "https://github.com/gihwan-dev/inkbeam/releases/download/v0.2.0-rc.1/Inkbeam-Chrome-0.2.0-rc.1.zip",
-    checksums:
-      "https://github.com/gihwan-dev/inkbeam/releases/download/v0.2.0-rc.1/SHA256SUMS.txt",
+    release: `https://github.com/gihwan-dev/inkbeam/releases/tag/${tag}`,
+    dmg: `https://github.com/gihwan-dev/inkbeam/releases/download/${tag}/${contract.dmg}`,
+    chromeZip: `https://github.com/gihwan-dev/inkbeam/releases/download/${tag}/${contract.chromeZip}`,
+    checksums: `https://github.com/gihwan-dev/inkbeam/releases/download/${tag}/SHA256SUMS.txt`,
   };
   return completePhase(state, "publicVerified", TIMESTAMPS.publicVerified);
 }
 
-function betaFeedPublishedState() {
+function betaFeedPublishedState(tag = "v0.2.0-rc.1") {
   let state = completePhase(
-    publiclyVerifiedState(),
+    publiclyVerifiedState(tag),
     "betaFeedPrepared",
     TIMESTAMPS.betaFeedPrepared,
   );
@@ -150,11 +163,11 @@ function betaFeedPublishedState() {
   return completePhase(state, "betaFeedPublished", TIMESTAMPS.betaFeedPublished);
 }
 
-function acceptedCandidateState() {
-  const state = structuredClone(betaFeedPublishedState());
+function acceptedCandidateState(tag = "v0.2.0-rc.1") {
+  const state = structuredClone(betaFeedPublishedState(tag));
   state.acceptance = {
     candidate: {
-      path: "docs/testing/releases/v0.2.0-rc.1.md",
+      path: `docs/testing/releases/${tag}.md`,
       result: "PASS",
     },
   };
@@ -172,6 +185,95 @@ function completedRCState() {
     result: "PASS",
   };
   return completePhase(state, "completed", TIMESTAMPS.completed);
+}
+
+function stableReleaseStates() {
+  const accepted = acceptedCandidateState("v0.2.0");
+  let state = completePhase(
+    accepted,
+    "stableFeedPrepared",
+    TIMESTAMPS.stableFeedPrepared,
+  );
+  const prepared = state;
+  state = structuredClone(state);
+  state.publication.github.promoted = {
+    releaseID: 123456,
+    tagCommitID: SHA,
+    url: "https://github.com/gihwan-dev/inkbeam/releases/tag/v0.2.0",
+    draft: false,
+    prerelease: false,
+    makeLatest: true,
+    title: "Inkbeam v0.2.0",
+  };
+  state = completePhase(state, "finalPromoted", TIMESTAMPS.finalPromoted);
+  const promoted = state;
+  state = structuredClone(state);
+  state.publication.publicURLs.stableFeed =
+    "https://gihwan-dev.github.io/inkbeam/appcast.xml";
+  state.publication.pages.stable = [{
+    previousCommitID: FOURTH_SHA,
+    publishedCommitID: FIFTH_SHA,
+  }];
+  state = completePhase(
+    state,
+    "stableFeedPublished",
+    TIMESTAMPS.stableFeedPublished,
+  );
+  const published = state;
+  state = structuredClone(state);
+  state.acceptance.complete = {
+    path: "docs/testing/releases/v0.2.0.md",
+    result: "PASS",
+  };
+  const completed = completePhase(state, "completed", TIMESTAMPS.stableCompleted);
+  return { accepted, prepared, promoted, published, completed };
+}
+
+function stableCompletedState() {
+  return stableReleaseStates().completed;
+}
+
+function writeStateFixture(filePath, state) {
+  fs.writeFileSync(filePath, `${JSON.stringify(state)}\n`);
+}
+
+async function waitForFile(filePath, timeoutMilliseconds = 5_000) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (!fs.existsSync(filePath)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out waiting for ${filePath}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function saveProcessSource({ repositoryRoot, stateFixture, pauseBeforeRename }) {
+  const pauseSource = pauseBeforeRename
+    ? `
+const originalRename = fs.renameSync.bind(fs);
+fs.renameSync = (source, destination) => {
+  fs.writeFileSync(${JSON.stringify(pauseBeforeRename.ready)}, "ready");
+  const waiter = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 5000;
+  while (!fs.existsSync(${JSON.stringify(pauseBeforeRename.release)})) {
+    if (Date.now() >= deadline) throw new Error("timed out while holding release-state lock");
+    Atomics.wait(waiter, 0, 0, 10);
+  }
+  return originalRename(source, destination);
+};`
+    : "";
+  return `
+import fs from "node:fs";
+${pauseSource}
+const { saveReleaseState } = await import(${JSON.stringify(STATE_MODULE_URL)});
+const state = JSON.parse(fs.readFileSync(${JSON.stringify(stateFixture)}, "utf8"));
+try {
+  saveReleaseState(${JSON.stringify(repositoryRoot)}, state);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}
+`;
 }
 
 test("creates a state containing only approved release identity and source evidence", () => {
@@ -527,6 +629,451 @@ test("Pages publication history permits a linked append but rejects rewrites and
     () => saveReleaseState(repositoryRoot, disconnectedHistory),
     /Pages beta transition must start from the previous published commit ID/i,
   );
+});
+
+test("exclusive writer lock lets only one stale process commit and cleans up", async (t) => {
+  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-lock-race-"));
+  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+
+  saveReleaseState(repositoryRoot, initialState());
+  const writerAState = completePhase(
+    initialState(),
+    "preflight",
+    TIMESTAMPS.preflight,
+  );
+  const writerBState = completePhase(
+    initialState(),
+    "preflight",
+    "2026-08-14T01:00:00.500Z",
+  );
+  const writerAFixture = path.join(repositoryRoot, "writer-a.json");
+  const writerBFixture = path.join(repositoryRoot, "writer-b.json");
+  const readySignal = path.join(repositoryRoot, "writer-a-ready");
+  const releaseSignal = path.join(repositoryRoot, "writer-a-release");
+  writeStateFixture(writerAFixture, writerAState);
+  writeStateFixture(writerBFixture, writerBState);
+
+  const writerA = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      saveProcessSource({
+        repositoryRoot,
+        stateFixture: writerAFixture,
+        pauseBeforeRename: { ready: readySignal, release: releaseSignal },
+      }),
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let writerAError = "";
+  writerA.stderr.setEncoding("utf8");
+  writerA.stderr.on("data", (chunk) => { writerAError += chunk; });
+  const writerAExit = once(writerA, "exit");
+
+  await waitForFile(readySignal);
+  const writerB = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      saveProcessSource({ repositoryRoot, stateFixture: writerBFixture }),
+    ],
+    { encoding: "utf8" },
+  );
+  fs.writeFileSync(releaseSignal, "release");
+  const [writerAStatus] = await writerAExit;
+
+  assert.equal(writerAStatus, 0, writerAError);
+  assert.equal(writerB.status, 1, writerB.stderr);
+  assert.match(writerB.stderr, /release state writer lock is already held/i);
+  assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), writerAState);
+
+  const staleRetry = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      saveProcessSource({ repositoryRoot, stateFixture: writerBFixture }),
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(staleRetry.status, 1, staleRetry.stderr);
+  assert.match(staleRetry.stderr, /release state cannot change phases\.preflight/i);
+  assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), writerAState);
+
+  const evidenceDirectory = path.dirname(
+    statePathFor(repositoryRoot, "v0.2.0-rc.1"),
+  );
+  assert.equal(fs.existsSync(path.join(evidenceDirectory, "release-state.lock")), false);
+  assert.deepEqual(
+    fs.readdirSync(evidenceDirectory).filter((entry) => entry.endsWith(".tmp")),
+    [],
+  );
+});
+
+test("writer contention fails closed without removing another process lock", (t) => {
+  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-lock-held-"));
+  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+
+  saveReleaseState(repositoryRoot, initialState());
+  const evidenceDirectory = path.dirname(
+    statePathFor(repositoryRoot, "v0.2.0-rc.1"),
+  );
+  const lockPath = path.join(evidenceDirectory, "release-state.lock");
+  fs.writeFileSync(lockPath, "held by another writer", { mode: 0o600 });
+
+  assert.throws(
+    () => saveReleaseState(
+      repositoryRoot,
+      completePhase(initialState(), "preflight", TIMESTAMPS.preflight),
+    ),
+    /release state writer lock is already held/i,
+  );
+  assert.equal(fs.readFileSync(lockPath, "utf8"), "held by another writer");
+  assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0-rc.1"), initialState());
+});
+
+test("writer lock is removed when validation fails inside the critical section", (t) => {
+  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-lock-cleanup-"));
+  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+
+  const advanced = completePhase(initialState(), "preflight", TIMESTAMPS.preflight);
+  saveReleaseState(repositoryRoot, advanced);
+  assert.throws(
+    () => saveReleaseState(repositoryRoot, initialState()),
+    /release state cannot remove phases\.preflight/i,
+  );
+
+  const evidenceDirectory = path.dirname(
+    statePathFor(repositoryRoot, "v0.2.0-rc.1"),
+  );
+  assert.equal(fs.existsSync(path.join(evidenceDirectory, "release-state.lock")), false);
+  assert.deepEqual(
+    fs.readdirSync(evidenceDirectory).filter((entry) => entry.endsWith(".tmp")),
+    [],
+  );
+});
+
+test("writer lock cleanup detects replacement and leaves a fail-closed lock", (t) => {
+  const repositoryRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "inkbeam-lock-replaced-"),
+  );
+  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+  const destination = statePathFor(repositoryRoot, "v0.2.0-rc.1");
+  const evidenceDirectory = path.dirname(destination);
+  const lockPath = path.join(evidenceDirectory, "release-state.lock");
+  const displacedLockPath = path.join(evidenceDirectory, "displaced-release-state.lock");
+  const originalUnlink = fs.unlinkSync;
+  let replaced = false;
+
+  fs.unlinkSync = (target) => {
+    if (!replaced && target === lockPath) {
+      replaced = true;
+      fs.renameSync(lockPath, displacedLockPath);
+      fs.writeFileSync(lockPath, "replacement writer\n", { mode: 0o600 });
+    }
+    return originalUnlink(target);
+  };
+  try {
+    assert.throws(
+      () => saveReleaseState(repositoryRoot, initialState()),
+      /release state lock target changed before unlink/i,
+    );
+  } finally {
+    fs.unlinkSync = originalUnlink;
+  }
+
+  assert.equal(replaced, true);
+  assert.equal(fs.lstatSync(lockPath).isFile(), true);
+  assert.notEqual(fs.readFileSync(lockPath, "utf8"), "replacement writer\n");
+  assert.equal(fs.lstatSync(displacedLockPath).isFile(), true);
+});
+
+test("save refuses a state target that appears or changes before commit", async (t) => {
+  for (const scenario of ["appears", "changes"]) {
+    await t.test(scenario, () => {
+      const repositoryRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), `inkbeam-state-${scenario}-`),
+      );
+      t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+      const destination = statePathFor(repositoryRoot, "v0.2.0-rc.1");
+      const displacedState = path.join(repositoryRoot, "displaced-state.json");
+      const foreignContents = "foreign writer contents\n";
+      if (scenario === "changes") saveReleaseState(repositoryRoot, initialState());
+
+      const originalFsync = fs.fsyncSync;
+      let fsyncCalls = 0;
+      fs.fsyncSync = (descriptor) => {
+        const result = originalFsync(descriptor);
+        fsyncCalls += 1;
+        if (fsyncCalls === 2) {
+          if (scenario === "changes") fs.renameSync(destination, displacedState);
+          fs.writeFileSync(destination, foreignContents, { mode: 0o600 });
+        }
+        return result;
+      };
+      try {
+        assert.throws(
+          () => saveReleaseState(
+            repositoryRoot,
+            scenario === "appears"
+              ? initialState()
+              : completePhase(initialState(), "preflight", TIMESTAMPS.preflight),
+          ),
+          /release state target (?:appeared|changed) before commit/i,
+        );
+      } finally {
+        fs.fsyncSync = originalFsync;
+      }
+
+      assert.equal(fs.readFileSync(destination, "utf8"), foreignContents);
+      assert.equal(
+        fs.existsSync(path.join(path.dirname(destination), "release-state.lock")),
+        false,
+      );
+      assert.deepEqual(
+        fs.readdirSync(path.dirname(destination)).filter(
+          (entry) => entry.endsWith(".tmp"),
+        ),
+        [],
+      );
+    });
+  }
+});
+
+test("load and save refuse symlinked repository and evidence directory components", async (t) => {
+  for (const operation of ["load", "save"]) {
+    for (const component of ["repositoryRoot", "build", "release-evidence", "tag"]) {
+      await t.test(`${operation}-${component}`, () => {
+        const fixtureRoot = fs.mkdtempSync(
+          path.join(os.tmpdir(), `inkbeam-path-${component}-`),
+        );
+        t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }));
+        const outside = path.join(fixtureRoot, "outside");
+        const realRepository = path.join(fixtureRoot, "repository");
+        fs.mkdirSync(outside);
+        fs.mkdirSync(realRepository);
+
+        let repositoryRoot = realRepository;
+        if (component === "repositoryRoot") {
+          repositoryRoot = path.join(fixtureRoot, "repository-link");
+          fs.symlinkSync(outside, repositoryRoot, "dir");
+        } else if (component === "build") {
+          fs.symlinkSync(outside, path.join(realRepository, "build"), "dir");
+        } else if (component === "release-evidence") {
+          fs.mkdirSync(path.join(realRepository, "build"));
+          fs.symlinkSync(
+            outside,
+            path.join(realRepository, "build/release-evidence"),
+            "dir",
+          );
+        } else {
+          fs.mkdirSync(path.join(realRepository, "build/release-evidence"), {
+            recursive: true,
+          });
+          fs.symlinkSync(
+            outside,
+            path.join(realRepository, "build/release-evidence/v0.2.0-rc.1"),
+            "dir",
+          );
+        }
+
+        assert.throws(
+          () => operation === "load"
+            ? loadReleaseState(repositoryRoot, "v0.2.0-rc.1")
+            : saveReleaseState(repositoryRoot, initialState()),
+          /unsafe release state path.*symbolic link/i,
+        );
+        assert.equal(
+          fs.readdirSync(outside, { recursive: true }).some(
+            (entry) => path.basename(String(entry)) === "release-state.json",
+          ),
+          false,
+        );
+      });
+    }
+  }
+});
+
+test("load and save refuse symlinked state targets without touching the outside file", async (t) => {
+  for (const operation of ["load", "save"]) {
+    await t.test(operation, () => {
+      const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), `inkbeam-state-link-${operation}-`));
+      t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+      const destination = statePathFor(repositoryRoot, "v0.2.0-rc.1");
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      const outsideState = path.join(repositoryRoot, "outside-state.json");
+      const originalContents = `${JSON.stringify(initialState(), null, 2)}\n`;
+      fs.writeFileSync(outsideState, originalContents);
+      fs.symlinkSync(outsideState, destination, "file");
+
+      assert.throws(
+        () => operation === "load"
+          ? loadReleaseState(repositoryRoot, "v0.2.0-rc.1")
+          : saveReleaseState(repositoryRoot, initialState()),
+        /unsafe release state target.*symbolic link/i,
+      );
+      assert.equal(fs.readFileSync(outsideState, "utf8"), originalContents);
+      assert.equal(fs.lstatSync(destination).isSymbolicLink(), true);
+    });
+  }
+});
+
+test("load and save refuse a non-regular state target", async (t) => {
+  for (const operation of ["load", "save"]) {
+    await t.test(operation, () => {
+      const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), `inkbeam-state-directory-${operation}-`));
+      t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+      const destination = statePathFor(repositoryRoot, "v0.2.0-rc.1");
+      fs.mkdirSync(destination, { recursive: true });
+
+      assert.throws(
+        () => operation === "load"
+          ? loadReleaseState(repositoryRoot, "v0.2.0-rc.1")
+          : saveReleaseState(repositoryRoot, initialState()),
+        /unsafe release state target is not a regular file/i,
+      );
+      assert.equal(fs.lstatSync(destination).isDirectory(), true);
+    });
+  }
+});
+
+test("load and save refuse non-directory evidence path components", async (t) => {
+  for (const operation of ["load", "save"]) {
+    for (const component of ["build", "release-evidence", "tag"]) {
+      await t.test(`${operation}-${component}`, () => {
+        const repositoryRoot = fs.mkdtempSync(
+          path.join(os.tmpdir(), `inkbeam-path-file-${component}-`),
+        );
+        t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+        const componentPath = component === "build"
+          ? path.join(repositoryRoot, "build")
+          : component === "release-evidence"
+            ? path.join(repositoryRoot, "build/release-evidence")
+            : path.join(repositoryRoot, "build/release-evidence/v0.2.0-rc.1");
+        fs.mkdirSync(path.dirname(componentPath), { recursive: true });
+        fs.writeFileSync(componentPath, "not a directory");
+
+        assert.throws(
+          () => operation === "load"
+            ? loadReleaseState(repositoryRoot, "v0.2.0-rc.1")
+            : saveReleaseState(repositoryRoot, initialState()),
+          /unsafe release state path is not a directory/i,
+        );
+      });
+    }
+  }
+});
+
+test("save refuses symlinked or non-regular lock and temporary targets", async (t) => {
+  for (const [surface, kind] of [
+    ["lock", "symlink"],
+    ["lock", "directory"],
+    ["temporary", "symlink"],
+    ["temporary", "directory"],
+  ]) {
+    await t.test(`${surface}-${kind}`, () => {
+      const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), `inkbeam-${surface}-${kind}-`));
+      t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+      const destination = statePathFor(repositoryRoot, "v0.2.0-rc.1");
+      const evidenceDirectory = path.dirname(destination);
+      fs.mkdirSync(evidenceDirectory, { recursive: true });
+      const outside = path.join(repositoryRoot, "outside-sentinel");
+      fs.writeFileSync(outside, "unchanged");
+      const originalRandomUUID = crypto.randomUUID;
+      crypto.randomUUID = () => "fixed-surface";
+      const target = surface === "lock"
+        ? path.join(evidenceDirectory, "release-state.lock")
+        : path.join(
+          evidenceDirectory,
+          `.release-state.${process.pid}.fixed-surface.tmp`,
+        );
+      try {
+        if (kind === "symlink") fs.symlinkSync(outside, target, "file");
+        else fs.mkdirSync(target);
+        assert.throws(
+          () => saveReleaseState(repositoryRoot, initialState()),
+          new RegExp(`unsafe release state ${surface} target`, "i"),
+        );
+        assert.equal(fs.readFileSync(outside, "utf8"), "unchanged");
+        assert.equal(fs.existsSync(destination), false);
+      } finally {
+        crypto.randomUUID = originalRandomUUID;
+      }
+    });
+  }
+});
+
+test("accepts the complete stable promotion, Pages publication, and completion state", (t) => {
+  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-stable-positive-"));
+  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+  const states = stableReleaseStates();
+
+  for (const state of Object.values(states)) {
+    assert.equal(validateReleaseState(state), true);
+    assert.equal(saveReleaseState(repositoryRoot, state), statePathFor(
+      repositoryRoot,
+      "v0.2.0",
+    ));
+  }
+  assert.equal(states.completed.publication.pages.beta[0].previousCommitID, OTHER_SHA);
+  assert.equal(states.completed.publication.pages.stable[0].previousCommitID, FOURTH_SHA);
+  assert.deepEqual(loadReleaseState(repositoryRoot, "v0.2.0"), states.completed);
+});
+
+test("accepts RC withdrawal with a linked beta Pages append", (t) => {
+  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-withdraw-positive-"));
+  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+  const candidate = betaFeedPublishedState();
+  saveReleaseState(repositoryRoot, candidate);
+  const withdrawn = structuredClone(candidate);
+  withdrawn.publication.github.withdrawn = {
+    releaseID: 123456,
+    tagCommitID: SHA,
+    url: "https://github.com/gihwan-dev/inkbeam/releases/tag/v0.2.0-rc.1",
+    draft: false,
+    prerelease: true,
+    makeLatest: false,
+    title: "Withdrawn — Inkbeam v0.2.0-rc.1",
+  };
+  withdrawn.publication.pages.beta.push({
+    previousCommitID: THIRD_SHA,
+    publishedCommitID: FOURTH_SHA,
+  });
+
+  assert.equal(validateReleaseState(withdrawn), true);
+  assert.equal(saveReleaseState(repositoryRoot, withdrawn), statePathFor(
+    repositoryRoot,
+    "v0.2.0-rc.1",
+  ));
+});
+
+test("accepts append-only stable rollback evidence", (t) => {
+  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "inkbeam-rollback-positive-"));
+  t.after(() => fs.rmSync(repositoryRoot, { recursive: true, force: true }));
+  const promoted = stableCompletedState();
+  saveReleaseState(repositoryRoot, promoted);
+  const rolledBack = structuredClone(promoted);
+  rolledBack.publication.github.rollback = {
+    releaseID: 123456,
+    tagCommitID: SHA,
+    url: "https://github.com/gihwan-dev/inkbeam/releases/tag/v0.2.0",
+    draft: false,
+    prerelease: true,
+    makeLatest: false,
+    title: "Inkbeam v0.2.0 (Final Candidate)",
+  };
+  rolledBack.publication.pages.rollback = [{
+    previousCommitID: FIFTH_SHA,
+    publishedCommitID: SIXTH_SHA,
+  }];
+
+  assert.equal(validateReleaseState(rolledBack), true);
+  assert.equal(saveReleaseState(repositoryRoot, rolledBack), statePathFor(
+    repositoryRoot,
+    "v0.2.0",
+  ));
 });
 
 test("writes atomically to the exact ignored evidence path and validates on load", (t) => {
